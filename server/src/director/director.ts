@@ -34,9 +34,25 @@ function selectCoach(sorted: EngineLine[], best: EngineLine, ctx: DirectorContex
   return { move: chosen.move, reason, chosenLine: chosen }
 }
 
-function selectHumanlike(sorted: EngineLine[], best: EngineLine, _ctx: DirectorContext): DirectorDecision {
-  // 占位:Task 6 实现并补测;此处先回退最优,保证类型完整
-  return { move: best.move, reason: '拟人(待实现)', chosenLine: best }
+function selectHumanlike(sorted: EngineLine[], _best: EngineLine, ctx: DirectorContext): DirectorDecision {
+  // 权重:越靠前(越优)权重越高;strength 越高越集中于最优
+  // w_i = exp(-rank_i * k),k 随 strength 增大而增大
+  const k = 0.5 + ctx.strength * 4 // strength 0→k0.5(发散), 1→k4.5(集中)
+  const weights = sorted.map((_, i) => Math.exp(-i * k))
+  const total = weights.reduce((a, b) => a + b, 0)
+  let r = ctx.rng() * total
+  let idx = 0
+  for (let i = 0; i < weights.length; i++) {
+    r -= weights[i]
+    if (r < 0) { idx = i; break }
+    idx = i
+  }
+  const chosen = sorted[idx]
+  return {
+    move: chosen.move,
+    reason: idx === 0 ? '拟人:走我看到的最佳' : '拟人:换个我更顺手的下法',
+    chosenLine: chosen,
+  }
 }
 
 export { MATE_THRESHOLD }

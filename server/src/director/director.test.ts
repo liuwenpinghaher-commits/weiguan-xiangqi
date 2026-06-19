@@ -48,3 +48,31 @@ test('杀棋例外:能将死时不放水,直接取杀', () => {
   const d = selectMove(mateLines, baseCoach)
   expect(d.move).toBe('c3c4')
 })
+
+const baseHuman: DirectorContext = {
+  mode: 'humanlike',
+  playerState: { winStreak: 0, lossStreak: 0, lastMoveMs: 0 },
+  maxDropCp: 1000,
+  targetBand: { low: 0, high: 0 },
+  strength: 1,
+  rng: () => 0,
+}
+
+test('拟人:strength=1 且 rng=0 取最优着', () => {
+  const d = selectMove(lines, { ...baseHuman, strength: 1 })
+  expect(d.move).toBe('b0c2')
+})
+
+test('拟人:strength 低 + rng 偏大时会挑次优着(更像人会失误)', () => {
+  const d = selectMove(lines, { ...baseHuman, strength: 0.2, rng: () => 0.99 })
+  expect(['h2e2', 'a0a1']).toContain(d.move)
+  expect(d.move).not.toBe('b0c2')
+})
+
+test('拟人:同样守杀棋例外', () => {
+  const mateLines: EngineLine[] = [
+    { multipv: 1, move: 'c3c4', scoreCp: 29997, mate: 3, pv: ['c3c4'] },
+    { multipv: 2, move: 'h2e2', scoreCp: 30, mate: null, pv: ['h2e2'] },
+  ]
+  expect(selectMove(mateLines, { ...baseHuman, strength: 0.1, rng: () => 0.99 }).move).toBe('c3c4')
+})
