@@ -24,7 +24,7 @@ export function ScoreLine({ points }: ScoreLineProps): JSX.Element {
         <CartesianGrid strokeDasharray="3 3" />
         <XAxis dataKey="ply" label={{ value: '手', position: 'insideBottomRight', offset: -4 }} />
         <YAxis />
-        <Tooltip formatter={(v: number) => [v, '分']} labelFormatter={(l) => `第 ${l} 手`} />
+        <Tooltip formatter={(v) => [v ?? 0, '分']} labelFormatter={(l) => `第 ${l} 手`} />
         <Line
           type="monotone"
           dataKey="cp"

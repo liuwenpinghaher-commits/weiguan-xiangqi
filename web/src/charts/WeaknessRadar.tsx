@@ -51,7 +51,7 @@ export function WeaknessRadar({ data }: WeaknessRadarProps): JSX.Element {
         <PolarGrid />
         <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11 }} />
         <PolarRadiusAxis angle={30} domain={[0, maxVal]} tick={{ fontSize: 10 }} />
-        <Tooltip formatter={(v: number) => [v, '次']} />
+        <Tooltip formatter={(v) => [v ?? 0, '次']} />
         <Radar
           name="失误次数"
           dataKey="value"
