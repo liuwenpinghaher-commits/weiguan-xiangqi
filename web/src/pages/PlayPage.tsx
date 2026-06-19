@@ -15,38 +15,54 @@ export function PlayPage() {
 
   const wsRef = useRef<ReturnType<typeof connect> | null>(null)
 
-  useEffect(() => {
-    const ws = connect((msg: ServerMsg) => {
-      if (msg.type === 'started') {
-        setGameId(msg.gameId)
+  // 共用消息处理函数,useEffect 与 handleRestart 均使用此函数
+  function handleServerMsg(msg: ServerMsg) {
+    if (msg.type === 'started') {
+      setGameId(msg.gameId)
+      setStatus('playing')
+      setStatusMsg('对局开始，请走棋（红方先手）')
+    } else if (msg.type === 'update') {
+      setFen(msg.fen)
+      setLastAiMove(msg.aiMove)
+      if (msg.over) {
+        setStatus('over')
+        setStatusMsg('对局结束！')
+      } else {
         setStatus('playing')
-        setStatusMsg('对局开始，请走棋（红方先手）')
-      } else if (msg.type === 'update') {
-        setFen(msg.fen)
-        setLastAiMove(msg.aiMove)
-        if (msg.over) {
-          setStatus('over')
-          setStatusMsg('对局结束！')
-        } else {
-          setStatus('playing')
-          setStatusMsg(msg.aiMove ? `AI 走了 ${msg.aiMove}，轮到您走` : '轮到您走棋')
-        }
-      } else if (msg.type === 'error') {
-        setStatusMsg(`错误：${msg.message}`)
-        // 不改变 status，让用户可以继续
+        setStatusMsg(msg.aiMove ? `AI 走了 ${msg.aiMove}，轮到您走` : '轮到您走棋')
+      }
+    } else if (msg.type === 'error') {
+      setStatusMsg(`错误：${msg.message}`)
+      // 不改变 status，让用户可以继续
+    }
+  }
+
+  // 创建 WebSocket 连接并发起新对局
+  function startNewConnection() {
+    wsRef.current?.close()
+    const ws = connect(handleServerMsg, (s) => {
+      if (s === 'closed') {
+        setStatus('error')
+        setStatusMsg('连接断开，请刷新页面或重新开始')
+      } else if (s === 'error') {
+        setStatus('error')
+        setStatusMsg('连接出错，请检查网络后重试')
       }
     })
-
     wsRef.current = ws
-
-    // 发起新对局
     ws.send({ type: 'new', mode: 'coach', humanSide: 'red', startFen: START_FEN })
     setStatus('waiting')
     setStatusMsg('正在创建对局...')
+    return ws
+  }
 
+  useEffect(() => {
+    setStatusMsg('正在连接服务器...')
+    const ws = startNewConnection()
     return () => {
       ws.close()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function handleMove(move: string) {
@@ -61,32 +77,7 @@ export function PlayPage() {
     setLastAiMove(null)
     setStatus('connecting')
     setStatusMsg('正在连接服务器...')
-
-    // 关闭旧连接并重新建立
-    wsRef.current?.close()
-    const ws = connect((msg: ServerMsg) => {
-      if (msg.type === 'started') {
-        setGameId(msg.gameId)
-        setStatus('playing')
-        setStatusMsg('对局开始，请走棋（红方先手）')
-      } else if (msg.type === 'update') {
-        setFen(msg.fen)
-        setLastAiMove(msg.aiMove)
-        if (msg.over) {
-          setStatus('over')
-          setStatusMsg('对局结束！')
-        } else {
-          setStatus('playing')
-          setStatusMsg(msg.aiMove ? `AI 走了 ${msg.aiMove}，轮到您走` : '轮到您走棋')
-        }
-      } else if (msg.type === 'error') {
-        setStatusMsg(`错误：${msg.message}`)
-      }
-    })
-    wsRef.current = ws
-    ws.send({ type: 'new', mode: 'coach', humanSide: 'red', startFen: START_FEN })
-    setStatus('waiting')
-    setStatusMsg('正在创建对局...')
+    startNewConnection()
   }
 
   return (
@@ -108,7 +99,15 @@ export function PlayPage() {
         <button style={styles.btn} onClick={handleRestart}>
           重新开始
         </button>
-        {status === 'over' && (
+        {status === 'over' && gameId !== null && (
+          <a
+            href={`#/review/${gameId}`}
+            style={styles.reviewBtn}
+          >
+            查看复盘
+          </a>
+        )}
+        {status === 'over' && gameId === null && (
           <span style={styles.overTag}>对局已结束</span>
         )}
       </div>
@@ -177,6 +176,16 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     cursor: 'pointer',
     fontWeight: 600,
+  },
+  reviewBtn: {
+    padding: '10px 28px',
+    fontSize: '1rem',
+    background: '#f5c518',
+    color: '#1a1a2e',
+    borderRadius: '6px',
+    fontWeight: 700,
+    textDecoration: 'none',
+    display: 'inline-block',
   },
   overTag: {
     padding: '8px 16px',
