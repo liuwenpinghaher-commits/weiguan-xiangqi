@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS games (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  mode TEXT NOT NULL,
+  human_side TEXT NOT NULL,
+  result TEXT,
+  start_fen TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS moves (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  game_id INTEGER NOT NULL REFERENCES games(id),
+  ply INTEGER NOT NULL,
+  side TEXT NOT NULL,
+  move TEXT NOT NULL,
+  fen_after TEXT NOT NULL,
+  score_cp INTEGER,
+  by_ai INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_moves_game ON moves(game_id, ply);
