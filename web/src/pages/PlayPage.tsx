@@ -1,0 +1,193 @@
+import { useEffect, useRef, useState } from 'react'
+import { connect, type ServerMsg } from '../api/ws-client.js'
+import { Board } from '../board/Board.js'
+
+const START_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
+
+type GameStatus = 'connecting' | 'waiting' | 'playing' | 'over' | 'error'
+
+export function PlayPage() {
+  const [fen, setFen] = useState(START_FEN)
+  const [status, setStatus] = useState<GameStatus>('connecting')
+  const [statusMsg, setStatusMsg] = useState('正在连接服务器...')
+  const [gameId, setGameId] = useState<number | null>(null)
+  const [lastAiMove, setLastAiMove] = useState<string | null>(null)
+
+  const wsRef = useRef<ReturnType<typeof connect> | null>(null)
+
+  useEffect(() => {
+    const ws = connect((msg: ServerMsg) => {
+      if (msg.type === 'started') {
+        setGameId(msg.gameId)
+        setStatus('playing')
+        setStatusMsg('对局开始，请走棋（红方先手）')
+      } else if (msg.type === 'update') {
+        setFen(msg.fen)
+        setLastAiMove(msg.aiMove)
+        if (msg.over) {
+          setStatus('over')
+          setStatusMsg('对局结束！')
+        } else {
+          setStatus('playing')
+          setStatusMsg(msg.aiMove ? `AI 走了 ${msg.aiMove}，轮到您走` : '轮到您走棋')
+        }
+      } else if (msg.type === 'error') {
+        setStatusMsg(`错误：${msg.message}`)
+        // 不改变 status，让用户可以继续
+      }
+    })
+
+    wsRef.current = ws
+
+    // 发起新对局
+    ws.send({ type: 'new', mode: 'coach', humanSide: 'red', startFen: START_FEN })
+    setStatus('waiting')
+    setStatusMsg('正在创建对局...')
+
+    return () => {
+      ws.close()
+    }
+  }, [])
+
+  function handleMove(move: string) {
+    if (status !== 'playing' || gameId === null) return
+    wsRef.current?.send({ type: 'move', gameId, move })
+    setStatusMsg(`您走了 ${move}，等待 AI 响应...`)
+  }
+
+  function handleRestart() {
+    setFen(START_FEN)
+    setGameId(null)
+    setLastAiMove(null)
+    setStatus('connecting')
+    setStatusMsg('正在连接服务器...')
+
+    // 关闭旧连接并重新建立
+    wsRef.current?.close()
+    const ws = connect((msg: ServerMsg) => {
+      if (msg.type === 'started') {
+        setGameId(msg.gameId)
+        setStatus('playing')
+        setStatusMsg('对局开始，请走棋（红方先手）')
+      } else if (msg.type === 'update') {
+        setFen(msg.fen)
+        setLastAiMove(msg.aiMove)
+        if (msg.over) {
+          setStatus('over')
+          setStatusMsg('对局结束！')
+        } else {
+          setStatus('playing')
+          setStatusMsg(msg.aiMove ? `AI 走了 ${msg.aiMove}，轮到您走` : '轮到您走棋')
+        }
+      } else if (msg.type === 'error') {
+        setStatusMsg(`错误：${msg.message}`)
+      }
+    })
+    wsRef.current = ws
+    ws.send({ type: 'new', mode: 'coach', humanSide: 'red', startFen: START_FEN })
+    setStatus('waiting')
+    setStatusMsg('正在创建对局...')
+  }
+
+  return (
+    <div style={styles.page}>
+      <h1 style={styles.title}>围观象棋</h1>
+
+      <div style={styles.statusBar}>
+        <span style={styles.statusText}>{statusMsg}</span>
+        {lastAiMove && (
+          <span style={styles.aiMove}>AI 上一手：{lastAiMove}</span>
+        )}
+      </div>
+
+      <div style={styles.boardWrapper}>
+        <Board fen={fen} onMove={handleMove} />
+      </div>
+
+      <div style={styles.controls}>
+        <button style={styles.btn} onClick={handleRestart}>
+          重新开始
+        </button>
+        {status === 'over' && (
+          <span style={styles.overTag}>对局已结束</span>
+        )}
+      </div>
+
+      <p style={styles.hint}>
+        支持拖拽或点选走棋 · 红方执先 · coach 模式
+      </p>
+    </div>
+  )
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    minHeight: '100vh',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: '24px 16px',
+    background: '#1a1a2e',
+    color: '#eee',
+    fontFamily: '"Noto Serif SC", "Source Han Serif", serif',
+  },
+  title: {
+    fontSize: '2rem',
+    fontWeight: 700,
+    margin: '0 0 16px',
+    color: '#f5c518',
+    letterSpacing: '0.1em',
+  },
+  statusBar: {
+    display: 'flex',
+    gap: '24px',
+    alignItems: 'center',
+    marginBottom: '16px',
+    padding: '10px 20px',
+    background: 'rgba(255,255,255,0.08)',
+    borderRadius: '8px',
+    minWidth: '320px',
+    justifyContent: 'center',
+  },
+  statusText: {
+    fontSize: '0.95rem',
+  },
+  aiMove: {
+    fontSize: '0.85rem',
+    color: '#f5c518',
+    fontFamily: 'monospace',
+  },
+  boardWrapper: {
+    borderRadius: '8px',
+    overflow: 'hidden',
+    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+  },
+  controls: {
+    marginTop: '20px',
+    display: 'flex',
+    gap: '16px',
+    alignItems: 'center',
+  },
+  btn: {
+    padding: '10px 28px',
+    fontSize: '1rem',
+    background: '#c0392b',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontWeight: 600,
+  },
+  overTag: {
+    padding: '8px 16px',
+    background: '#f5c518',
+    color: '#1a1a2e',
+    borderRadius: '6px',
+    fontWeight: 700,
+  },
+  hint: {
+    marginTop: '16px',
+    fontSize: '0.8rem',
+    color: '#888',
+  },
+}
