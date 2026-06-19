@@ -76,9 +76,14 @@ export function Board({ fen, onMove }: BoardProps) {
     ? { [selectedSquare]: highlightStyle }
     : {}
 
+  // react-xiangqiboard 只识别棋盘段:其 isValidFen 要求 FEN 第 3 段是数字,
+  // 标准象棋 FEN 的 "... w - - 0 1" 会因 "-" 段被判 Invalid FEN 并抛错(白屏)。
+  // 故只取棋盘部分传入(渲染不需要走子方/回合信息)。
+  const boardFen = fen.split(' ')[0]
+
   return (
     <Chessboard
-      position={fen}
+      position={boardFen}
       onPieceDrop={handlePieceDrop}
       onSquareClick={handleSquareClick}
       boardOrientation="white"
