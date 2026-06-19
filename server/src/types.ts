@@ -36,3 +36,47 @@ export interface DirectorDecision {
   reason: string
   chosenLine: EngineLine
 }
+
+/** 对局阶段 */
+export type Phase = 'opening' | 'midgame' | 'endgame'
+
+/** 失误主题(M2 不含"子力失调") */
+export type Theme = 'ok' | 'inaccuracy' | 'mistake' | 'blunder' | 'missed_mate' | 'hangs_piece'
+
+/** 逐手诊断标注 */
+export interface MoveAnnotation {
+  gameId: number
+  ply: number
+  side: Side
+  cpLoss: number
+  bestMove: string
+  phase: Phase
+  theme: Theme
+}
+
+/** 逐局成长指标快照 */
+export interface GrowthMetric {
+  gameId: number
+  analyzedAt: string
+  humanSide: Side
+  acpl: number
+  accuracy: number
+  estElo: number
+  openingAcpl: number
+  midgameAcpl: number
+  endgameAcpl: number
+  blunders: number
+  mistakes: number
+  result: Side | 'draw' | null
+}
+
+/** 训练题:给一个失误局面,作答对照引擎最佳着 */
+export interface Drill {
+  gameId: number
+  ply: number
+  fen: string
+  bestMove: string
+  playedMove: string
+  cpLoss: number
+  theme: Theme
+}
