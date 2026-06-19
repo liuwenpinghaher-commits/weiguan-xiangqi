@@ -5,5 +5,5 @@ dist
 *.sqlite-shm
 *.sqlite-wal
 .env
-engine/
+/engine/
 .codegraph
