@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS moves (
   move TEXT NOT NULL,
   fen_after TEXT NOT NULL,
   score_cp INTEGER,
-  by_ai INTEGER NOT NULL DEFAULT 0
+  by_ai INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(game_id, ply)
 );
 
 CREATE INDEX IF NOT EXISTS idx_moves_game ON moves(game_id, ply);
