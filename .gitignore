@@ -6,3 +6,4 @@ dist
 *.sqlite-wal
 .env
 engine/pikafish*
+.codegraph
