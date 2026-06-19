@@ -18,19 +18,24 @@
  *   - parseUci(str): Move | undefined  — 字符串转着法对象
  *
  * 坐标系差异（需要做转换）：
- *   elephantops 记法: file[a-i] + rank[1-10]（行1在红方底线，行10在黑方底线）
- *   Pikafish 记法:   file[a-i] + rank[0-9]（行0在黑方底线，行9在红方底线）
+ *   elephantops 记法: file[a-i] + rank[1-10]（行 1 在红方底线，行 10 在黑方底线）
+ *   Pikafish 记法:   file[a-i] + rank[0-9]（行 0 在红方底线，行 9 在黑方底线）
  *
- *   转换公式（已验证）：
- *     pikafish_rank = 9 - (elephantops_rank_number - 1) = 10 - elephantops_rank_number
- *     elephantops_rank_number = 10 - pikafish_rank
+ *   转换公式（2026-06-19 用真实 Pikafish `go perft 1` 对比初始局面验证）：
+ *     pikafish_rank = elephantops_rank - 1
+ *     elephantops_rank = pikafish_rank + 1
+ *   （file 列字母两边一致，不转换。）
  *
- *   示例：
- *     elephantops "h3e3" → Pikafish "h7e7"（红方右炮平中）
- *     elephantops "b3e3" → Pikafish "b7e7"（红方左炮平中）
- *     elephantops "a1a2" → Pikafish "a9a8"（红方车前进）
+ *   示例（已与引擎 bestmove 记法核对一致）：
+ *     elephantops "h3e3" → Pikafish "h2e2"（红方右炮平中，即炮二平五）
+ *     elephantops "b3e3" → Pikafish "b2e2"（红方左炮平中）
+ *     elephantops "a1a2" → Pikafish "a0a1"（红方车前进）
  *
- * 初始局面合法着法数：44（真实验证值）
+ *   历史坑（OPEN-ISSUES #1，已修）：曾用 `10 - rank` 把红炮算成 h7，与引擎
+ *   的 h2 整体翻转；因适配层 legalMoves/applyMove 内部自洽，纯逻辑单测发现不了，
+ *   只有接真实 Pikafish 时才暴露为 "illegal move"。
+ *
+ * 初始局面合法着法数：44（真实验证值，与 Pikafish perft 1 一致）
  */
 
 import type { Side } from '../types.js'
@@ -42,30 +47,30 @@ export const START_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBA
 
 /**
  * 将 elephantops UCI 记法转换为 Pikafish 坐标记法
- * elephantops: "b3e3" → Pikafish: "b7e7"
- * elephantops 行号 1-10（底部1），Pikafish 行号 0-9（顶部0）
+ * elephantops: "h3e3" → Pikafish: "h2e2"
+ * elephantops 行号 1-10（红方底线为 1），Pikafish 行号 0-9（红方底线为 0）
  */
 function elToPika(move: string): string {
   // elephantops 行号可能是两位数（"10"），用贪婪匹配
   const m = move.match(/^([a-i])(\d+)([a-i])(\d+)$/)
   if (!m) throw new Error(`Invalid elephantops move: ${move}`)
   const [, f1, r1str, f2, r2str] = m
-  const pr1 = 10 - parseInt(r1str)
-  const pr2 = 10 - parseInt(r2str)
+  const pr1 = parseInt(r1str) - 1
+  const pr2 = parseInt(r2str) - 1
   return `${f1}${pr1}${f2}${pr2}`
 }
 
 /**
  * 将 Pikafish 坐标记法转换为 elephantops UCI 记法
- * Pikafish: "h7e7" → elephantops: "h3e3"
+ * Pikafish: "h2e2" → elephantops: "h3e3"
  * Pikafish 行号固定为单个数字 0-9
  */
 function pikaToEl(move: string): string {
   const m = move.match(/^([a-i])([0-9])([a-i])([0-9])$/)
   if (!m) throw new Error(`Invalid Pikafish move (must be [a-i][0-9][a-i][0-9]): ${move}`)
   const [, f1, r1, f2, r2] = m
-  const er1 = 10 - parseInt(r1)
-  const er2 = 10 - parseInt(r2)
+  const er1 = parseInt(r1) + 1
+  const er2 = parseInt(r2) + 1
   return `${f1}${er1}${f2}${er2}`
 }
 
@@ -98,8 +103,8 @@ export class Position {
   }
 
   /**
-   * 返回所有合法着法，Pikafish 坐标记法（如 "h7e7"）
-   * 坐标系：列 a-i，行 0-9（0 为黑方底线，9 为红方底线）
+   * 返回所有合法着法，Pikafish 坐标记法（如 "h2e2"）
+   * 坐标系：列 a-i，行 0-9（0 为红方底线，9 为黑方底线）
    */
   legalMoves(): string[] {
     const dests = this._pos.allDests()
@@ -115,7 +120,7 @@ export class Position {
 
   /**
    * 走一手棋，返回新局面。
-   * move 必须是 Pikafish 坐标记法（如 "h7e7"）。
+   * move 必须是 Pikafish 坐标记法（如 "h2e2"）。
    * 若 move 不在合法着法中，抛 Error。
    */
   applyMove(move: string): Position {

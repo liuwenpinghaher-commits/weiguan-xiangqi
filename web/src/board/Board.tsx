@@ -7,18 +7,20 @@
  *     这对应 boardOrientation="white"（红方朝下）时的视觉方向
  *
  *   Pikafish 坐标记法: 列 a-i，行 0-9
- *     行 0 = 黑方顶部（FEN 第一行）
- *     行 9 = 红方底部（FEN 最后一行）
+ *     行 0 = 红方底线（boardOrientation="white" 时视觉在底部）
+ *     行 9 = 黑方底线（视觉在顶部）
+ *     （2026-06-19 已用真实引擎 perft 验证：rank 0 在红方底线，与后端 position.ts 一致）
  *
- *   转换:
- *     库 Square "e10" → Pikafish: col="e", row = 10 - 10 = 0 → "e0"
- *     库 Square "e1"  → Pikafish: col="e", row = 10 - 1 = 9  → "e9"
- *     即: pikafish_col = square[0], pikafish_row = 10 - parseInt(square.slice(1))
+ *   转换（与后端 elToPika 对齐）:
+ *     库 Square "e1"  (红方底线) → Pikafish row = 1 - 1 = 0 → "e0"
+ *     库 Square "e10" (黑方底线) → Pikafish row = 10 - 1 = 9 → "e9"
+ *     即: pikafish_col = square[0], pikafish_row = parseInt(square.slice(1)) - 1
  *
- *   着法字符串 = fromPikafish + toPikafish，例如 "e9e8"（红炮平中路）
+ *   着法字符串 = fromPikafish + toPikafish，例如 "h2e2"（炮二平五）
  *
- * 注意: 若后端实际行朝向与此假设相反，只需把转换改为
- *   pikafish_row = parseInt(square.slice(1)) - 1
+ * 待真机核对: react-xiangqiboard 的 Square 行朝向（row 1 是否真在红方底部）
+ *   与 boardOrientation 行为需在浏览器目视确认；若库的 row 朝向与此假设相反，
+ *   把下面 squareToPikafish 改回 10 - row 即可（后端记法已固定为标准 Pikafish）。
  */
 
 import { useState } from 'react'
@@ -33,11 +35,11 @@ export interface BoardProps {
   onMove: (move: string) => void
 }
 
-/** 将库的 Square（e.g. "e10"）转为 Pikafish 坐标（e.g. "e0"） */
+/** 将库的 Square（e.g. "e1"）转为 Pikafish 坐标（e.g. "e0"） */
 function squareToPikafish(sq: Square): string {
   const col = sq[0]
   const row = parseInt(sq.slice(1), 10)
-  return col + String(10 - row)
+  return col + String(row - 1)
 }
 
 export function Board({ fen, onMove }: BoardProps) {

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
+import { dirname } from 'node:path'
 import { parseInfoLine, parseBestmove } from './uci-parse.js'
 import type { EngineLine } from '../types.js'
 
@@ -108,7 +109,10 @@ export class UciEngine {
 }
 
 export function spawnTransport(binPath: string): Transport {
-  const proc: ChildProcessWithoutNullStreams = spawn(binPath, [], { stdio: 'pipe' })
+  // Pikafish 默认 EvalFile=pikafish.nnue，在进程 cwd 查找；把 cwd 设为二进制所在
+  // 目录，使其自动找到同目录的权重文件。
+  // ponytail: 假定 nnue 与二进制同目录；若分离再加 setoption EvalFile 显式配置
+  const proc: ChildProcessWithoutNullStreams = spawn(binPath, [], { stdio: 'pipe', cwd: dirname(binPath) })
   const rl = createInterface({ input: proc.stdout })
   let onLine: (l: string) => void = () => {}
   let onClose: (err?: Error) => void = () => {}

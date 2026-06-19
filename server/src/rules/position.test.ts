@@ -13,7 +13,7 @@ test('初始局面合法着法数大于 20', () => {
   expect(moves.length).toBeGreaterThan(20)
 })
 
-test('legalMoves 返回 Pikafish 坐标记法（行 0-9，顶部为 0）', () => {
+test('legalMoves 返回 Pikafish 坐标记法（行 0-9，红方底线为 0）', () => {
   const pos = Position.fromFen(START_FEN)
   const moves = pos.legalMoves()
   // 所有着法格式: [a-i][0-9][a-i][0-9]
@@ -21,14 +21,14 @@ test('legalMoves 返回 Pikafish 坐标记法（行 0-9，顶部为 0）', () =>
   for (const m of moves) {
     expect(m).toMatch(pikaRe)
   }
-  // 红方炮平中 h7e7 应在合法着法里（Pikafish 记法）
-  expect(moves).toContain('h7e7')
+  // 红方炮平中 h2e2 应在合法着法里（Pikafish 记法）
+  expect(moves).toContain('h2e2')
 })
 
 test('走一手后轮到黑方且 FEN 改变', () => {
   const pos = Position.fromFen(START_FEN)
-  // h7e7: 红方右炮平中（Pikafish 记法）
-  const next = pos.applyMove('h7e7')
+  // h2e2: 红方右炮平中（Pikafish 记法）
+  const next = pos.applyMove('h2e2')
   expect(next.sideToMove()).toBe('black')
   expect(next.fen()).not.toBe(START_FEN)
   // FEN 里应该显示黑方走（b 标志）
@@ -37,7 +37,7 @@ test('走一手后轮到黑方且 FEN 改变', () => {
 
 test('走完一手后黑方有合法着法', () => {
   const pos = Position.fromFen(START_FEN)
-  const next = pos.applyMove('h7e7')
+  const next = pos.applyMove('h2e2')
   const blackMoves = next.legalMoves()
   expect(blackMoves.length).toBeGreaterThan(20)
 })
