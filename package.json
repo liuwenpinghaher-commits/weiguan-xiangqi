@@ -1,0 +1,10 @@
+{
+  "name": "weiguan-xiangqi",
+  "private": true,
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "test": "npm -w server run test",
+    "dev:server": "npm -w server run dev",
+    "dev:web": "npm -w web run dev"
+  }
+}
