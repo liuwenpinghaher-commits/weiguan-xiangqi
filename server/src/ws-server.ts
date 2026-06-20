@@ -49,6 +49,41 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
   // 局末反思幂等:已完成反思的局不重复触发
   const reflectedGames = new Set<number>()
 
+  // ---- 抽取的反思 helper:对某局的所有旁观者触发 reflect ----
+  async function reflectGame(gameId: number): Promise<void> {
+    if (reflectedGames.has(gameId)) return
+    reflectedGames.add(gameId)
+
+    // 拼玩家本局真实走法概述
+    let playerSummary = ''
+    try {
+      const game = repo.getGame(gameId)
+      const moves = repo.getMoves(gameId)
+      if (game) {
+        const humanMoves = moves.filter(m => !m.byAi).slice(0, 12)
+        const parts: string[] = []
+        for (const m of humanMoves) {
+          const prevFen = m.ply <= 1
+            ? game.startFen
+            : (moves.find(x => x.ply === m.ply - 1)?.fenAfter ?? game.startFen)
+          try {
+            parts.push(describeMoveZh(prevFen, m.move))
+          } catch {
+            // 单步描述失败跳过
+          }
+        }
+        playerSummary = parts.join(';')
+      }
+    } catch {
+      // 走法拼接失败,playerSummary 保持空字符串,reflect 会提前返回
+    }
+
+    for (const p of spectators()) {
+      reflect({ repo: pmem, llm, personaId: p.id, gameId, now: () => Date.now(), playerSummary })
+        .catch(() => { /* 反思失败静默忽略 */ })
+    }
+  }
+
   const session = new GameSession({
     repo,
     engine,
@@ -76,7 +111,26 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
   // socket 直接是 ws.WebSocket 实例，使用 socket.on / socket.send
   app.get('/play', { websocket: true }, (socket, _req) => {
     sockets.add(socket)
-    socket.on('close', () => sockets.delete(socket))
+    // 记录该连接最近的 gameId,供 close 时触发中途反思
+    let socketGameId: number | null = null
+
+    socket.on('close', () => {
+      sockets.delete(socket)
+      // 中途关页面:若该连接有进行中对局且走法足够多,触发反思沉淀记忆
+      if (socketGameId !== null) {
+        const gid = socketGameId
+        try {
+          const moves = repo.getMoves(gid)
+          const humanMoves = moves.filter(m => !m.byAi)
+          // ≥6 手人类着法才有足够内容反思,避免空局浪费 token
+          if (humanMoves.length >= 6) {
+            reflectGame(gid).catch(() => { /* 中途关页面反思失败静默忽略 */ })
+          }
+        } catch {
+          // getMoves 失败静默忽略
+        }
+      }
+    })
 
     socket.on('message', async (raw) => {
       let parsed: unknown
@@ -97,6 +151,7 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
             startFen: (msg.startFen as string | undefined) ?? 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1',
           })
           lastGameId = gameId
+          socketGameId = gameId  // 记录该连接当前局 id,供 close 时触发中途反思
           socket.send(JSON.stringify({ type: 'started', gameId }))
         } else if (msg.type === 'move') {
           const result = await session.playHumanMove(msg.gameId as number, msg.move as string)
@@ -104,37 +159,7 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
           // 局末:对每个旁观者触发反思(异步,失败不影响主流程)
           if (result.over) {
             const gameId = msg.gameId as number
-            if (!reflectedGames.has(gameId)) {
-              reflectedGames.add(gameId)
-              // 拼玩家本局真实走法概述
-              let playerSummary = ''
-              try {
-                const game = repo.getGame(gameId)
-                const moves = repo.getMoves(gameId)
-                if (game) {
-                  const humanMoves = moves.filter(m => !m.byAi).slice(0, 12)
-                  const parts: string[] = []
-                  for (const m of humanMoves) {
-                    // 找上一手的 fenAfter,首手用 game.startFen
-                    const prevFen = m.ply <= 1
-                      ? game.startFen
-                      : (moves.find(x => x.ply === m.ply - 1)?.fenAfter ?? game.startFen)
-                    try {
-                      parts.push(describeMoveZh(prevFen, m.move))
-                    } catch {
-                      // 单步描述失败跳过
-                    }
-                  }
-                  playerSummary = parts.join(';')
-                }
-              } catch {
-                // 走法拼接失败,playerSummary 保持空字符串,reflect 会提前返回
-              }
-              for (const p of spectators()) {
-                reflect({ repo: pmem, llm, personaId: p.id, gameId, now: () => Date.now(), playerSummary })
-                  .catch(() => { /* 反思失败静默忽略 */ })
-              }
-            }
+            reflectGame(gameId).catch(() => { /* 反思失败静默忽略 */ })
           }
         } else if (msg.type === 'say') {
           // 玩家发言 → human_said 刺激,高张力必有人接
