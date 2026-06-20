@@ -21,11 +21,12 @@ export function ConsolePage() {
   const [cfg, setCfg] = useState<ConfigPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
+  const [version, setVersion] = useState(0)
 
   const reload = useCallback(() => {
     setLoading(true); setErr(null)
     getConfig()
-      .then(setCfg)
+      .then(d => { setCfg(d); setVersion(v => v + 1) })
       .catch((e: Error) => setErr('加载失败,请确认后端在运行(' + e.message + ')'))
       .finally(() => setLoading(false))
   }, [])
@@ -48,9 +49,9 @@ export function ConsolePage() {
 
         {!loading && !err && cfg && (
           <div style={{ marginTop: 16 }}>
-            {tab === 'personas' && <PersonasTab personas={cfg.personas} onChanged={reload} />}
-            {tab === 'keys' && <KeysModelsTab llm={cfg.llm} tts={cfg.tts} onChanged={reload} />}
-            {tab === 'params' && <ParamsTab chat={cfg.chat} director={cfg.director} engine={cfg.engine} diagnose={cfg.diagnose} onChanged={reload} />}
+            {tab === 'personas' && <PersonasTab key={version} personas={cfg.personas} onChanged={reload} />}
+            {tab === 'keys' && <KeysModelsTab key={version} llm={cfg.llm} tts={cfg.tts} onChanged={reload} />}
+            {tab === 'params' && <ParamsTab key={version} chat={cfg.chat} director={cfg.director} engine={cfg.engine} diagnose={cfg.diagnose} onChanged={reload} />}
             {tab === 'memory' && <MemoryTab personas={cfg.personas} />}
             {tab === 'games' && <GamesTab />}
           </div>
