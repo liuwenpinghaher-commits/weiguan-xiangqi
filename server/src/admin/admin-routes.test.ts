@@ -49,3 +49,31 @@ describe('admin config 路由', () => {
     expect(res.statusCode).toBe(400)
   })
 })
+
+describe('admin personas 路由', () => {
+  it('GET /admin/personas 返回全部', async () => {
+    const { app } = makeApp()
+    const res = await app.inject({ method: 'GET', url: '/admin/personas' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json<any[]>().length).toBeGreaterThan(0)
+  })
+  it('PUT /admin/personas/:id 改名/音色即时反映', async () => {
+    const { app, cfg } = makeApp()
+    const put = await app.inject({ method: 'PUT', url: '/admin/personas/coach', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ name: '林老师', ttsVoice: 'Cherry' }) })
+    expect(put.statusCode).toBe(200)
+    expect(cfg.voiceForPersona('coach')).toBe('Cherry')
+    expect(cfg.personas().find(p => p.id === 'coach')!.name).toBe('林老师')
+  })
+  it('POST /admin/personas/:id/reset 恢复默认', async () => {
+    const { app, cfg } = makeApp()
+    await app.inject({ method: 'PUT', url: '/admin/personas/coach', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ name: 'X' }) })
+    const res = await app.inject({ method: 'POST', url: '/admin/personas/coach/reset' })
+    expect(res.statusCode).toBe(200)
+    expect(cfg.personas().find(p => p.id === 'coach')!.name).toBe('林教练')
+  })
+  it('未知 persona id → 400', async () => {
+    const { app } = makeApp()
+    const res = await app.inject({ method: 'PUT', url: '/admin/personas/nope', headers: { 'content-type': 'application/json' }, payload: '{}' })
+    expect(res.statusCode).toBe(400)
+  })
+})

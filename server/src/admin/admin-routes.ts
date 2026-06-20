@@ -50,7 +50,29 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
   registerGamesRoutes(app, deps)
 }
 
-// 占位:Task 9–11 在本文件实现这三个函数。先给空实现让 Task 8 编译通过。
-function registerPersonaRoutes(_app: FastifyInstance, _deps: AdminDeps): void {}
+const PERSONA_IDS = ['player', 'laopaoer', 'coach', 'netizen']
+function registerPersonaRoutes(app: FastifyInstance, { cfg }: AdminDeps): void {
+  app.get('/admin/personas', async () => cfg.personaConfigs())
+
+  app.put('/admin/personas/:id', async (req, reply) => {
+    const { id } = req.params as { id: string }
+    if (!PERSONA_IDS.includes(id)) return reply.code(400).send({ error: `unknown persona: ${id}` })
+    const b = (req.body ?? {}) as Record<string, unknown>
+    const patch: Record<string, unknown> = {}
+    for (const k of ['name', 'skill', 'background', 'voiceStyle', 'leaning', 'ttsVoice'] as const) {
+      if (typeof b[k] === 'string' && (b[k] as string).trim() !== '') patch[k] = b[k]
+    }
+    if (typeof b.enabled === 'boolean') patch.enabled = b.enabled
+    cfg.updatePersona(id as any, patch)
+    return { ok: true }
+  })
+
+  app.post('/admin/personas/:id/reset', async (req, reply) => {
+    const { id } = req.params as { id: string }
+    if (!PERSONA_IDS.includes(id)) return reply.code(400).send({ error: `unknown persona: ${id}` })
+    cfg.resetPersona(id as any)
+    return { ok: true }
+  })
+}
 function registerMemoryRoutes(_app: FastifyInstance, _deps: AdminDeps): void {}
 function registerGamesRoutes(_app: FastifyInstance, _deps: AdminDeps): void {}
