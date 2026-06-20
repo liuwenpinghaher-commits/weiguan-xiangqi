@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import net from 'node:net'
 import { Surreal } from 'surrealdb'
 import { SurrealMemoryStore } from './surreal-memory-store.js'
 import { FakeEmbedding } from '../llm/embedding.js'
@@ -12,6 +13,31 @@ const BIN = join(homedir(), '.surrealdb', 'surreal')
 const PORT = 8123
 const URL = `ws://127.0.0.1:${PORT}`
 const hasBin = existsSync(BIN)
+
+// 不需要 surreal 二进制:验证连接到"接受 TCP 但不完成握手"的端点时,
+// connect() 按 connectTimeoutMs 快速 reject(而非挂起),让 ws-server 能即时降级。
+describe('SurrealMemoryStore 连接超时', () => {
+  it('端点不响应握手时按 connectTimeoutMs 超时失败,不挂起', async () => {
+    const sockets = new Set<net.Socket>()
+    const server = net.createServer((s) => { sockets.add(s); s.on('close', () => sockets.delete(s)) })
+    await new Promise<void>((res) => server.listen(0, '127.0.0.1', res))
+    const port = (server.address() as net.AddressInfo).port
+    const store = new SurrealMemoryStore({
+      url: `ws://127.0.0.1:${port}`, namespace: 't', database: 't', username: 'root', password: 'root',
+      embedding: new FakeEmbedding(16), llm: new FakeLLM(['keep']), now: () => 0, connectTimeoutMs: 300,
+    })
+    try {
+      const t0 = Date.now()
+      await expect(store.connect()).rejects.toThrow(/超时/)
+      const dt = Date.now() - t0
+      expect(dt).toBeGreaterThanOrEqual(250)
+      expect(dt).toBeLessThan(3000)
+    } finally {
+      sockets.forEach((s) => s.destroy())
+      await new Promise<void>((res) => server.close(() => res()))
+    }
+  }, 10000)
+})
 
 describe.skipIf(!hasBin)('SurrealMemoryStore (集成)', () => {
   let proc: ChildProcess

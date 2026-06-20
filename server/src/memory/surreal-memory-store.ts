@@ -20,7 +20,18 @@ export interface SurrealMemoryDeps {
   embedding: EmbeddingProvider; llm: LLMProvider; now: () => number
   /** 余弦相似度高于此值才触发 judge;默认 DEFAULT_SIM_THRESHOLD(0.6);测试可注入低值以确定性触发 judge 路径。 */
   simThreshold?: number
+  /** 连接(connect+signin+use)超时(ms),默认 4000。超时即 reject,让 ws-server 即时降级而非挂起启动。 */
+  connectTimeoutMs?: number
 }
+
+/** 把一个 promise 套上超时;超时则以 label reject。无论成败都清掉计时器。 */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(label)), ms) })
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer))
+}
+
+const DEFAULT_CONNECT_TIMEOUT_MS = 4000
 
 interface Row {
   id: string; persona_id: string; kind: MemoryKind; content: string
@@ -32,9 +43,18 @@ export class SurrealMemoryStore implements MemoryStore {
   constructor(private deps: SurrealMemoryDeps) {}
 
   async connect(): Promise<void> {
-    await this.db.connect(this.deps.url)
-    await this.db.signin({ username: this.deps.username, password: this.deps.password })
-    await this.db.use({ namespace: this.deps.namespace, database: this.deps.database })
+    const timeoutMs = this.deps.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
+    try {
+      await withTimeout((async () => {
+        await this.db.connect(this.deps.url)
+        await this.db.signin({ username: this.deps.username, password: this.deps.password })
+        await this.db.use({ namespace: this.deps.namespace, database: this.deps.database })
+      })(), timeoutMs, `SurrealDB 连接超时(${timeoutMs}ms)`)
+    } catch (err) {
+      // 关掉底层连接以停止客户端的后台重试,避免超时后仍挂着
+      try { await this.db.close() } catch { /* ignore */ }
+      throw err
+    }
     const dim = this.deps.embedding.dimension
     await this.db.query(`
       DEFINE TABLE IF NOT EXISTS memory SCHEMAFULL;
