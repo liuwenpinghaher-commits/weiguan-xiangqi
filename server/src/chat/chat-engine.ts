@@ -1,5 +1,5 @@
 import type { LLMProvider } from '../llm/provider.js'
-import type { PersonaMemoryRepo } from '../memory/persona-memory-repo.js'
+import type { MemoryStore } from '../memory/store.js'
 import type { ChatLine, Stimulus, Persona, PersonaId } from '../types.js'
 import { spectators, getPersona } from '../personas/personas.js'
 import { viewScore } from '../personas/engine-view.js'
@@ -8,7 +8,7 @@ import { TempoGuard } from './tempo.js'
 
 export interface ChatEngineDeps {
   llm: LLMProvider
-  mem: PersonaMemoryRepo
+  mem: MemoryStore
   now: () => number
   emit: (line: ChatLine) => void
   rng: () => number
@@ -74,7 +74,7 @@ export class ChatEngine {
         const gameRecent = this.recent.get(stim.gameId) ?? []
         const context: RecentEntry[] = [...gameRecent, ...roundSoFar]
 
-        const plan = this.plan(persona, stim, context)
+        const plan = await this.plan(persona, stim, context)
         const text = (await this.deps.llm.chat(plan.messages, {
           disableThinking: true, maxTokens: 80,
         })).trim()
@@ -95,7 +95,7 @@ export class ChatEngine {
         }
         this.deps.emit(line)
         this.lastText.set(id, text)
-        this.deps.mem.add({
+        await this.deps.mem.record({
           personaId: id,
           kind: 'episode',
           content: text,
@@ -131,15 +131,15 @@ export class ChatEngine {
   }
 
   /** 为一个说话者生成 LLM 消息 + 这条说给谁(addressee) */
-  private plan(p: Persona, stim: Stimulus, context: RecentEntry[]): {
+  private async plan(p: Persona, stim: Stimulus, context: RecentEntry[]): Promise<{
     messages: { role: 'system' | 'user'; content: string }[]
     addressee: ChatLine['addressee']
-  } {
+  }> {
     const seen = viewScore(stim.scoreCp, p.skill, this.deps.rng)
     const qual = qualWord(seen)
 
-    const facts = this.deps.mem
-      .retrieve(p.id, stim.moveZh ?? stim.humanText ?? stim.kind, 3, this.deps.now, ['fact', 'insight'])
+    const facts = (await this.deps.mem
+      .retrieve(p.id, stim.moveZh ?? stim.humanText ?? stim.kind, 3, ['fact', 'insight']))
       .map(m => '· ' + m.content).join('\n') || '(还不了解)'
 
     const contextLine = context.length > 0

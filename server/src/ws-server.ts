@@ -19,7 +19,9 @@ import { ChatEngine } from './chat/chat-engine.js'
 import { DashscopeLLM } from './llm/dashscope.js'
 import { FakeLLM } from './llm/fake.js'
 import { synthesizeUrl, voiceForPersona } from './voice/dashscope-tts.js'
-import { PersonaMemoryRepo } from './memory/persona-memory-repo.js'
+import { SurrealMemoryStore } from './memory/surreal-memory-store.js'
+import { FakeMemoryStore } from './memory/fake-memory-store.js'
+import { DashscopeEmbedding } from './llm/dashscope-embedding.js'
 import { reflect } from './memory/reflection.js'
 import { spectators } from './personas/personas.js'
 import { describeMoveZh } from './rules/describe-move.js'
@@ -71,7 +73,6 @@ export async function buildServer(opts: {
   }
 
   // --- 聊天基础设施 ---
-  const pmem = new PersonaMemoryRepo(db)
 
   // LLM:优先使用注入值;未注入则按原始逻辑(DASHSCOPE env → DashscopeLLM / FakeLLM)
   let llm: LLMProvider
@@ -85,12 +86,33 @@ export async function buildServer(opts: {
     }
   }
 
+  // 记忆:优先 SurrealDB 语义记忆;连接/配置失败则降级为内存 store(聊天/反思照常,只是不持久、不语义)
+  let mem: import('./memory/store.js').MemoryStore
+  try {
+    const embedding = new DashscopeEmbedding()
+    const surreal = new SurrealMemoryStore({
+      url: process.env.SURREAL_URL ?? 'ws://127.0.0.1:8000',
+      namespace: process.env.SURREAL_NS ?? 'weiguan',
+      database: process.env.SURREAL_DB ?? 'weiguan',
+      username: process.env.SURREAL_USER ?? 'root',
+      password: process.env.SURREAL_PASS ?? 'root',
+      embedding,
+      llm,
+      now: () => Date.now(),
+    })
+    await surreal.connect()
+    mem = surreal
+  } catch (err) {
+    console.warn('SurrealDB 记忆不可用,降级为内存记忆(不持久):', (err as Error).message)
+    mem = new FakeMemoryStore(() => Date.now())
+  }
+
   // 活跃 /play WebSocket 连接集合,用于广播聊天消息
   const sockets = new Set<any>()
 
   const chat = new ChatEngine({
     llm,
-    mem: pmem,
+    mem,
     now: () => Date.now(),
     emit: (line) => {
       const msg = JSON.stringify({ type: 'chat', ...line })
@@ -151,7 +173,7 @@ export async function buildServer(opts: {
     }
 
     for (const p of spectators()) {
-      reflect({ repo: pmem, llm, personaId: p.id, gameId, now: () => Date.now(), playerSummary })
+      reflect({ store: mem, llm, personaId: p.id, gameId, now: () => Date.now(), playerSummary })
         .catch(() => { /* 反思失败静默忽略 */ })
     }
   }
@@ -191,6 +213,7 @@ export async function buildServer(opts: {
   app.addHook('onClose', async () => {
     try { engine?.close?.() } catch {}
     try { db.close() } catch {}
+    try { if (mem instanceof SurrealMemoryStore) await mem.close() } catch {}
   })
 
   await app.register(fastifyWebsocket)

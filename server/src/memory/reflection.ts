@@ -1,4 +1,4 @@
-import type { PersonaMemoryRepo } from './persona-memory-repo.js'
+import type { MemoryStore } from './store.js'
 import type { LLMProvider } from '../llm/provider.js'
 import type { PersonaId } from '../types.js'
 import { getPersona } from '../personas/personas.js'
@@ -56,10 +56,10 @@ function parseReflection(raw: string): Array<{ kind: 'fact' | 'insight'; content
 }
 
 export async function reflect(args: {
-  repo: PersonaMemoryRepo; llm: LLMProvider; personaId: PersonaId; gameId: number; now: () => number
+  store: MemoryStore; llm: LLMProvider; personaId: PersonaId; gameId: number; now: () => number
   playerSummary: string
 }): Promise<void> {
-  const { repo, llm, personaId, now, playerSummary } = args
+  const { store, llm, personaId, now, playerSummary } = args
   if (!playerSummary) return
   const persona = getPersona(personaId)
 
@@ -79,7 +79,7 @@ export async function reflect(args: {
   const createdAt = new Date(now()).toISOString()
 
   for (const entry of entries) {
-    repo.add({
+    await store.record({
       personaId,
       kind: entry.kind,
       content: entry.content,
