@@ -2,8 +2,7 @@ import { buildServer } from './ws-server.js'
 
 const enginePath = process.env.PIKAFISH_PATH
 if (!enginePath) {
-  console.error('请设置 PIKAFISH_PATH 指向 Pikafish 可执行文件')
-  process.exit(1)
+  console.warn('未配置 PIKAFISH_PATH:对弈/诊断功能不可用,聊天与复盘仍可用')
 }
 
 const app = await buildServer({ dbPath: process.env.DB_PATH ?? './weiguan.sqlite', enginePath })

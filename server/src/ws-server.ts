@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import Fastify from 'fastify'
 import fastifyWebsocket from '@fastify/websocket'
 import { openDb } from './store/db.js'
@@ -13,22 +14,45 @@ import { generateDrills } from './training/generate-drills.js'
 import { compareWindows } from './report/compare.js'
 import { ChatEngine } from './chat/chat-engine.js'
 import { VolcanoLLM } from './llm/volcano.js'
+import { FakeLLM } from './llm/fake.js'
 import { PersonaMemoryRepo } from './memory/persona-memory-repo.js'
 import { reflect } from './memory/reflection.js'
 import { spectators } from './personas/personas.js'
 import { describeMoveZh } from './rules/describe-move.js'
 import { MessagesRepo } from './store/messages-repo.js'
 import { serializeGame, validateImport } from './store/game-export.js'
+import type { EngineLine } from './types.js'
 
-export async function buildServer(opts: { dbPath: string; enginePath: string }) {
+export async function buildServer(opts: { dbPath: string; enginePath?: string }) {
   const db = openDb(opts.dbPath)
   const repo = new GamesRepo(db)
   const messages = new MessagesRepo(db)
-  const engine = new UciEngine(spawnTransport(opts.enginePath))
+
+  // 引擎可选:缺失或路径不存在时降级为 null
+  const engine = opts.enginePath && existsSync(opts.enginePath)
+    ? new UciEngine(spawnTransport(opts.enginePath))
+    : null
+  if (!engine) {
+    console.warn('象棋引擎未配置或路径不存在:对弈/诊断功能不可用,聊天与复盘仍可用')
+  }
+
+  // 引擎 stub:同时满足 GameSession.EngineLike 与 DiagnoseDeps.EngineLike,
+  // 调用时抛错(对弈/诊断的上层守卫会在更早处拦截,stub 仅作类型占位)
+  const engineStub: {
+    analyze(fen: string, opts?: { multipv: number; depth?: number; movetime?: number }): Promise<EngineLine[]>
+  } = {
+    analyze: async () => { throw new Error('引擎未配置') },
+  }
 
   // --- 聊天基础设施 ---
   const pmem = new PersonaMemoryRepo(db)
-  const llm = new VolcanoLLM()
+
+  // LLM 可选:缺少 ARK key 时降级为 FakeLLM(返回空串 → chat-engine 静默)
+  const hasArk = !!(process.env.ARK_API_KEY && process.env.ARK_BASE_URL)
+  const llm = hasArk ? new VolcanoLLM() : new FakeLLM([], '')
+  if (!hasArk) {
+    console.warn('未配置 ARK_API_KEY/ARK_BASE_URL:观棋聊天功能不可用,对弈/诊断照常运行')
+  }
 
   // 活跃 /play WebSocket 连接集合,用于广播聊天消息
   const sockets = new Set<any>()
@@ -103,7 +127,7 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
 
   const session = new GameSession({
     repo,
-    engine,
+    engine: engine ?? engineStub,
     makePosition: (fen) => Position.fromFen(fen) as any,
     clock: () => new Date().toISOString(),
     onStimulus: (s) => { void chat.onStimulus(s) },
@@ -120,7 +144,8 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
 
   const analysis = new AnalysisRepo(db)
   const training = new TrainingRepo(db)
-  const diagDeps = { games: repo, analysis, engine, clock: () => new Date().toISOString(), depth: 12 }
+  // diagDeps.engine 仅在 engine 不为 null 时才会被实际调用(调用处均有守卫)
+  const diagDeps = { games: repo, analysis, engine: engine ?? engineStub, clock: () => new Date().toISOString(), depth: 12 }
 
   // 局末自动诊断幂等 set(避免同一局重复触发引擎分析)
   const diagnosedGames = new Set<number>()
@@ -177,14 +202,18 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
           socketGameId = gameId  // 记录该连接当前局 id,供 close 时触发中途反思
           socket.send(JSON.stringify({ type: 'started', gameId }))
         } else if (msg.type === 'move') {
+          if (!engine) {
+            socket.send(JSON.stringify({ type: 'error', message: '未配置象棋引擎,无法对弈(聊天/复盘仍可用)' }))
+            return
+          }
           const result = await session.playHumanMove(msg.gameId as number, msg.move as string)
           socket.send(JSON.stringify({ type: 'update', ...result }))
           // 局末:对每个旁观者触发反思(异步,失败不影响主流程)
           if (result.over) {
             const gameId = msg.gameId as number
             reflectGame(gameId).catch(() => { /* 反思失败静默忽略 */ })
-            // 局末自动后台诊断(fire-and-forget,幂等)
-            if (!diagnosedGames.has(gameId)) {
+            // 局末自动后台诊断(fire-and-forget,幂等;引擎未配置则跳过)
+            if (engine && !diagnosedGames.has(gameId)) {
               diagnosedGames.add(gameId)
               void diagnoseGame(diagDeps, gameId).catch(() => { /* 诊断失败静默忽略,不影响对局 */ })
             }
@@ -241,6 +270,7 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
 
   // 触发局后诊断(真跑引擎,可能数十秒)
   app.post('/games/:id/diagnose', async (req, reply) => {
+    if (!engine) return reply.code(503).send({ error: '引擎未配置,诊断功能不可用' })
     const id = Number((req.params as { id: string }).id)
     if (!Number.isInteger(id)) return reply.code(400).send({ error: 'invalid id' })
     try {
