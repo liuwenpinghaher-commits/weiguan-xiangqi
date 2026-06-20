@@ -21,7 +21,9 @@ const LONG_THINK_MS = 8000
 
 function selectCoach(sorted: EngineLine[], best: EngineLine, ctx: DirectorContext): DirectorDecision {
   const longThinkShift = ctx.playerState.lastMoveMs > LONG_THINK_MS ? -10 : 0
-  const shift = ctx.playerState.lossStreak * -20 + ctx.playerState.winStreak * 15 + longThinkShift
+  // recentBlunder: 玩家刚走出 blunder → 再松一档(-15)，维持心流，别落井下石
+  const recentBlunderShift = ctx.playerState.recentBlunder ? -15 : 0
+  const shift = ctx.playerState.lossStreak * -20 + ctx.playerState.winStreak * 15 + longThinkShift + recentBlunderShift
   const band = { low: ctx.targetBand.low + shift, high: ctx.targetBand.high + shift }
 
   const allowed = sorted.filter(l => best.scoreCp - l.scoreCp <= ctx.maxDropCp)

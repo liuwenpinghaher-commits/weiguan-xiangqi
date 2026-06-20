@@ -16,6 +16,8 @@ export interface PlayerState {
   winStreak: number
   lossStreak: number
   lastMoveMs: number       // 上一手用时(毫秒),0 表示未知
+  /** 人方刚走出 blunder（上一手评分摆幅 ≥150 cp 对 AI 有利）*/
+  recentBlunder?: boolean
 }
 
 export interface DirectorContext {

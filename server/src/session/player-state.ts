@@ -1,7 +1,7 @@
 import type { PlayerState } from '../types.js'
 
 /**
- * 根据最近战绩和上一手用时计算 PlayerState。
+ * 根据最近战绩、上一手用时和是否刚走出 blunder 计算 PlayerState。
  * recent[0] 为最近一局结果。
  * winStreak:  从 recent[0] 起连续 'win' 的局数,遇到非 'win' 即停。
  * lossStreak: 从 recent[0] 起连续 'loss' 的局数,遇到非 'loss' 即停。
@@ -9,6 +9,7 @@ import type { PlayerState } from '../types.js'
 export function computePlayerState(
   recent: Array<'win' | 'loss' | 'draw'>,
   lastMoveMs: number,
+  recentBlunder = false,
 ): PlayerState {
   let winStreak = 0
   for (const r of recent) {
@@ -22,5 +23,5 @@ export function computePlayerState(
     else break
   }
 
-  return { winStreak, lossStreak, lastMoveMs }
+  return { winStreak, lossStreak, lastMoveMs, recentBlunder }
 }

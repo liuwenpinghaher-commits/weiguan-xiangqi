@@ -132,3 +132,38 @@ test('长考信号:lastMoveMs=12000(>8000) 时 band 下移-10=[50,70], y=72超�
   // shift=-10 → band=[50,70]: y=72>70 out ✓, z=55 in [50,70] → 选 z_lower
   expect(d.move).toBe('z_lower')
 })
+
+// ─── P1-7: 失误信号(recentBlunder) ────────────────────────────────────────────
+
+/**
+ * recentBlunder 测试设计：
+ *
+ * 候选集: x=300, y=72, z=55
+ * targetBand={low:60, high:80}, maxDropCp=320
+ * center=(60+80)/2=70
+ *
+ * 无 recentBlunder: shift = 0*(-20)+0*15 = 0 → band=[60,80]
+ *   inBand: y=72 ✓ → 选 y_mid
+ *
+ * recentBlunder=true: shift += -15 → shift=-15 → band=[45,65]
+ *   inBand: y=72>65 out, z=55 in [45,65] ✓ → 选 z_lower
+ *   (玩家刚失误→ AI 让一档,让局面更让玩家可回血)
+ */
+
+test('recentBlunder=false 时无额外松档,仍选 y_mid(scoreCp=72)', () => {
+  const d = selectMove(longThinkLines, {
+    ...longThinkBase,
+    playerState: { winStreak: 0, lossStreak: 0, lastMoveMs: 0, recentBlunder: false },
+  })
+  // band=[60,80]: y=72 in → 选 y_mid
+  expect(d.move).toBe('y_mid')
+})
+
+test('recentBlunder=true 时 band 再松-15=[45,65], y=72超上沿改选 z_lower(55)', () => {
+  const d = selectMove(longThinkLines, {
+    ...longThinkBase,
+    playerState: { winStreak: 0, lossStreak: 0, lastMoveMs: 0, recentBlunder: true },
+  })
+  // shift=-15 → band=[45,65]: y=72>65 out, z=55 in ✓ → 选 z_lower
+  expect(d.move).toBe('z_lower')
+})

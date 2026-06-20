@@ -5,6 +5,7 @@ import { describeMoveZh } from '../rules/describe-move.js'
 import { computePlayerState } from './player-state.js'
 import { adjudicate } from '../rules/adjudicate.js'
 import type { RepeatInfo } from '../rules/adjudicate.js'
+import { classifyMoveKind, baseTensionForKind } from './stimulus-kind.js'
 
 interface PositionLike {
   fen(): string
@@ -61,9 +62,6 @@ export interface GameSessionDeps {
 
 const MULTIPV = 5
 
-/** 人着用时超过此值(毫秒)时触发 long_think 刺激 */
-const LONG_THINK_THRESHOLD_MS = 8000
-
 /** 根据手数推断对局阶段 */
 function calcPhase(ply: number): 'opening' | 'midgame' | 'endgame' {
   if (ply <= 16) return 'opening'
@@ -92,6 +90,17 @@ export class GameSession {
   private repeatHistories = new Map<number, RepeatInfo[]>()
   /** 三次重复/60回合裁决：每局自上次吃子以来的半步数 */
   private noCapturePlies = new Map<number, number>()
+  /**
+   * 每局上一手"红方视角评分"（厘兵分）。
+   * 用于计算评分摆幅（swing），支持 blunder/brilliant 分类。
+   * key=gameId, value=上一手落定后的红方 cp；null 表示尚无前手评分。
+   */
+  private prevRedCp = new Map<number, number | null>()
+  /**
+   * 上一手人方是否走出 blunder（供导演决策用）。
+   * key=gameId, value=true/false。
+   */
+  private lastHumanBlunder = new Map<number, boolean>()
 
   constructor(private deps: GameSessionDeps) {}
 
@@ -223,11 +232,16 @@ export class GameSession {
       const humanPly = this.deps.repo.getMoves(gameId).length
       const phase = calcPhase(humanPly)
       const endHumanLastMs = this.lastMoveMs.get(gameId) ?? 0
-      const endHumanKind = endHumanLastMs > LONG_THINK_THRESHOLD_MS ? 'long_think' : 'move'
+      const isEndCapture = humanZh?.includes('吃') ?? false
+      const endHumanKind = classifyMoveKind(0, isEndCapture, endHumanLastMs)
+      const endBaseTension = baseTensionForKind(endHumanKind)
+      const endTension = isEndCapture && endHumanKind === 'move'
+        ? Math.max(endBaseTension, 0.9)
+        : endBaseTension
       this.deps.onStimulus?.({
         kind: endHumanKind, gameId, scoreCp: null,
         moveZh: humanZh, side: humanTurn, ply: humanPly, phase,
-        tension: humanZh?.includes('吃') ? 0.9 : (endHumanKind === 'long_think' ? 0.7 : 0.4),
+        tension: endTension,
       })
       return { aiMove: null, fen: afterHuman.fen(), over: true, result }
     }
@@ -255,31 +269,60 @@ export class GameSession {
     const humanPhase = calcPhase(humanPly)
     const aiPhase = calcPhase(aiPly)
 
-    // 人着刺激:长考(>8s)时升级为 long_think 刺激并提升张力
+    // ── 评分摆幅计算 ──────────────────────────────────────────────────────────
+    // AI 着完成后，得到本手红方视角评分
+    const aiCp = decision.chosenLine.scoreCp
+    const redCp = aiSide === 'red' ? aiCp : -aiCp
+
+    // 计算 AI 着的 swing（走子方=AI 视角）：redCp 对 AI 的意义
+    //   若 AI 是红方：swing = redCp - prevRedCp（对红有利为正即对 AI 有利）
+    //   若 AI 是黑方：swing = -(redCp - prevRedCp)（红方优势减少 = 黑方增益）
+    const prev = this.prevRedCp.get(gameId) ?? null
+    let aiSwing: number | null = null
+    if (prev !== null) {
+      const deltaRed = redCp - prev
+      aiSwing = aiSide === 'red' ? deltaRed : -deltaRed
+    }
+
+    // 更新 prevRedCp（以本手 AI 结束后的红方 cp 为准）
+    this.prevRedCp.set(gameId, redCp)
+
+    // 人着刺激：结合 swing（此时人着尚无引擎 cp，用 null swing 降级为 long_think/move）
     const humanLastMs = this.lastMoveMs.get(gameId) ?? 0
-    const humanKind = humanLastMs > LONG_THINK_THRESHOLD_MS ? 'long_think' : 'move'
-    const humanTension = humanKind === 'long_think'
-      ? 0.7
-      : (humanZh?.includes('吃') ? 0.9 : 0.55)
+    const isHumanCapture = humanZh?.includes('吃') ?? false
+    // 人着暂无精确 swing（需要人着前后引擎评分，当前仅 AI 着后才有评分）
+    // 因此人着 kind 仍用 lastMoveMs 判断，AI 着 kind 用 aiSwing
+    const humanKind = classifyMoveKind(0, isHumanCapture, humanLastMs)
+    const humanBaseTension = baseTensionForKind(humanKind)
+    const humanTension = isHumanCapture && humanKind === 'move'
+      ? Math.max(humanBaseTension, 0.9)
+      : humanBaseTension
     this.deps.onStimulus?.({
       kind: humanKind, gameId, scoreCp: null,
       moveZh: humanZh, side: humanTurn, ply: humanPly, phase: humanPhase,
       tension: humanTension,
     })
 
-    // AI 着刺激:decision.chosenLine.scoreCp 是"AI 走子方视角",转为红方视角
-    const aiCp = decision.chosenLine.scoreCp
-    // aiSide 是 AI 刚走完这步时的走子方(即 AI 方)
-    const redCp = aiSide === 'red' ? aiCp : -aiCp
-    // 张力:评分摆幅越大越想说(下限 0.5);吃子额外抬到 ≥0.9
-    const aiBase = Math.max(0.5, Math.min(1, Math.abs(aiCp) / 300))
-    const aiTension = aiZh?.includes('吃') ? Math.max(aiBase, 0.9) : aiBase
+    // AI 着刺激：用 aiSwing 分类（无 prev 时降级为 move）
+    const isAiCapture = aiZh?.includes('吃') ?? false
+    const aiSwingVal = aiSwing ?? 0
+    const aiKind = aiSwing !== null
+      ? classifyMoveKind(aiSwingVal, isAiCapture, 0)
+      : 'move'
+    const aiBaseTension = baseTensionForKind(aiKind)
+    const aiTension = isAiCapture && aiKind === 'move'
+      ? Math.max(aiBaseTension, 0.9)
+      : aiBaseTension
     this.deps.onStimulus?.({
-      kind: 'move', gameId, scoreCp: redCp,
+      kind: aiKind, gameId, scoreCp: redCp,
       moveZh: aiZh, side: aiSide, ply: aiPly, phase: aiPhase,
       tension: aiTension,
       byPlayerPersona: true,
     })
+
+    // 更新人方是否 blunder（用 aiSwing 反推：AI 走完后 swing 极正 = 对 AI 有利 = 人方走坏了）
+    // 换言之：若 aiSwing >= 150（AI 捡到大便宜），说明人方上一手走出 blunder
+    this.lastHumanBlunder.set(gameId, aiSwing !== null && aiSwing >= 150)
 
     // AI 着终局判定：isGameOver（将死/困毙）与重复裁决并存
     const aiOver = afterAI.isGameOver()
@@ -367,7 +410,8 @@ export class GameSession {
     const mode = this.modes.get(gameId)!
     const recent = this.deps.repo.recentResults(10)  // 按各局自身 human_side 映射,无需传入
     const lastMoveMs = this.lastMoveMs.get(gameId) ?? 0
-    const playerState = computePlayerState(recent, lastMoveMs)
+    const recentBlunder = this.lastHumanBlunder.get(gameId) ?? false
+    const playerState = computePlayerState(recent, lastMoveMs, recentBlunder)
     // humanlike 模式用拟人强度 0.5（随机性适中）；coach 模式 strength 不参与决策但保持合理值
     const strength = mode === 'humanlike' ? 0.5 : 0.6
     return {
