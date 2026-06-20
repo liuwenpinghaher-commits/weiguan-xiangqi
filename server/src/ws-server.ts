@@ -18,6 +18,7 @@ import { reflect } from './memory/reflection.js'
 import { spectators } from './personas/personas.js'
 import { describeMoveZh } from './rules/describe-move.js'
 import { MessagesRepo } from './store/messages-repo.js'
+import { serializeGame, validateImport } from './store/game-export.js'
 
 export async function buildServer(opts: { dbPath: string; enginePath: string }) {
   const db = openDb(opts.dbPath)
@@ -321,6 +322,87 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
     const all = analysis.listGrowthMetrics()
     const mid = Math.floor(all.length / 2)
     return compareWindows(all.slice(0, mid), all.slice(mid))
+  })
+
+  // ── 棋谱导出/导入 ──────────────────────────────────────────
+
+  // 单局导出：GET /games/:id/export
+  // 返回 JSON，Content-Disposition 触发浏览器下载
+  app.get('/games/:id/export', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id)
+    if (!Number.isInteger(id) || isNaN(id)) return reply.code(400).send({ error: 'invalid id' })
+    const game = repo.getGame(id)
+    if (!game) return reply.code(404).send({ error: 'not found' })
+    const moves = repo.getMoves(id)
+    const exported = serializeGame(game, moves)
+    reply.header('Content-Disposition', `attachment; filename="game-${id}.json"`)
+    reply.header('Content-Type', 'application/json')
+    return exported
+  })
+
+  // 全库导出：GET /export
+  // 遍历所有对局并序列化，返回 { games: GameExport[] }
+  app.get('/export', async (_req, reply) => {
+    const allGames = repo.listGames()
+    const games = allGames.map(game => {
+      const moves = repo.getMoves(game.id)
+      return serializeGame(game, moves)
+    })
+    reply.header('Content-Disposition', 'attachment; filename="xiangqi-export.json"')
+    reply.header('Content-Type', 'application/json')
+    return { games }
+  })
+
+  // 棋谱导入：POST /games/import
+  // body: { startFen?, moves: string[], mode?, result? }
+  // 校验失败 → 400；成功 → { gameId }
+  app.post('/games/import', async (req, reply) => {
+    let validated: ReturnType<typeof validateImport>
+    try {
+      const body = req.body as {
+        startFen?: string; moves?: unknown; mode?: string; result?: string
+      }
+      if (!Array.isArray(body?.moves)) {
+        return reply.code(400).send({ error: 'moves 必须为字符串数组' })
+      }
+      validated = validateImport({
+        startFen: body.startFen,
+        moves: body.moves as string[],
+        mode: body.mode,
+        result: body.result,
+      })
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message })
+    }
+
+    const { startFen, moves, mode, result } = validated
+    const now = new Date().toISOString()
+
+    // createGame：humanSide 无法从导出数据还原（本系统简化：默认 red）
+    const gameId = repo.createGame({ mode: mode as GameMode, humanSide: 'red', startFen, startedAt: now })
+
+    // 逐手重放写入 moves 表；side 从 startFen 起算交替
+    let pos = Position.fromFen(startFen)
+    for (const move of moves) {
+      const side = pos.sideToMove()
+      const nextPos = pos.applyMove(move)
+      repo.addMove({
+        gameId,
+        side,
+        move,
+        fenAfter: nextPos.fen(),
+        scoreCp: null,
+        byAi: false,
+      })
+      pos = nextPos
+    }
+
+    // 如果有结果，补写 finishGame
+    if (result !== null) {
+      repo.finishGame(gameId, result, now)
+    }
+
+    return { gameId }
   })
 
   return app

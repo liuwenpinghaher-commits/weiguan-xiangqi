@@ -2,6 +2,14 @@ import { useEffect, useState } from 'react'
 import { Board } from '../board/Board.js'
 import { HTTP_BASE } from '../api/config.js'
 
+/** 下载单局棋谱 JSON */
+function downloadGameExport(gameId: number) {
+  const a = document.createElement('a')
+  a.href = `${HTTP_BASE}/games/${gameId}/export`
+  a.download = `game-${gameId}.json`
+  a.click()
+}
+
 interface MoveRow { ply: number; move: string; fenAfter: string; byAi: boolean; scoreCp: number | null }
 interface MessageRow { id: number; personaId: string; role: string; text: string; addressee: string | null; ts: string }
 
@@ -44,7 +52,16 @@ export function ReviewPage(props: { gameId: number }) {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: 16 }}>
-      <h1>复盘 · 第 {props.gameId} 局</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+        <h1 style={{ margin: 0, flex: 1 }}>复盘 · 第 {props.gameId} 局</h1>
+        <button
+          onClick={() => downloadGameExport(props.gameId)}
+          style={{ fontSize: 12, padding: '4px 10px', cursor: 'pointer' }}
+          title="导出本局棋谱 JSON"
+        >
+          导出棋谱
+        </button>
+      </div>
       <Board fen={fen} onMove={() => {}} />
       <div style={{ marginTop: 12 }}>
         <button onClick={() => setIdx(i => Math.max(0, i - 1))} disabled={idx === 0}>上一手</button>
