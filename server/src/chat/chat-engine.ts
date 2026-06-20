@@ -17,6 +17,7 @@ export interface ChatEngineDeps {
 
 /** 最近聊天缓冲条目 */
 interface RecentEntry {
+  id: PersonaId
   name: string
   text: string
 }
@@ -26,6 +27,16 @@ const RECENT_CAPACITY = 8  // 每个 gameId 最多保留最近 8 条
 /** 去标点、转小写,用于去重比较 */
 function normalize(s: string): string {
   return s.replace(/[，。！？,!?.、：:；;\s]/g, '').toLowerCase()
+}
+
+/** 平实的局势定性(刻意不夸张,避免动不动"大优"催生满屏感叹) */
+function qualWord(seen: number | null): string {
+  if (seen === null) return '还看不准'
+  if (seen > 250) return '红方明显占上风'
+  if (seen >= 90) return '红方稍好'
+  if (seen > -90) return '半斤八两'
+  if (seen >= -250) return '黑方稍好'
+  return '黑方明显占上风'
 }
 
 export class ChatEngine {
@@ -63,7 +74,8 @@ export class ChatEngine {
         const gameRecent = this.recent.get(stim.gameId) ?? []
         const context: RecentEntry[] = [...gameRecent, ...roundSoFar]
 
-        const text = (await this.deps.llm.chat(this.buildPrompt(persona, stim, context), {
+        const plan = this.plan(persona, stim, context)
+        const text = (await this.deps.llm.chat(plan.messages, {
           disableThinking: true, maxTokens: 80,
         })).trim()
         if (!text) continue
@@ -78,7 +90,7 @@ export class ChatEngine {
           gameId: stim.gameId,
           personaId: id,
           text,
-          addressee: this.addressee(stim),
+          addressee: plan.addressee,
           ts: new Date(this.deps.now()).toISOString(),
         }
         this.deps.emit(line)
@@ -94,7 +106,7 @@ export class ChatEngine {
         this.lastSpokeAt.set(id, this.deps.now())
 
         // 推入本回合已发言数组(供后续 speaker 看到)
-        const entry: RecentEntry = { name: persona.name, text }
+        const entry: RecentEntry = { id, name: persona.name, text }
         roundSoFar.push(entry)
 
         // 推入全局 recent 缓冲(跨刺激记忆)
@@ -118,63 +130,67 @@ export class ChatEngine {
     }
   }
 
-  private buildPrompt(p: Persona, stim: Stimulus, context: RecentEntry[]) {
+  /** 为一个说话者生成 LLM 消息 + 这条说给谁(addressee) */
+  private plan(p: Persona, stim: Stimulus, context: RecentEntry[]): {
+    messages: { role: 'system' | 'user'; content: string }[]
+    addressee: ChatLine['addressee']
+  } {
     const seen = viewScore(stim.scoreCp, p.skill, this.deps.rng)
-
-    // 局势定性描述
-    let qual: string
-    if (seen === null) {
-      qual = '局势未明'
-    } else if (seen > 200) {
-      qual = '红方大优'
-    } else if (seen >= 80) {
-      qual = '红方占优'
-    } else if (seen > -80) {
-      qual = '大致均势'
-    } else if (seen >= -200) {
-      qual = '黑方占优'
-    } else {
-      qual = '黑方大优'
-    }
+    const qual = qualWord(seen)
 
     const facts = this.deps.mem
       .retrieve(p.id, stim.moveZh ?? stim.humanText ?? stim.kind, 3, this.deps.now, ['fact', 'insight'])
       .map(m => '· ' + m.content).join('\n') || '(还不了解)'
 
-    // 最近聊天上下文段(为空时提示刚开局)
     const contextLine = context.length > 0
       ? context.map(c => `- ${c.name}:${c.text}`).join('\n')
       : '(刚开局,还没人说话)'
 
-    const sys = `你是「${p.name}」:${p.background} 口吻:${p.voice} 立场:${p.leaning}\n`
-      + `你在围观一局中国象棋,用你的水平和脾气说一句(≤25字),可抛棋招/调侃/拉踩,允许看走眼。你懂棋,适时可抛个棋谚或小典故。只输出这一句。\n`
-      + `你可以顺着别人的话接、抬杠或拉踩某位棋友,也可以只评这步棋;像真人围观那样自然。\n`
+    const sys = `你是「${p.name}」。${p.background}\n说话像:${p.voice} 立场:${p.leaning}\n`
+      + `你蹲在棋摊边上看棋,像真人闲看那样说话:\n`
+      + `- 口语、随意,别像解说员。多数时候平淡甚至懒得评;少用感叹号,只有真出彩或真离谱才激动。\n`
+      + `- 长短不一:有时就俩字("啧""行了"),有时半句,偶尔一整句。别每句都一样长一个调。\n`
+      + `- 不必每步都点评棋,可以接别人的话拌嘴,也可以扯两句自己的事(你的行当/家长里短/当年)。\n`
+      + `- 懂棋但别掉书袋;棋谚、老话偶尔自然带一句即可,别空泛、别套话、别尬吹。\n`
+      + `只输出你说的那一句话,不带引号、不加旁白、不写名字前缀。\n`
       + `你对这位棋手的了解:\n${facts}\n`
-      + `最近这桌在聊(可点名回应、拉踩、抬杠或附和某人):\n${contextLine}`
+      + `刚才这桌在聊(可点名回应、抬杠或拉踩):\n${contextLine}`
+
+    // 长度风格:多数偏短,制造节奏
+    const lr = this.deps.rng()
+    const len = lr < 0.5 ? '就两三个字或半句' : lr < 0.85 ? '一句话' : '一句话,可稍长但别啰嗦'
+
+    // react 目标:最近一条不是自己说的
+    const target = [...context].reverse().find(c => c.id !== p.id)
 
     let user: string
+    let addressee: ChatLine['addressee'] = 'all'
     if (stim.kind === 'human_said') {
-      user = `玩家刚说:"${stim.humanText}"。回他一句:`
-    } else if (stim.kind === 'long_think') {
-      user = `玩家这步想了很久还没落子,用你的脾气调侃/安慰/施压一句:`
-    } else if (stim.kind === 'idle' || (stim.kind === 'topic_open' && !stim.moveZh)) {
-      user = `棋局正平静,随口聊点棋外的(行业/往事/家常)或讲个棋坛掌故/棋谚/开局套路,一句话,别评具体某步:`
+      user = `玩家刚冲你们说:"${stim.humanText}"。${len},回他一句,口语自然:`
+      addressee = 'human'
     } else if (p.isPlayer && stim.byPlayerPersona) {
-      user = `你(${p.name})刚走了「${stim.moveZh ?? '一步'}」,当前${qual}。自评一句(≤25字,别空泛):`
+      user = `你(${p.name})刚走了「${stim.moveZh ?? '一步'}」,局面${qual}。自评一句,别吹,${len}:`
+    } else if (stim.kind === 'long_think') {
+      user = `对方这步想了很久还没落子。${len},用你的脾气随口催两句/调侃/安慰,别太冲:`
+    } else if (stim.kind === 'idle' || (stim.kind === 'topic_open' && !stim.moveZh)) {
+      user = `这会儿没大事。${len},随口扯点棋外的(你自己的行当/家里/最近遇上的事),或棋摊闲话、一句棋谚掌故,别评具体某步:`
+    } else if (target && this.deps.rng() < 0.45) {
+      // 真互动:接某人的话茬,而不是评这步棋
+      user = `「${target.name}」刚说:"${target.text}"。${len},接他的话——附和、抬杠或拆台都行,像老熟人拌嘴,别一本正经评棋:`
+      addressee = target.id
     } else if (stim.moveZh) {
-      user = `第${stim.ply ?? '?'}手(${stim.phase ?? ''}):${stim.moveZh}。当前${qual}。说一句:`
+      user = `第${stim.ply ?? '?'}手:${stim.moveZh},局面${qual}。${len},平常心说,大多数棋没什么可大惊小怪;没意思也可以只哼一声或扯句别的:`
     } else {
-      user = `刚走了一步棋,当前${qual}。说一句:`
+      user = `刚走了一步,局面${qual}。${len},随口说:`
     }
 
-    return [
-      { role: 'system' as const, content: sys },
-      { role: 'user' as const, content: user },
-    ]
-  }
-
-  private addressee(stim: Stimulus): ChatLine['addressee'] {
-    return stim.kind === 'human_said' ? 'human' : 'all'
+    return {
+      messages: [
+        { role: 'system', content: sys },
+        { role: 'user', content: user },
+      ],
+      addressee,
+    }
   }
 
   private recentMap(): Map<string, number> {

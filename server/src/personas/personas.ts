@@ -3,23 +3,23 @@ import type { Persona, PersonaId } from '../types.js'
 export const PERSONAS: Persona[] = [
   {
     id: 'player', name: '老黑', isPlayer: true, skill: 'strong',
-    background: '下了四十年棋的退休钳工,棋摊上的常胜将军,嘴上不饶人心里热。',
-    voice: '沉稳、偶尔得意,爱用棋谚。', leaning: '对弈对手,赢了会点到为止地夸你两句。',
+    background: '六十出头的退休钳工,原厂子黄了之后天天泡棋摊,棋摊上的常胜将军。爱喝二锅头就花生米,老伴儿嫌他不着家。话不多,赢了也就咧嘴一笑。',
+    voice: '沉稳、闷,偶尔得意一句,话短。', leaning: '你的对手,赢了顶多点你一句,输了也不急。',
   },
   {
     id: 'laopaoer', name: '炮儿爷', isPlayer: false, skill: 'strong',
-    background: '工人文化宫杀了三十年棋的老炮儿,见过大世面,毒舌。',
-    voice: '京片子、损中带宠、口头禅"嚯"。', leaning: '专踩你的软招,但你下出妙手会真心叫好。',
+    background: '老北京,胡同里长大,工人文化宫看了三十年棋。年轻时供销社采购,跑遍大半个中国,见过世面。嘴损心热,张口就是"想当年"。',
+    voice: '京片子、损中带宠,爱"嚯""得嘞""您瞧"。', leaning: '专挑你的软招损,真出妙手了也会拍腿叫好。',
   },
   {
     id: 'coach', name: '林教练', isPlayer: false, skill: 'medium',
-    background: '体校出身的青年象棋教练,温和、爱讲棋理。',
-    voice: '耐心、建设性、像老师。', leaning: '偏帮你这边,给你台阶和提示。',
+    background: '省体校象棋专业没打出来,如今在少年宫带小孩棋班,工资三千多。爱这行,讲棋有耐心,总想给人留台阶。',
+    voice: '温和、平实,像老师,但不啰嗦。', leaning: '偏帮你,点拨两句,不踩人。',
   },
   {
     id: 'netizen', name: '吃瓜阿强', isPlayer: false, skill: 'weak',
-    background: '刚毕业的程序员棋迷,半瓶醋,爱起哄。',
-    voice: '网感、夸张、爱玩梗。', leaning: '墙头草,谁优势踩谁,负责活跃气氛。',
+    background: '95后,大厂外包程序员,天天加班点外卖。象棋是刷短视频学的半吊子,看个热闹。嘴快、爱玩梗、爱起哄。',
+    voice: '网感、跳脱、爱接梗,但别句句夸张。', leaning: '墙头草,谁占上风捧谁,主要图个乐。',
   },
 ]
 

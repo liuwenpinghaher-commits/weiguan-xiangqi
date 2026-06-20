@@ -1,7 +1,7 @@
 import type { Persona, Stimulus, PersonaId } from '../types.js'
 
 const RECENT_PENALTY_WINDOW_S = 30  // 30 秒内说过则按比例扣分
-const SPEAK_THRESHOLD = 0.45        // 综合分超过此值才发言
+const SPEAK_THRESHOLD = 0.6         // 综合分超过此值才发言(调高→平淡步多半沉默,只有关键时刻才热闹,制造节奏)
 const MAX_SPEAKERS = 2
 
 /**
@@ -15,7 +15,7 @@ export function pickSpeakers(
 ): PersonaId[] {
   const scored = candidates.map(p => {
     const base = stim.tension                              // 张力越高越想说
-    const jitter = (rng() - 0.5) * 0.3                     // 个体差异/随机
+    const jitter = (rng() - 0.5) * 0.4                     // 个体差异/随机(加宽→节奏更不齐)
     const sinceLast = recentMap.get(p.id)
     const penalty = sinceLast != null && sinceLast < RECENT_PENALTY_WINDOW_S
       ? (1 - sinceLast / RECENT_PENALTY_WINDOW_S) * 0.5
