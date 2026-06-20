@@ -160,7 +160,7 @@ export function PlayPage() {
     <div style={styles.page}>
       <h1 style={styles.title}>围观象棋</h1>
 
-      <div style={styles.statusBar}>
+      <div style={styles.statusBar} aria-live="polite" aria-label="对局状态">
         <span style={statusError ? styles.statusTextError : styles.statusText}>
           {statusMsg}
         </span>
@@ -202,6 +202,8 @@ export function PlayPage() {
           style={{ ...styles.modeBtn, ...(mode === 'coach' ? styles.modeBtnActive : {}) }}
           onClick={() => handleModeChange('coach')}
           title="AI 会带你、动态控盘，保持局面胶着让你跳一跳够得着"
+          aria-label="切换为陪练模式"
+          aria-pressed={mode === 'coach'}
         >
           陪练模式
         </button>
@@ -209,6 +211,8 @@ export function PlayPage() {
           style={{ ...styles.modeBtn, ...(mode === 'humanlike' ? styles.modeBtnActive : {}) }}
           onClick={() => handleModeChange('humanlike')}
           title="AI 像真人棋风，输赢自然，随机性中带有真实下法"
+          aria-label="切换为拟人对手模式"
+          aria-pressed={mode === 'humanlike'}
         >
           拟人对手
         </button>
@@ -225,6 +229,8 @@ export function PlayPage() {
           style={{ ...styles.modeBtn, ...(side === 'red' ? styles.modeBtnRedActive : {}) }}
           onClick={() => handleSideChange('red')}
           title="执红先手"
+          aria-label="执红先手"
+          aria-pressed={side === 'red'}
         >
           执红（先手）
         </button>
@@ -232,6 +238,8 @@ export function PlayPage() {
           style={{ ...styles.modeBtn, ...(side === 'black' ? styles.modeBtnBlackActive : {}) }}
           onClick={() => handleSideChange('black')}
           title="执黑后手，AI 红方先走"
+          aria-label="执黑后手"
+          aria-pressed={side === 'black'}
         >
           执黑（后手）
         </button>
@@ -241,7 +249,7 @@ export function PlayPage() {
       </div>
 
       <div style={styles.controls}>
-        <button style={styles.btn} onClick={() => handleRestart()}>
+        <button style={styles.btn} onClick={() => handleRestart()} aria-label="重新开始新对局">
           重新开始
         </button>
         {status === 'over' && gameId !== null && (
