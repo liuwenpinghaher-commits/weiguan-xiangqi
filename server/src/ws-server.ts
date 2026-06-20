@@ -16,7 +16,6 @@ import { compareWindows } from './report/compare.js'
 import { growthReport } from './report/llm-report.js'
 import { prevFenForPly, worstHumanPly } from './report/sparring.js'
 import { ChatEngine } from './chat/chat-engine.js'
-import { FakeLLM } from './llm/fake.js'
 import { RuntimeConfig } from './config/runtime-config.js'
 import { SettingsRepo } from './store/settings-repo.js'
 import { MutableLLM, buildInnerLlm } from './llm/mutable-llm.js'
@@ -210,7 +209,11 @@ export async function buildServer(opts: {
   const analysis = new AnalysisRepo(db)
   const training = new TrainingRepo(db)
   // diagDeps.engine 仅在 engine 不为 null 时才会被实际调用(调用处均有守卫)
-  const diagDeps = { games: repo, analysis, engine: engine ?? engineStub, clock: () => new Date().toISOString(), depth: cfg.getDiagnose().depth }
+  // depth 用 getter 每次诊断时读 cfg,保证控制台改 diagnose.depth 即时生效(不需重启)
+  const diagDeps = {
+    games: repo, analysis, engine: engine ?? engineStub, clock: () => new Date().toISOString(),
+    get depth() { return cfg.getDiagnose().depth },
+  }
 
   // 局末自动诊断幂等 set(避免同一局重复触发引擎分析)
   const diagnosedGames = new Set<number>()
