@@ -86,3 +86,22 @@ CREATE TABLE IF NOT EXISTS messages (
   ts TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_game ON messages(game_id, id);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  section    TEXT PRIMARY KEY,
+  json       TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS persona_config (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  is_player   INTEGER NOT NULL,
+  skill       TEXT NOT NULL,
+  background  TEXT NOT NULL,
+  voice_style TEXT NOT NULL,
+  leaning     TEXT NOT NULL,
+  tts_voice   TEXT NOT NULL,
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  updated_at  TEXT NOT NULL
+);
