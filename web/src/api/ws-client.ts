@@ -1,7 +1,10 @@
+import { WS_BASE } from './config.js'
+
 export type ServerMsg =
   | { type: 'started'; gameId: number }
   | { type: 'update'; aiMove: string | null; fen: string; over: boolean }
   | { type: 'error'; message: string }
+  | { type: 'chat'; gameId: number; personaId: string; text: string; addressee: string; ts: string }
 
 export type ConnStatus = 'open' | 'closed' | 'error'
 
@@ -9,7 +12,7 @@ export function connect(
   onMsg: (m: ServerMsg) => void,
   onStatus?: (s: ConnStatus) => void,
 ): { send: (m: object) => void; close: () => void } {
-  const ws = new WebSocket('ws://localhost:8787/play')
+  const ws = new WebSocket(`${WS_BASE}/play`)
 
   ws.onopen = () => onStatus?.('open')
 

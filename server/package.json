@@ -4,13 +4,14 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch --env-file=.env src/index.ts"
   },
   "dependencies": {
     "@fastify/websocket": "^10.0.1",
     "better-sqlite3": "^11.3.0",
     "elephantops": "^0.1.1",
     "fastify": "^4.28.0",
+    "openai": "^4.104.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
