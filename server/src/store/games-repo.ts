@@ -58,6 +58,17 @@ export class GamesRepo {
     }))
   }
 
+  /** 级联删除一局及其全部关联行(无 FK ON DELETE,手动事务清理) */
+  deleteGame(id: number): void {
+    const tx = this.db.transaction((gid: number) => {
+      for (const t of ['moves', 'messages', 'move_annotations', 'drill_attempts', 'growth_metrics']) {
+        this.db.prepare(`DELETE FROM ${t} WHERE game_id=?`).run(gid)
+      }
+      this.db.prepare('DELETE FROM games WHERE id=?').run(gid)
+    })
+    tx(id)
+  }
+
   /** 最近已结束对局,相对各局自己的 human_side 映射成 玩家 视角的胜负(最近在前) */
   recentResults(limit: number): RecentResult[] {
     const rows: any[] = this.db.prepare(
