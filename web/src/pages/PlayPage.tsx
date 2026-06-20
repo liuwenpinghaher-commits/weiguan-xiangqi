@@ -148,17 +148,25 @@ export function PlayPage() {
           重新开始
         </button>
         {status === 'over' && gameId !== null && (
-          <a
-            href={`#/review/${gameId}`}
-            style={styles.reviewBtn}
-          >
-            查看复盘
-          </a>
+          <>
+            <a href={`#/review/${gameId}`} style={styles.reviewBtn}>
+              查看复盘
+            </a>
+            <a href={`#/analysis/${gameId}`} style={styles.analysisBtn}>
+              分析本局
+            </a>
+            <a href={`#/training/${gameId}`} style={styles.trainingBtn}>
+              针对训练
+            </a>
+          </>
         )}
         {status === 'over' && gameId === null && (
           <span style={styles.overTag}>对局已结束</span>
         )}
       </div>
+      {status === 'over' && gameId !== null && (
+        <p style={styles.diagnosedHint}>对局已自动诊断，可查看分析或进行针对训练</p>
+      )}
 
       <p style={styles.hint}>
         支持拖拽或点选走棋 · 红方执先 · 切换模式即刻重开新局
@@ -247,6 +255,32 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#1a1a2e',
     borderRadius: '6px',
     fontWeight: 700,
+  },
+  analysisBtn: {
+    padding: '10px 28px',
+    fontSize: '1rem',
+    background: '#2980b9',
+    color: '#fff',
+    borderRadius: '6px',
+    fontWeight: 700,
+    textDecoration: 'none',
+    display: 'inline-block',
+  },
+  trainingBtn: {
+    padding: '10px 28px',
+    fontSize: '1rem',
+    background: '#27ae60',
+    color: '#fff',
+    borderRadius: '6px',
+    fontWeight: 700,
+    textDecoration: 'none',
+    display: 'inline-block',
+  },
+  diagnosedHint: {
+    marginTop: '8px',
+    fontSize: '0.82rem',
+    color: '#8bc34a',
+    fontStyle: 'italic' as const,
   },
   hint: {
     marginTop: '16px',
