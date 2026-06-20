@@ -8,6 +8,8 @@ export interface MemoryRow {
 
 const RECENCY_HALFLIFE_MS = 1000 * 60 * 60 * 24 * 14 // 14 天半衰期
 
+/** @deprecated 已被 MemoryStore(SurrealMemoryStore)取代,不再被生产代码引用。
+ *  待控制台子项目完成、确认无引用后删除。 */
 export class PersonaMemoryRepo {
   constructor(private db: DB) {}
 
