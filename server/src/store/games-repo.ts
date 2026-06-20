@@ -1,6 +1,8 @@
 import type { DB } from './db.js'
 import type { GameMode, Side } from '../types.js'
 
+type RecentResult = 'win' | 'loss' | 'draw'
+
 export interface GameRow {
   id: number; startedAt: string; endedAt: string | null
   mode: GameMode; humanSide: Side; result: Side | 'draw' | null; startFen: string
@@ -43,5 +45,20 @@ export class GamesRepo {
 
   finishGame(id: number, result: Side | 'draw', endedAt: string): void {
     this.db.prepare('UPDATE games SET result=?, ended_at=? WHERE id=?').run(result, endedAt, id)
+  }
+
+  recentResults(humanSide: Side, limit: number): RecentResult[] {
+    const rows: any[] = this.db.prepare(
+      `SELECT result FROM games
+       WHERE result IS NOT NULL
+       ORDER BY CASE WHEN ended_at IS NOT NULL THEN ended_at ELSE NULL END DESC,
+                id DESC
+       LIMIT ?`
+    ).all(limit)
+    return rows.map(r => {
+      if (r.result === 'draw') return 'draw'
+      if (r.result === humanSide) return 'win'
+      return 'loss'
+    })
   }
 }

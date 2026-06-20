@@ -2,6 +2,7 @@ import type { GamesRepo } from '../store/games-repo.js'
 import type { EngineLine, GameMode, Side, DirectorContext, Stimulus } from '../types.js'
 import { selectMove } from '../director/director.js'
 import { describeMoveZh } from '../rules/describe-move.js'
+import { computePlayerState } from './player-state.js'
 
 interface PositionLike {
   fen(): string
@@ -43,6 +44,10 @@ export class GameSession {
   private positions = new Map<number, PositionLike>()
   private modes = new Map<number, GameMode>()
   private humanSides = new Map<number, Side>()
+  /** 每局最近一次人类走子的时间戳(毫秒),NaN clock 时不更新 */
+  private lastMoveAt = new Map<number, number>()
+  /** 每局最近一次人类走子的用时(毫秒),0 表示未知 */
+  private lastMoveMs = new Map<number, number>()
   constructor(private deps: GameSessionDeps) {}
 
   newGame(g: { mode: GameMode; humanSide: Side; startFen: string }): number {
@@ -64,6 +69,14 @@ export class GameSession {
 
     // 1. 校验人着合法(非法则抛,不写库不改状态)
     if (!pos.legalMoves().includes(move)) throw new Error(`illegal move: ${move}`)
+
+    // 记录本次人着时间戳并计算用时(NaN clock 时忽略,防假 clock 破坏状态)
+    const nowMs = Date.parse(this.deps.clock())
+    if (!Number.isNaN(nowMs)) {
+      const prev = this.lastMoveAt.get(gameId)
+      this.lastMoveMs.set(gameId, prev !== undefined ? nowMs - prev : 0)
+      this.lastMoveAt.set(gameId, nowMs)
+    }
 
     // 2. 纯计算人着后的局面(暂不落库、不 set)
     const beforeFen = pos.fen()
@@ -134,9 +147,13 @@ export class GameSession {
 
   private buildContext(gameId: number): DirectorContext {
     const mode = this.modes.get(gameId)!
+    const humanSide = this.humanSides.get(gameId)!
+    const recent = this.deps.repo.recentResults(humanSide, 10)
+    const lastMoveMs = this.lastMoveMs.get(gameId) ?? 0
+    const playerState = computePlayerState(recent, lastMoveMs)
     return {
       mode,
-      playerState: { winStreak: 0, lossStreak: 0, lastMoveMs: 0 },
+      playerState,
       maxDropCp: 320,
       targetBand: { low: -50, high: 80 },
       strength: 0.6,
