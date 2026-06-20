@@ -51,3 +51,61 @@ test('无着法的局抛错', async () => {
   const engine = { analyze: vi.fn() }
   await expect(diagnoseGame({ games, analysis, engine, clock: () => 't' }, gameId)).rejects.toThrow(/no moves/)
 })
+
+test('单手漏杀(mate 极值)不污染 ACPL:封顶后 acpl 合理,不被单次 mate 拉到万级', async () => {
+  // 构造红黑交替 4 手:红1-黑2-红3-黑4,humanSide=red → acpl 只算红方 2 手(ply1,ply3)
+  //
+  // 局面时间轴(FEN 下标):
+  //   fens[0]=s0(startFen,红走) → 红手ply1(m1) → fens[1]=s1(黑走)
+  //   fens[1]=s1(黑走)          → 黑手ply2(m2) → fens[2]=s2(红走,引擎发现红有 mate=3)
+  //   fens[2]=s2(红走,mate=3)   → 红手ply3(m3,漏掉杀棋) → fens[3]=s3(黑走)
+  //   fens[3]=s3(黑走)          → 黑手ply4(m4) → fens[4]=s4(红走)
+  //
+  // cpLoss 各手(封顶后):
+  //   ply1(红): max(0, 50+(-30))=20  → min(1000,20)=20
+  //   ply2(黑): max(0,-30+29997)=29967 → min(1000,29967)=1000  (不入 red acpl)
+  //   ply3(红): max(0,29997+200)=30197 → min(1000,30197)=1000  ← 封顶生效,漏杀场景
+  //   ply4(黑): max(0,200+(-30))=170  → min(1000,170)=170      (不入 red acpl)
+  //
+  // red acpl = round((20+1000)/2) = 510
+  // 封顶前 ply3 = 30197 → red acpl = round((20+30197)/2)=15108 → estElo 被钳到 600 且完全失真
+  // 封顶后 ply3 = 1000  → red acpl = 510,真实反映水平
+
+  const db = openDb(':memory:')
+  const games = new GamesRepo(db)
+  const analysis = new AnalysisRepo(db)
+  const BRD = 'RRNNCCrrnnccKk'
+  const gameId = games.createGame({ mode: 'coach', humanSide: 'red', startFen: `${BRD}/s0 w`, startedAt: 't' })
+  games.addMove({ gameId, side: 'red',   move: 'm1', fenAfter: `${BRD}/s1 b`, scoreCp: null, byAi: false })
+  games.addMove({ gameId, side: 'black', move: 'm2', fenAfter: `${BRD}/s2 w`, scoreCp: null, byAi: true  })
+  games.addMove({ gameId, side: 'red',   move: 'm3', fenAfter: `${BRD}/s3 b`, scoreCp: null, byAi: false })
+  games.addMove({ gameId, side: 'black', move: 'm4', fenAfter: `${BRD}/s4 w`, scoreCp: null, byAi: true  })
+  games.finishGame(gameId, 'black', 't2')
+
+  const evals: Record<string, EngineLine[]> = {
+    [`${BRD}/s0 w`]: [{ multipv: 1, move: 'b0c2',     scoreCp: 50,    mate: null, pv: ['b0c2']      }],
+    [`${BRD}/s1 b`]: [{ multipv: 1, move: 'x',         scoreCp: -30,   mate: null, pv: ['x']         }],
+    // 引擎发现红有 3 步杀;红方实走 m3 !== kill_move → 触发 missed_mate
+    [`${BRD}/s2 w`]: [{ multipv: 1, move: 'kill_move', scoreCp: 29997, mate: 3,    pv: ['kill_move'] }],
+    [`${BRD}/s3 b`]: [{ multipv: 1, move: 'z',         scoreCp: 200,   mate: null, pv: ['z']         }],
+    [`${BRD}/s4 w`]: [{ multipv: 1, move: 'w',         scoreCp: -30,   mate: null, pv: ['w']         }],
+  }
+  const engine = { analyze: vi.fn(async (fen: string) => evals[fen]) }
+
+  const sum = await diagnoseGame({ games, analysis, engine, clock: () => 'tB' }, gameId)
+  const ann = analysis.getAnnotations(gameId)
+
+  // 1. 封顶有效:red acpl 不到万级
+  expect(sum.acpl).toBeLessThanOrEqual(1000)
+  // 2. 精确值验证:red 2 手 cpLoss=[20,1000] → acpl=510
+  expect(sum.acpl).toBe(510)
+  // 3. ply3(红方漏杀手)的 cpLoss 被封顶到 1000
+  const ply3 = ann.find((a) => a.ply === 3)!
+  expect(ply3.cpLoss).toBe(1000)
+  // 4. missed_mate 标签靠 mate 标志(hadMateBefore && !tookMate),不靠 cpLoss 精确大值 → 封顶不影响标签
+  expect(ply3.theme).toBe('missed_mate')
+  // 5. ply1 正常丢分不受封顶影响
+  const ply1 = ann.find((a) => a.ply === 1)!
+  expect(ply1.cpLoss).toBe(20)
+  db.close()
+})
