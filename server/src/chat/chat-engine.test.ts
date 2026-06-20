@@ -47,3 +47,20 @@ test('低张力冷场 → 可能无人发言(out 可为空,不报错)', async ()
   await engine.onStimulus({ kind: 'idle', gameId: 1, scoreCp: 0, tension: 0.0 })
   expect(Array.isArray(out)).toBe(true)
 })
+
+test('单个 speaker LLM 失败不让 onStimulus reject,后续 speaker 照常', async () => {
+  // 第一次调用抛错,第二次起正常返回
+  let n = 0
+  const llm = new FakeLLM((msgs) => {
+    if (n++ === 0) throw new Error('llm down')
+    return '稳一手'
+  })
+  const { engine, out } = setup(llm)
+  const stim: Stimulus = { kind: 'blunder', gameId: 1, scoreCp: -300, tension: 0.95 }
+  // 核心:不应 reject
+  await expect(engine.onStimulus(stim)).resolves.toBeUndefined()
+  // 辅助:若选出多个 speaker,跳过第一个失败者后后续应有弹幕
+  // (若只选出 1 个 speaker 则 out 可为空,核心断言仍成立)
+  // 至少验证数组结构
+  expect(Array.isArray(out)).toBe(true)
+})

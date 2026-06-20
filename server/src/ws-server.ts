@@ -45,6 +45,9 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
   // 记最近一局 gameId,供冷场定时器使用
   let lastGameId: number | null = null
 
+  // 局末反思幂等:已完成反思的局不重复触发
+  const reflectedGames = new Set<number>()
+
   const session = new GameSession({
     repo,
     engine,
@@ -100,16 +103,21 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
           // 局末:对每个旁观者触发反思(异步,失败不影响主流程)
           if (result.over) {
             const gameId = msg.gameId as number
-            for (const p of spectators()) {
-              reflect({ repo: pmem, llm, personaId: p.id, gameId, now: () => Date.now() })
-                .catch(() => { /* 反思失败静默忽略 */ })
+            if (!reflectedGames.has(gameId)) {
+              reflectedGames.add(gameId)
+              for (const p of spectators()) {
+                reflect({ repo: pmem, llm, personaId: p.id, gameId, now: () => Date.now() })
+                  .catch(() => { /* 反思失败静默忽略 */ })
+              }
             }
           }
         } else if (msg.type === 'say') {
           // 玩家发言 → human_said 刺激,高张力必有人接
+          const gid = msg.gameId
+          if (typeof gid !== 'number') return
           void chat.onStimulus({
             kind: 'human_said',
-            gameId: msg.gameId as number,
+            gameId: gid,
             scoreCp: null,
             humanText: String(msg.text ?? ''),
             tension: 0.9,

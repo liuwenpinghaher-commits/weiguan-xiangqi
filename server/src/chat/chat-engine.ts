@@ -30,28 +30,33 @@ export class ChatEngine {
     if (speakers.length === 0) return
     this.guard.record()
     for (const id of speakers) {
-      const persona = getPersona(id)
-      const text = (await this.deps.llm.chat(this.buildPrompt(persona, stim), {
-        disableThinking: true, maxTokens: 80,
-      })).trim()
-      if (!text) continue
-      const line: ChatLine = {
-        gameId: stim.gameId,
-        personaId: id,
-        text,
-        addressee: this.addressee(stim),
-        ts: new Date(this.deps.now()).toISOString(),
+      try {
+        const persona = getPersona(id)
+        const text = (await this.deps.llm.chat(this.buildPrompt(persona, stim), {
+          disableThinking: true, maxTokens: 80,
+        })).trim()
+        if (!text) continue
+        const line: ChatLine = {
+          gameId: stim.gameId,
+          personaId: id,
+          text,
+          addressee: this.addressee(stim),
+          ts: new Date(this.deps.now()).toISOString(),
+        }
+        this.deps.emit(line)
+        this.deps.mem.add({
+          personaId: id,
+          kind: 'episode',
+          content: text,
+          importance: 1,
+          gameId: stim.gameId,
+          createdAt: line.ts,
+        })
+        this.lastSpokeAt.set(id, this.deps.now())
+      } catch {
+        // 单个 speaker LLM 失败:跳过该 speaker,不影响其他人
+        continue
       }
-      this.deps.emit(line)
-      this.deps.mem.add({
-        personaId: id,
-        kind: 'episode',
-        content: text,
-        importance: 1,
-        gameId: stim.gameId,
-        createdAt: line.ts,
-      })
-      this.lastSpokeAt.set(id, this.deps.now())
     }
   }
 
