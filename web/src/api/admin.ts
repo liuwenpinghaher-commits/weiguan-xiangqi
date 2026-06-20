@@ -19,7 +19,7 @@ export interface DirectorModeCfg { maxDropCp: number; targetBand: { low: number;
 export interface DirectorCfg { coach: DirectorModeCfg; humanlike: DirectorModeCfg }
 export interface EngineCfg { pikafishPath: string | null; multipv: number; movetime: number }
 export interface DiagnoseCfg { depth: number }
-export interface LlmCfg { apiKey: string; model: string; baseURL: string | null }
+export interface LlmCfg { apiKey: string | null; model: string; baseURL: string | null }
 export interface TtsCfg { endpoint: string; model: string }
 export interface ConfigPayload {
   chat: ChatCfg; director: DirectorCfg; engine: EngineCfg; diagnose: DiagnoseCfg
@@ -45,7 +45,7 @@ async function jsend(path: string, method: 'PUT' | 'POST' | 'DELETE', body?: unk
 }
 
 export const getConfig = (): Promise<ConfigPayload> => jget('/admin/config')
-export const revealLlmKey = (): Promise<{ apiKey: string }> => jget('/admin/config/llm/reveal')
+export const revealLlmKey = (): Promise<{ apiKey: string | null }> => jget('/admin/config/llm/reveal')
 export const putSection = (section: ConfigSection, patch: Record<string, unknown>): Promise<{ ok: true }> =>
   jsend(`/admin/config/${section}`, 'PUT', patch)
 
