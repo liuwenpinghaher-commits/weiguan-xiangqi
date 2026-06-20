@@ -143,6 +143,23 @@ export class Position {
   }
 
   /**
+   * 局面去重键：取 FEN 的"棋盘 + 走子方"两段，忽略步数计数。
+   * 用于三次重复局面检测。
+   * 示例："rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w"
+   */
+  key(): string {
+    return this.fen().split(' ').slice(0, 2).join(' ')
+  }
+
+  /**
+   * 当前走子方是否被将军。
+   * 使用 elephantops Position 基类的 isCheck() 方法（实测 API：2026-06-20）。
+   */
+  inCheck(): boolean {
+    return this._pos.isCheck()
+  }
+
+  /**
    * 判断游戏是否结束
    * 返回 { over: false } 或 { over: true, result: Side | 'draw' }
    */

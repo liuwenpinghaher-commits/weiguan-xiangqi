@@ -64,3 +64,36 @@ test('fen() 返回的 FEN 可以重新 parse', () => {
   expect(pos2.sideToMove()).toBe('red')
   expect(pos2.legalMoves().length).toBe(pos.legalMoves().length)
 })
+
+// ── Step 2 新增：key() 和 inCheck() ──────────────────────────────────────────
+
+test('初始局面 inCheck() === false', () => {
+  const pos = Position.fromFen(START_FEN)
+  expect(pos.inCheck()).toBe(false)
+})
+
+test('key() 包含棋盘布局和走子方，不含步数', () => {
+  const pos = Position.fromFen(START_FEN)
+  const k = pos.key()
+  // 应包含棋盘段（含大写字母代表棋子）
+  expect(k).toMatch(/[A-Za-z]/)
+  // 应包含走子方 'w' 或 'b'
+  expect(k).toMatch(/\b[wb]\b/)
+  // 不应包含步数（FEN 第3~6段）
+  // key = "board side"，两段用空格分隔，没有更多空格分隔的数字
+  const parts = k.split(' ')
+  expect(parts.length).toBe(2)
+  expect(parts[1]).toMatch(/^[wb]$/)
+})
+
+test('key() 对相同局面返回相同值', () => {
+  const pos1 = Position.fromFen(START_FEN)
+  const pos2 = Position.fromFen(START_FEN)
+  expect(pos1.key()).toBe(pos2.key())
+})
+
+test('key() 对不同局面返回不同值', () => {
+  const pos1 = Position.fromFen(START_FEN)
+  const pos2 = pos1.applyMove('h2e2')  // 走一手后局面变化
+  expect(pos1.key()).not.toBe(pos2.key())
+})

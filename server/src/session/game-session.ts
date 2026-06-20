@@ -3,6 +3,8 @@ import type { EngineLine, GameMode, Side, DirectorContext, Stimulus } from '../t
 import { selectMove } from '../director/director.js'
 import { describeMoveZh } from '../rules/describe-move.js'
 import { computePlayerState } from './player-state.js'
+import { adjudicate } from '../rules/adjudicate.js'
+import type { RepeatInfo } from '../rules/adjudicate.js'
 
 interface PositionLike {
   fen(): string
@@ -10,6 +12,41 @@ interface PositionLike {
   legalMoves(): string[]
   applyMove(move: string): PositionLike
   isGameOver(): { over: boolean; result?: Side | 'draw' }
+  /** 可选：局面去重键（三次重复检测用）。fakePosition 可能缺失。*/
+  key?(): string
+  /** 可选：当前走子方是否被将军。fakePosition 可能缺失。*/
+  inCheck?(): boolean
+}
+
+/**
+ * 计算 FEN 棋盘段中的棋子数（字母数量）。
+ * 用于判断是否发生吃子（走前棋子数 > 走后棋子数）。
+ */
+function pieceCount(fen: string): number {
+  const board = fen.split(' ')[0]
+  return (board.match(/[a-zA-Z]/g) ?? []).length
+}
+
+/**
+ * 安全提取局面 key（能力检测，fakePosition 不支持时返回 null）。
+ */
+function safeKey(pos: PositionLike): string | null {
+  try {
+    return typeof pos.key === 'function' ? pos.key() : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 安全提取走子方是否被将军（能力检测，fakePosition 不支持时返回 false）。
+ */
+function safeInCheck(pos: PositionLike): boolean {
+  try {
+    return typeof pos.inCheck === 'function' ? pos.inCheck() : false
+  } catch {
+    return false
+  }
 }
 interface EngineLike { analyze(fen: string, opts: { multipv: number; movetime?: number }): Promise<EngineLine[]> }
 
@@ -48,13 +85,38 @@ export class GameSession {
   private lastMoveAt = new Map<number, number>()
   /** 每局最近一次人类走子的用时(毫秒),0 表示未知 */
   private lastMoveMs = new Map<number, number>()
+  /** 三次重复/长将裁决：每局的局面历史（含初始局面） */
+  private repeatHistories = new Map<number, RepeatInfo[]>()
+  /** 三次重复/60回合裁决：每局自上次吃子以来的半步数 */
+  private noCapturePlies = new Map<number, number>()
+
   constructor(private deps: GameSessionDeps) {}
 
   newGame(g: { mode: GameMode; humanSide: Side; startFen: string }): number {
     const id = this.deps.repo.createGame({ ...g, startedAt: this.deps.clock() })
-    this.positions.set(id, this.deps.makePosition(g.startFen))
+    const startPos = this.deps.makePosition(g.startFen)
+    this.positions.set(id, startPos)
     this.modes.set(id, g.mode)
     this.humanSides.set(id, g.humanSide)
+
+    // 初始化重复局面历史：记录初始局面（key 能力检测，fakePosition 缺方法时跳过）
+    const startKey = safeKey(startPos)
+    if (startKey !== null) {
+      // 初始局面：走子方 inCheck 记录（初始一般不被将）
+      const startInCheck = safeInCheck(startPos)
+      const side = startPos.sideToMove()
+      const initialInfo: RepeatInfo = {
+        key: startKey,
+        redChecked: side === 'red' ? startInCheck : false,
+        blackChecked: side === 'black' ? startInCheck : false,
+      }
+      this.repeatHistories.set(id, [initialInfo])
+    } else {
+      // fakePosition 缺 key()，跳过重复裁决
+      this.repeatHistories.set(id, [])
+    }
+    this.noCapturePlies.set(id, 0)
+
     return id
   }
 
@@ -84,11 +146,15 @@ export class GameSession {
     const afterHuman = pos.applyMove(move)
 
     // 3. 人着已直接终局:写人着 → finish → set,返回
+    //    同时检查重复裁决（isGameOver 检将死/困毙，repeatCheck 检三次重复/60回合）
     const humanOver = afterHuman.isGameOver()
-    if (humanOver.over) {
+    const humanRepeat = this.checkRepeatAdjudicate(gameId, pos, humanTurn, afterHuman)
+    if (humanOver.over || humanRepeat !== null) {
       this.deps.repo.addMove({ gameId, side: humanTurn, move, fenAfter: afterHuman.fen(), scoreCp: null, byAi: false })
       this.positions.set(gameId, afterHuman)
-      this.finish(gameId, humanOver.result!)
+      this.applyRepeatState(gameId, pos, humanTurn, afterHuman)
+      const result = humanOver.over ? humanOver.result! : humanRepeat!.result
+      this.finish(gameId, result)
       const humanPly = this.deps.repo.getMoves(gameId).length
       const phase = calcPhase(humanPly)
       this.deps.onStimulus?.({
@@ -112,6 +178,9 @@ export class GameSession {
     this.deps.repo.addMove({ gameId, side: humanTurn, move, fenAfter: afterHuman.fen(), scoreCp: null, byAi: false })
     this.deps.repo.addMove({ gameId, side: aiSide, move: decision.move, fenAfter: afterAI.fen(), scoreCp: decision.chosenLine.scoreCp, byAi: true })
     this.positions.set(gameId, afterAI)
+
+    // 更新人着的重复历史（人着确定落地后才更新状态）
+    this.applyRepeatState(gameId, pos, humanTurn, afterHuman)
 
     const allMoves = this.deps.repo.getMoves(gameId)
     const humanPly = allMoves.length - 1  // 人着是倒数第二
@@ -140,9 +209,16 @@ export class GameSession {
       byPlayerPersona: true,
     })
 
+    // AI 着终局判定：isGameOver（将死/困毙）与重复裁决并存
     const aiOver = afterAI.isGameOver()
-    if (aiOver.over) this.finish(gameId, aiOver.result!)
-    return { aiMove: decision.move, fen: afterAI.fen(), over: aiOver.over }
+    const aiRepeat = this.checkRepeatAdjudicate(gameId, afterHuman, aiSide, afterAI)
+    this.applyRepeatState(gameId, afterHuman, aiSide, afterAI)
+    if (aiOver.over || aiRepeat !== null) {
+      const result = aiOver.over ? aiOver.result! : aiRepeat!.result
+      this.finish(gameId, result)
+      return { aiMove: decision.move, fen: afterAI.fen(), over: true }
+    }
+    return { aiMove: decision.move, fen: afterAI.fen(), over: false }
   }
 
   private buildContext(gameId: number): DirectorContext {
@@ -158,6 +234,68 @@ export class GameSession {
       strength: 0.6,
       rng: Math.random,
     }
+  }
+
+  /**
+   * 纯查询：根据走子前局面、走子方、走子后局面，判断是否触发重复裁决。
+   * 不修改任何状态（调用前 history 尚未更新）。
+   * 若 pos 不支持 key()，直接返回 null（fakePosition 兼容）。
+   */
+  private checkRepeatAdjudicate(
+    gameId: number,
+    before: PositionLike,
+    side: Side,
+    after: PositionLike,
+  ): { result: 'red' | 'black' | 'draw' } | null {
+    const history = this.repeatHistories.get(gameId)!
+    // fakePosition 没有 key()：history 为空，跳过
+    if (history.length === 0) return null
+    const afterKey = safeKey(after)
+    if (afterKey === null) return null
+
+    // 走后局面走子方是否被将（即刚走那步是否将军了对方）
+    const afterInCheck = safeInCheck(after)
+    const newInfo: RepeatInfo = {
+      key: afterKey,
+      redChecked: side === 'red' ? afterInCheck : false,
+      blackChecked: side === 'black' ? afterInCheck : false,
+    }
+
+    // 是否吃子：走前棋子数 > 走后棋子数
+    const captured = pieceCount(before.fen()) > pieceCount(after.fen())
+    const currentNoCapture = this.noCapturePlies.get(gameId)!
+    const nextNoCapture = captured ? 0 : currentNoCapture + 1
+
+    // 用临时 history 判定（不 mutate 状态）
+    return adjudicate([...history, newInfo], nextNoCapture)
+  }
+
+  /**
+   * 在走子确定落地后，将新 RepeatInfo 推入历史并更新无吃子计数。
+   * 必须在 checkRepeatAdjudicate 之后调用（状态在此更新）。
+   */
+  private applyRepeatState(
+    gameId: number,
+    before: PositionLike,
+    side: Side,
+    after: PositionLike,
+  ): void {
+    const history = this.repeatHistories.get(gameId)!
+    if (history.length === 0) return  // fakePosition，跳过
+    const afterKey = safeKey(after)
+    if (afterKey === null) return
+
+    const afterInCheck = safeInCheck(after)
+    const newInfo: RepeatInfo = {
+      key: afterKey,
+      redChecked: side === 'red' ? afterInCheck : false,
+      blackChecked: side === 'black' ? afterInCheck : false,
+    }
+    history.push(newInfo)
+
+    const captured = pieceCount(before.fen()) > pieceCount(after.fen())
+    const currentNoCapture = this.noCapturePlies.get(gameId)!
+    this.noCapturePlies.set(gameId, captured ? 0 : currentNoCapture + 1)
   }
 
   private finish(gameId: number, result: Side | 'draw') {
