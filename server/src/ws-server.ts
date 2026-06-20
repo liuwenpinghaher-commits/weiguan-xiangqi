@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import Fastify from 'fastify'
 import fastifyWebsocket from '@fastify/websocket'
+import fastifyCors from '@fastify/cors'
 import { openDb } from './store/db.js'
 import { GamesRepo } from './store/games-repo.js'
 import { UciEngine, spawnTransport } from './engine/engine.js'
@@ -181,6 +182,10 @@ export async function buildServer(opts: {
   const diagnosedGames = new Set<number>()
 
   const app = Fastify({ logger: true })
+
+  // 跨域:前端(:3420)与后端(:3410)不同源,/tts、/games 等 HTTP fetch 需要 CORS。
+  // 本地单人工具,反射任意来源即可(含 POST JSON 预检 OPTIONS)。
+  await app.register(fastifyCors, { origin: true })
 
   // 优雅关闭:关闭 Fastify 时同步释放引擎子进程与 SQLite WAL
   app.addHook('onClose', async () => {

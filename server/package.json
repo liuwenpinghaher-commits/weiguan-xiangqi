@@ -9,6 +9,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@fastify/cors": "^8.5.0",
     "@fastify/websocket": "^10.0.1",
     "better-sqlite3": "^11.3.0",
     "elephantops": "^0.1.1",
