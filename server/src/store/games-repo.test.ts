@@ -45,9 +45,13 @@ test('recentResults 按时间降序返回映射后的胜负平,人方 red', () =
   const id3 = r.createGame({ mode: 'coach', humanSide: 'red', startFen: 'F', startedAt: '2026-06-19T03:00:00Z' })
   r.finishGame(id3, 'draw', '2026-06-19T03:10:00Z')  // 平 → 'draw'
 
-  // 最近在前:ended_at DESC → id3, id2, id1
-  const results = r.recentResults('red', 10)
-  expect(results).toEqual(['draw', 'loss', 'win'])
+  // 第四局玩家执黑且黑胜 → 应按本局 human_side 映射为 'win'(验证不再用调用方单一 side)
+  const id4 = r.createGame({ mode: 'coach', humanSide: 'black', startFen: 'F', startedAt: '2026-06-19T04:00:00Z' })
+  r.finishGame(id4, 'black', '2026-06-19T04:10:00Z')
+
+  // 最近在前:ended_at DESC → id4, id3, id2, id1
+  const results = r.recentResults(10)
+  expect(results).toEqual(['win', 'draw', 'loss', 'win'])
 })
 
 test('recentResults limit 限制返回数量', () => {
@@ -57,12 +61,12 @@ test('recentResults limit 限制返回数量', () => {
       startedAt: `2026-06-19T0${i}:00:00Z` })
     r.finishGame(id, 'red', `2026-06-19T0${i}:10:00Z`)
   }
-  expect(r.recentResults('red', 3)).toHaveLength(3)
+  expect(r.recentResults(3)).toHaveLength(3)
 })
 
 test('recentResults 空库返回空数组', () => {
   const r = repo()
-  expect(r.recentResults('red', 10)).toEqual([])
+  expect(r.recentResults(10)).toEqual([])
 })
 
 test('recentResults 只返回已结束局(result NOT NULL)', () => {
@@ -71,7 +75,7 @@ test('recentResults 只返回已结束局(result NOT NULL)', () => {
   const id1 = r.createGame({ mode: 'coach', humanSide: 'red', startFen: 'F', startedAt: '2026-06-19T01:00:00Z' })
   r.finishGame(id1, 'red', '2026-06-19T01:10:00Z')
   r.createGame({ mode: 'coach', humanSide: 'red', startFen: 'F', startedAt: '2026-06-19T02:00:00Z' }) // 未结束
-  const results = r.recentResults('red', 10)
+  const results = r.recentResults(10)
   expect(results).toHaveLength(1)
   expect(results[0]).toBe('win')
 })

@@ -47,17 +47,17 @@ export class GamesRepo {
     this.db.prepare('UPDATE games SET result=?, ended_at=? WHERE id=?').run(result, endedAt, id)
   }
 
-  recentResults(humanSide: Side, limit: number): RecentResult[] {
+  /** 最近已结束对局,相对各局自己的 human_side 映射成 玩家 视角的胜负(最近在前) */
+  recentResults(limit: number): RecentResult[] {
     const rows: any[] = this.db.prepare(
-      `SELECT result FROM games
+      `SELECT result, human_side FROM games
        WHERE result IS NOT NULL
-       ORDER BY CASE WHEN ended_at IS NOT NULL THEN ended_at ELSE NULL END DESC,
-                id DESC
+       ORDER BY ended_at DESC, id DESC
        LIMIT ?`
     ).all(limit)
     return rows.map(r => {
       if (r.result === 'draw') return 'draw'
-      if (r.result === humanSide) return 'win'
+      if (r.result === r.human_side) return 'win'
       return 'loss'
     })
   }

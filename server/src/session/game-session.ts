@@ -130,10 +130,9 @@ export class GameSession {
     const aiCp = decision.chosenLine.scoreCp
     // aiSide 是 AI 刚走完这步时的走子方(即 AI 方)
     const redCp = aiSide === 'red' ? aiCp : -aiCp
-    const aiTension = Math.max(0.5, Math.min(1,
-      Math.abs(aiCp) / 300,
-      aiZh?.includes('吃') ? 0.9 : 0,
-    ))
+    // 张力:评分摆幅越大越想说(下限 0.5);吃子额外抬到 ≥0.9
+    const aiBase = Math.max(0.5, Math.min(1, Math.abs(aiCp) / 300))
+    const aiTension = aiZh?.includes('吃') ? Math.max(aiBase, 0.9) : aiBase
     this.deps.onStimulus?.({
       kind: 'move', gameId, scoreCp: redCp,
       moveZh: aiZh, side: aiSide, ply: aiPly, phase: aiPhase,
@@ -148,8 +147,7 @@ export class GameSession {
 
   private buildContext(gameId: number): DirectorContext {
     const mode = this.modes.get(gameId)!
-    const humanSide = this.humanSides.get(gameId)!
-    const recent = this.deps.repo.recentResults(humanSide, 10)
+    const recent = this.deps.repo.recentResults(10)  // 按各局自身 human_side 映射,无需传入
     const lastMoveMs = this.lastMoveMs.get(gameId) ?? 0
     const playerState = computePlayerState(recent, lastMoveMs)
     return {

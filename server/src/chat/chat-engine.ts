@@ -49,14 +49,10 @@ export class ChatEngine {
         })).trim()
         if (!text) continue
 
-        // 去重护栏:与上次发言内容相同或互相包含则跳过
+        // 去重护栏:与上次发言去标点后完全相同才跳过(只杀逐字复读,不误杀近似不同句)
         const prev = this.lastText.get(id)
-        if (prev !== undefined) {
-          const normText = normalize(text)
-          const normPrev = normalize(prev)
-          if (normText === normPrev || normText.includes(normPrev) || normPrev.includes(normText)) {
-            continue
-          }
+        if (prev !== undefined && normalize(text) === normalize(prev)) {
+          continue
         }
 
         const line: ChatLine = {
