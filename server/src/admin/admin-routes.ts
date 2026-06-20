@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { RuntimeConfig } from '../config/runtime-config.js'
-import type { MemoryStore } from '../memory/store.js'
+import type { MemoryStore, MemoryKind, MemoryListFilter } from '../memory/store.js'
 import type { GamesRepo } from '../store/games-repo.js'
 import type { MessagesRepo } from '../store/messages-repo.js'
 import { DEFAULTS, type ConfigSection } from '../config/defaults.js'
@@ -74,5 +74,31 @@ function registerPersonaRoutes(app: FastifyInstance, { cfg }: AdminDeps): void {
     return { ok: true }
   })
 }
-function registerMemoryRoutes(_app: FastifyInstance, _deps: AdminDeps): void {}
+function registerMemoryRoutes(app: FastifyInstance, { mem }: AdminDeps): void {
+  app.get('/admin/memory', async (req) => {
+    const q = req.query as { personaId?: string; kind?: string; includeSuperseded?: string }
+    const filter: MemoryListFilter = {}
+    if (q.personaId) filter.personaId = q.personaId as any
+    if (q.kind) filter.kind = q.kind as MemoryKind
+    if (q.includeSuperseded === 'true') filter.includeSuperseded = true
+    return mem.list(filter)
+  })
+
+  app.put('/admin/memory/:id', async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { content?: string; importance?: number }
+    const patch: { content?: string; importance?: number } = {}
+    if (typeof b.content === 'string' && b.content.trim() !== '') patch.content = b.content
+    if (typeof b.importance === 'number') patch.importance = Math.max(1, Math.min(5, Math.round(b.importance)))
+    if (!('content' in patch) && !('importance' in patch)) return reply.code(400).send({ error: 'nothing to update' })
+    await mem.update(id, patch)
+    return { ok: true }
+  })
+
+  app.delete('/admin/memory/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    await mem.remove(id)
+    return { ok: true }
+  })
+}
 function registerGamesRoutes(_app: FastifyInstance, _deps: AdminDeps): void {}

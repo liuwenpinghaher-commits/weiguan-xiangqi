@@ -77,3 +77,27 @@ describe('admin personas 路由', () => {
     expect(res.statusCode).toBe(400)
   })
 })
+
+describe('admin memory 路由(经 MemoryStore)', () => {
+  it('GET /admin/memory?personaId= 列出;PUT 改;DELETE 删', async () => {
+    const { app, mem } = makeApp()
+    const id = await mem.record({ personaId: 'coach', kind: 'fact', content: '爱走当头炮', importance: 3, gameId: null, createdAt: new Date(0).toISOString() })
+    const list = await app.inject({ method: 'GET', url: '/admin/memory?personaId=coach' })
+    expect(list.json<any[]>()).toHaveLength(1)
+
+    const put = await app.inject({ method: 'PUT', url: `/admin/memory/${encodeURIComponent(id)}`, headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ content: '改打中炮' }) })
+    expect(put.statusCode).toBe(200)
+    expect((await mem.list({ personaId: 'coach' }))[0].content).toBe('改打中炮')
+
+    const del = await app.inject({ method: 'DELETE', url: `/admin/memory/${encodeURIComponent(id)}` })
+    expect(del.statusCode).toBe(200)
+    expect(await mem.list({ personaId: 'coach' })).toHaveLength(0)
+  })
+  it('GET /admin/memory?kind=fact 过滤', async () => {
+    const { app, mem } = makeApp()
+    await mem.record({ personaId: 'coach', kind: 'episode', content: 'e', importance: 1, gameId: null, createdAt: new Date(0).toISOString() })
+    await mem.record({ personaId: 'coach', kind: 'fact', content: 'f', importance: 3, gameId: null, createdAt: new Date(0).toISOString() })
+    const res = await app.inject({ method: 'GET', url: '/admin/memory?personaId=coach&kind=fact' })
+    expect(res.json<any[]>().map(r => r.kind)).toEqual(['fact'])
+  })
+})
