@@ -6,6 +6,7 @@ import { computePlayerState } from './player-state.js'
 import { adjudicate } from '../rules/adjudicate.js'
 import type { RepeatInfo } from '../rules/adjudicate.js'
 import { classifyMoveKind, baseTensionForKind } from './stimulus-kind.js'
+import type { RuntimeConfig } from '../config/runtime-config.js'
 
 interface PositionLike {
   fen(): string
@@ -56,11 +57,10 @@ export interface GameSessionDeps {
   engine: EngineLike
   makePosition: (fen: string) => PositionLike
   clock: () => string
+  cfg: RuntimeConfig
   /** 可选:走子后触发聊天刺激 */
   onStimulus?: (s: Stimulus) => void
 }
-
-const MULTIPV = 5
 
 /** 根据手数推断对局阶段 */
 function calcPhase(ply: number): 'opening' | 'midgame' | 'endgame' {
@@ -247,7 +247,8 @@ export class GameSession {
     }
 
     // 4. 计算 AI 回着(此处任何失败都抛出,且尚未写任何库、未改 position,可重试)
-    const lines = await this.deps.engine.analyze(afterHuman.fen(), { multipv: MULTIPV, movetime: 500 })
+    const ep = this.deps.cfg.getEngineParams()
+    const lines = await this.deps.engine.analyze(afterHuman.fen(), { multipv: ep.multipv, movetime: ep.movetime })
     const ctx = this.buildContext(gameId)
     const decision = selectMove(lines, ctx)
     const aiSide = afterHuman.sideToMove()
@@ -356,7 +357,8 @@ export class GameSession {
     }
 
     // 引擎分析当前局面，AI 走一手
-    const lines = await this.deps.engine.analyze(pos.fen(), { multipv: MULTIPV, movetime: 500 })
+    const ep = this.deps.cfg.getEngineParams()
+    const lines = await this.deps.engine.analyze(pos.fen(), { multipv: ep.multipv, movetime: ep.movetime })
     const ctx = this.buildContext(gameId)
     const decision = selectMove(lines, ctx)
     const aiSide = currentSide
@@ -412,14 +414,13 @@ export class GameSession {
     const lastMoveMs = this.lastMoveMs.get(gameId) ?? 0
     const recentBlunder = this.lastHumanBlunder.get(gameId) ?? false
     const playerState = computePlayerState(recent, lastMoveMs, recentBlunder)
-    // humanlike 模式用拟人强度 0.5（随机性适中）；coach 模式 strength 不参与决策但保持合理值
-    const strength = mode === 'humanlike' ? 0.5 : 0.6
+    const d = this.deps.cfg.getDirectorDefaults()[mode === 'humanlike' ? 'humanlike' : 'coach']
     return {
       mode,
       playerState,
-      maxDropCp: 320,
-      targetBand: { low: -50, high: 80 },
-      strength,
+      maxDropCp: d.maxDropCp,
+      targetBand: d.targetBand,
+      strength: d.strength,
       rng: Math.random,
     }
   }

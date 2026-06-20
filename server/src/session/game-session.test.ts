@@ -3,7 +3,14 @@ import { openDb } from '../store/db.js'
 import { GamesRepo } from '../store/games-repo.js'
 import { GameSession } from './game-session.js'
 import { Position, START_FEN } from '../rules/position.js'
+import { RuntimeConfig } from '../config/runtime-config.js'
+import { SettingsRepo } from '../store/settings-repo.js'
 import type { EngineLine } from '../types.js'
+
+/** 默认配置(与旧硬编码常量一致:multipv 5 / movetime 500 / maxDropCp 320 / band {-50,80} / strength) */
+function makeCfg() {
+  return new RuntimeConfig(new SettingsRepo(openDb(':memory:')), () => '2026-06-20T00:00:00.000Z')
+}
 
 // Fake 规则:着法即字符串,走两手就结束(便于测编排)
 function fakePosition(fen: string) {
@@ -26,6 +33,7 @@ test('playHumanMove 落人着并触发 AI 回着,均入库且 ply 连续', async
     repo, engine: fakeEngine as any,
     makePosition: fakePosition as any,
     clock: () => `t${t++}`,
+    cfg: makeCfg(),
   })
   const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
 
@@ -39,7 +47,7 @@ test('playHumanMove 落人着并触发 AI 回着,均入库且 ply 连续', async
 
 test('非法人着被拒,不入库', async () => {
   const repo = new GamesRepo(openDb(':memory:'))
-  const session = new GameSession({ repo, engine: fakeEngine as any, makePosition: fakePosition as any, clock: () => 't' })
+  const session = new GameSession({ repo, engine: fakeEngine as any, makePosition: fakePosition as any, clock: () => 't', cfg: makeCfg() })
   const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
   await expect(session.playHumanMove(gameId, 'z9z9')).rejects.toThrow()
   expect(repo.getMoves(gameId)).toHaveLength(0)
@@ -49,7 +57,7 @@ test('AI 回着失败时原子回滚:人着不入库、状态不变,重试可成
   const repo = new GamesRepo(openDb(':memory:'))
   const flaky = { analyze: vi.fn() }
   const session = new GameSession({
-    repo, engine: flaky as any, makePosition: fakePosition as any, clock: () => 't',
+    repo, engine: flaky as any, makePosition: fakePosition as any, clock: () => 't', cfg: makeCfg(),
   })
   const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
 
@@ -73,7 +81,7 @@ test('AI 回着失败时原子回滚:人着不入库、状态不变,重试可成
 
 test('轮次守卫:不是 human 一方时拒绝,不入库不改状态', async () => {
   const repo = new GamesRepo(openDb(':memory:'))
-  const session = new GameSession({ repo, engine: fakeEngine as any, makePosition: fakePosition as any, clock: () => 't' })
+  const session = new GameSession({ repo, engine: fakeEngine as any, makePosition: fakePosition as any, clock: () => 't', cfg: makeCfg() })
   // human=red,但起始局面轮到 black 走(fen 含 ' b ')
   const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START b - - 0 1' })
   await expect(session.playHumanMove(gameId, 'h2e2')).rejects.toThrow(/not your turn/i)
@@ -107,6 +115,7 @@ test('测试 A — AI 为黑方时 redCp 取反:黑优 80 → 红方视角 -80',
     makePosition: fakePosition as any,
     clock: () => 't',
     onStimulus: (s) => captured.push(s),
+    cfg: makeCfg(),
   })
   const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
   await session.playHumanMove(gameId, 'h2e2')
@@ -134,6 +143,7 @@ test('测试 B — ply 与 byPlayerPersona 正确', async () => {
     makePosition: fakePosition as any,
     clock: () => 't',
     onStimulus: (s) => captured.push(s),
+    cfg: makeCfg(),
   })
   const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
   await session.playHumanMove(gameId, 'h2e2')
@@ -170,6 +180,7 @@ test('测试 C — 非吃子时 AI 张力 ≥ 0.5(fakePosition 无真实 fen 无
     makePosition: fakePosition as any,
     clock: () => 't',
     onStimulus: (s) => captured.push(s),
+    cfg: makeCfg(),
   })
   const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
   await session.playHumanMove(gameId, 'h2e2')
@@ -198,6 +209,7 @@ test('humanlike 模式:newGame+playHumanMove 不报错,AI 能从多候选中走�
     engine: multiEngine as any,
     makePosition: fakePosition as any,
     clock: () => 't',
+    cfg: makeCfg(),
   })
   const gameId = session.newGame({ mode: 'humanlike', humanSide: 'red', startFen: 'START w - - 0 1' })
 
@@ -244,6 +256,7 @@ test('续局：新 session 共享 repo，对已入库 gameId 可继续 playHuman
     engine: makeLegalMoveEngine() as any,
     makePosition: (fen) => Position.fromFen(fen) as any,
     clock: () => new Date().toISOString(),
+    cfg: makeCfg(),
   })
 
   const startPos = Position.fromFen(START_FEN)
@@ -263,6 +276,7 @@ test('续局：新 session 共享 repo，对已入库 gameId 可继续 playHuman
     engine: makeLegalMoveEngine() as any,
     makePosition: (fen) => Position.fromFen(fen) as any,
     clock: () => new Date().toISOString(),
+    cfg: makeCfg(),
   })
 
   // B 的 positions Map 里没有 gameId——若无 ensureLoaded 会抛 'game not found'
@@ -296,6 +310,7 @@ test('aiFirstMove：humanSide=black 时，AI 先手走红方一着，入库 by_a
     engine: engine as any,
     makePosition: (fen) => Position.fromFen(fen) as any,
     clock: () => new Date().toISOString(),
+    cfg: makeCfg(),
   })
 
   const gameId = session.newGame({ mode: 'coach', humanSide: 'black', startFen: START_FEN })
@@ -329,6 +344,7 @@ test('aiFirstMove：humanSide=red 时（轮到人走），抛出错误', async (
     engine: makeLegalMoveEngine() as any,
     makePosition: (fen) => Position.fromFen(fen) as any,
     clock: () => new Date().toISOString(),
+    cfg: makeCfg(),
   })
 
   // humanSide=red，开局轮到红方，即 humanSide 先走，不应由 AI 走
