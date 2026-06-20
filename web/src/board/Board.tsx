@@ -24,11 +24,86 @@
  */
 
 import { useState } from 'react'
+import type { ReactElement } from 'react'
 import { Chessboard } from 'react-xiangqiboard'
 
 // Square 类型：列 a-i + 行 1-10，例如 "e1", "a10"
 // 与 react-xiangqiboard 的 Square 联合类型对齐
 type Square = string
+
+// ─── 传统象棋棋子渲染 ───────────────────────────────────────────────────────
+// customPieces prop 签名：{ [key: string]: (args) => ReactElement }
+// 键名：红方 w 前缀 + K/A/B/N/R/C/P，黑方 b 前缀同
+
+interface PieceRenderArgs {
+  isDragging: boolean
+  squareWidth: number
+  square?: string
+}
+
+// 每枚棋子的汉字和字色
+const PIECE_CHARS: Record<string, { char: string; color: string }> = {
+  wK: { char: '帥', color: '#b3261e' },
+  wA: { char: '仕', color: '#b3261e' },
+  wB: { char: '相', color: '#b3261e' },
+  wN: { char: '傌', color: '#b3261e' },
+  wR: { char: '俥', color: '#b3261e' },
+  wC: { char: '炮', color: '#b3261e' },
+  wP: { char: '兵', color: '#b3261e' },
+  bK: { char: '將', color: '#1c1c1c' },
+  bA: { char: '士', color: '#1c1c1c' },
+  bB: { char: '象', color: '#1c1c1c' },
+  bN: { char: '馬', color: '#1c1c1c' },
+  bR: { char: '車', color: '#1c1c1c' },
+  bC: { char: '砲', color: '#1c1c1c' },
+  bP: { char: '卒', color: '#1c1c1c' },
+}
+
+/** 生成圆形木色棋子的渲染函数 */
+function makePieceRenderer(pieceKey: string): (args: PieceRenderArgs) => ReactElement {
+  const info = PIECE_CHARS[pieceKey]
+  return function PieceRenderer({ isDragging, squareWidth }: PieceRenderArgs): ReactElement {
+    const size = squareWidth * 0.82
+    return (
+      <div
+        style={{
+          width: size,
+          height: size,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle at 38% 32%, #f7e3bd, #e3c187)',
+          border: '2px solid #7c4a1e',
+          boxShadow: 'inset 0 0 0 2px #b5824a, 0 2px 4px rgba(0,0,0,.35)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transform: isDragging ? 'scale(1.06)' : 'scale(1)',
+          opacity: isDragging ? 0.85 : 1,
+          cursor: 'grab',
+          userSelect: 'none',
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "'KaiTi','STKaiti','FangSong','SimSun',serif",
+            fontWeight: 700,
+            fontSize: squareWidth * 0.5,
+            color: info.color,
+            lineHeight: 1,
+            pointerEvents: 'none',
+          }}
+        >
+          {info.char}
+        </span>
+      </div>
+    )
+  }
+}
+
+/** 传统象棋棋子映射，传给 Chessboard 的 customPieces prop */
+const customPieces: Record<string, (args: PieceRenderArgs) => ReactElement> = Object.fromEntries(
+  Object.keys(PIECE_CHARS).map((key) => [key, makePieceRenderer(key)]),
+)
+// ─────────────────────────────────────────────────────────────────────────────
 
 export interface BoardProps {
   fen: string
@@ -126,6 +201,7 @@ export function Board({ fen, onMove, size = 480, lastMove, disabled = false }: B
       customSquareStyles={squareStyles as any}
       boardWidth={size}
       arePiecesDraggable={!disabled}
+      customPieces={customPieces as any}
     />
   )
 }
