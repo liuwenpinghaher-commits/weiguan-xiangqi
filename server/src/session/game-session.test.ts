@@ -281,3 +281,58 @@ test('续局：新 session 共享 repo，对已入库 gameId 可继续 playHuman
   const movesAfterB = repo.getMoves(gameId)
   expect(movesAfterB).toHaveLength(4)
 })
+
+// ── aiFirstMove 测试 ────────────────────────────────────────────────────────
+// 场景：humanSide='black'，新建局后红方(AI)应先走一手。
+// 使用真实 Position + makeLegalMoveEngine(动态取当前局面合法着)。
+
+test('aiFirstMove：humanSide=black 时，AI 先手走红方一着，入库 by_ai，轮到黑方', async () => {
+  const db = openDb(':memory:')
+  const repo = new GamesRepo(db)
+  const engine = makeLegalMoveEngine()
+
+  const session = new GameSession({
+    repo,
+    engine: engine as any,
+    makePosition: (fen) => Position.fromFen(fen) as any,
+    clock: () => new Date().toISOString(),
+  })
+
+  const gameId = session.newGame({ mode: 'coach', humanSide: 'black', startFen: START_FEN })
+
+  // 调用 aiFirstMove — 此时该红方走，AI 是红方
+  const res = await session.aiFirstMove(gameId)
+
+  // 1. 返回合法 aiMove 字符串
+  expect(typeof res.aiMove).toBe('string')
+  expect(res.aiMove.length).toBeGreaterThan(0)
+  // 2. 入库一条 by_ai
+  const moves = repo.getMoves(gameId)
+  expect(moves).toHaveLength(1)
+  expect(moves[0].byAi).toBe(true)
+  expect(moves[0].side).toBe('red')
+  // 3. 走完后轮到黑方（即 humanSide）
+  const posAfter = Position.fromFen(moves[0].fenAfter)
+  expect(posAfter.sideToMove()).toBe('black')
+  // 4. 返回的 fen 与入库 fenAfter 一致
+  expect(res.fen).toBe(moves[0].fenAfter)
+  // 5. over=false（开局第一手不会终局）
+  expect(res.over).toBe(false)
+})
+
+test('aiFirstMove：humanSide=red 时（轮到人走），抛出错误', async () => {
+  const db = openDb(':memory:')
+  const repo = new GamesRepo(db)
+
+  const session = new GameSession({
+    repo,
+    engine: makeLegalMoveEngine() as any,
+    makePosition: (fen) => Position.fromFen(fen) as any,
+    clock: () => new Date().toISOString(),
+  })
+
+  // humanSide=red，开局轮到红方，即 humanSide 先走，不应由 AI 走
+  const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: START_FEN })
+
+  await expect(session.aiFirstMove(gameId)).rejects.toThrow(/not AI turn/i)
+})

@@ -199,14 +199,24 @@ export async function buildServer(opts: { dbPath: string; enginePath?: string })
 
       try {
         if (msg.type === 'new') {
+          const humanSide = msg.humanSide as Side
           const gameId = session.newGame({
             mode: msg.mode as GameMode,
-            humanSide: msg.humanSide as Side,
+            humanSide,
             startFen: (msg.startFen as string | undefined) ?? 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1',
           })
           lastGameId = gameId
           socketGameId = gameId  // 记录该连接当前局 id,供 close 时触发中途反思
           socket.send(JSON.stringify({ type: 'started', gameId }))
+          // 若玩家执黑且引擎可用，AI（红方）先手走一步
+          if (humanSide === 'black' && engine) {
+            try {
+              const aiResult = await session.aiFirstMove(gameId)
+              socket.send(JSON.stringify({ type: 'update', ...aiResult }))
+            } catch (e) {
+              socket.send(JSON.stringify({ type: 'error', message: `AI先手失败: ${(e as Error).message}` }))
+            }
+          }
         } else if (msg.type === 'move') {
           if (!engine) {
             socket.send(JSON.stringify({ type: 'error', message: '未配置象棋引擎,无法对弈(聊天/复盘仍可用)' }))

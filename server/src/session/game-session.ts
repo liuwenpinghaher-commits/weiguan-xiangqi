@@ -293,6 +293,76 @@ export class GameSession {
     return { aiMove: decision.move, fen: afterAI.fen(), over: false }
   }
 
+  /**
+   * AI 主动走一手（用于 humanSide='black' 时开局 AI 先手）。
+   * - ensureLoaded 保证内存态已就绪。
+   * - 若当前走子方 === humanSide（轮到人走），抛出 "not AI turn"。
+   * - 否则用引擎分析当前局面，selectMove 选手，applyMove 落子，入库 by_ai。
+   * - 触发 byPlayerPersona 刺激（与 playHumanMove AI 段一致）。
+   * - 返回 { aiMove, fen, over, result? }。
+   */
+  async aiFirstMove(gameId: number): Promise<{ aiMove: string; fen: string; over: boolean; result?: 'red' | 'black' | 'draw' }> {
+    this.ensureLoaded(gameId)
+    const pos = this.positions.get(gameId)
+    if (!pos) throw new Error('game not found')
+
+    const humanSide = this.humanSides.get(gameId)!
+    const currentSide = pos.sideToMove()
+    if (currentSide === humanSide) {
+      throw new Error(`not AI turn: side to move is ${currentSide}, human is ${humanSide}`)
+    }
+
+    // 引擎分析当前局面，AI 走一手
+    const lines = await this.deps.engine.analyze(pos.fen(), { multipv: MULTIPV, movetime: 500 })
+    const ctx = this.buildContext(gameId)
+    const decision = selectMove(lines, ctx)
+    const aiSide = currentSide
+    const aiBeforeFen = pos.fen()
+    const aiZh = safeDescribeMove(aiBeforeFen, decision.move)
+    const afterAI = pos.applyMove(decision.move)
+
+    // 入库
+    this.deps.repo.addMove({
+      gameId,
+      side: aiSide,
+      move: decision.move,
+      fenAfter: afterAI.fen(),
+      scoreCp: decision.chosenLine.scoreCp,
+      byAi: true,
+    })
+    this.positions.set(gameId, afterAI)
+
+    // 更新重复历史
+    this.applyRepeatState(gameId, pos, aiSide, afterAI)
+
+    // 刺激（byPlayerPersona，与 playHumanMove AI 段一致）
+    const allMoves = this.deps.repo.getMoves(gameId)
+    const aiPly = allMoves.length
+    const aiPhase = calcPhase(aiPly)
+    const aiCp = decision.chosenLine.scoreCp
+    const redCp = aiSide === 'red' ? aiCp : -aiCp
+    const aiBase = Math.max(0.5, Math.min(1, Math.abs(aiCp) / 300))
+    const aiTension = aiZh?.includes('吃') ? Math.max(aiBase, 0.9) : aiBase
+    this.deps.onStimulus?.({
+      kind: 'move', gameId, scoreCp: redCp,
+      moveZh: aiZh, side: aiSide, ply: aiPly, phase: aiPhase,
+      tension: aiTension,
+      byPlayerPersona: true,
+    })
+
+    // 终局判定
+    const aiOver = afterAI.isGameOver()
+    const aiRepeat = this.checkRepeatAdjudicate(gameId, pos, aiSide, afterAI)
+    // applyRepeatState 已在上方调用，此处仅处理终局写库
+    if (aiOver.over || aiRepeat !== null) {
+      const result = aiOver.over ? aiOver.result! : aiRepeat!.result
+      this.finish(gameId, result)
+      return { aiMove: decision.move, fen: afterAI.fen(), over: true, result }
+    }
+
+    return { aiMove: decision.move, fen: afterAI.fen(), over: false }
+  }
+
   private buildContext(gameId: number): DirectorContext {
     const mode = this.modes.get(gameId)!
     const recent = this.deps.repo.recentResults(10)  // 按各局自身 human_side 映射,无需传入

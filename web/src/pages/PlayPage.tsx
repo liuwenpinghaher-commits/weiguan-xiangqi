@@ -7,12 +7,10 @@ import { useIsNarrow } from '../hooks/use-viewport.js'
 
 const START_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
-/** 人类固定执红（当前版本写死） */
-const HUMAN_SIDE = 'red' as const
-
 type GameStatus = 'connecting' | 'waiting' | 'playing' | 'over' | 'error'
 type GameMode = 'coach' | 'humanlike'
 type GameResult = 'red' | 'black' | 'draw' | null
+type HumanSide = 'red' | 'black'
 
 export function PlayPage() {
   const [fen, setFen] = useState(START_FEN)
@@ -24,17 +22,18 @@ export function PlayPage() {
   const [lastAiMove, setLastAiMove] = useState<string | null>(null)
   const [lines, setLines] = useState<ChatLine[]>([])
   const [mode, setMode] = useState<GameMode>('coach')
+  const [side, setSide] = useState<HumanSide>('red') // 人类执哪方
   const [awaitingAi, setAwaitingAi] = useState(false) // AI 思考期间锁盘
   const [gameResult, setGameResult] = useState<GameResult>(null)
 
   const wsRef = useRef<ReturnType<typeof connect> | null>(null)
   const isNarrow = useIsNarrow()
 
-  // 据 result 推导胜负文本
+  // 据 result 推导胜负文本（依据当前 side 状态）
   function resultText(result: GameResult): string {
     if (!result) return ''
     if (result === 'draw') return '和棋'
-    return result === HUMAN_SIDE ? '你赢了！' : '你输了'
+    return result === side ? '你赢了！' : '你输了'
   }
 
   // 共用消息处理函数，useEffect 与 handleRestart 均使用此函数
@@ -42,7 +41,8 @@ export function PlayPage() {
     if (msg.type === 'started') {
       setGameId(msg.gameId)
       setStatus('playing')
-      setStatusMsg('对局开始，请走棋（红方先手）')
+      // 黑方时等待 AI 先手 update 消息，此时先锁盘提示
+      setStatusMsg('对局开始，请走棋')
       setStatusError(false)
     } else if (msg.type === 'update') {
       setFen(msg.fen)
@@ -78,12 +78,21 @@ export function PlayPage() {
   }
 
   // 创建 WebSocket 连接并发起新对局
-  function startNewConnection(activeMode: GameMode = 'coach') {
+  function startNewConnection(activeMode: GameMode = 'coach', activeSide: HumanSide = 'red') {
     wsRef.current?.close()
     const ws = connect(handleServerMsg, (s) => {
-      if (s === 'closed') {
+      if (s === 'reconnecting') {
+        setStatus('connecting')
+        setStatusMsg('连接断开，正在重连…')
+        setStatusError(false)
+      } else if (s === 'open') {
+        // 重连成功后恢复 playing（保留 gameId，下一手发到同一 gameId 即可续局）
+        setStatus((prev: GameStatus) => prev === 'connecting' ? 'playing' : prev)
+        setStatusMsg((prev: string) => prev === '连接断开，正在重连…' ? '已重新连接，请继续走棋' : prev)
+        setStatusError(false)
+      } else if (s === 'closed') {
         setStatus('error')
-        setStatusMsg('连接断开，请刷新页面或重新开始')
+        setStatusMsg('连接断开，请重新开始')
         setStatusError(false)
       } else if (s === 'error') {
         setStatus('error')
@@ -92,7 +101,7 @@ export function PlayPage() {
       }
     })
     wsRef.current = ws
-    ws.send({ type: 'new', mode: activeMode, humanSide: HUMAN_SIDE, startFen: START_FEN })
+    ws.send({ type: 'new', mode: activeMode, humanSide: activeSide, startFen: START_FEN })
     setStatus('waiting')
     setStatusMsg('正在创建对局...')
     return ws
@@ -100,7 +109,7 @@ export function PlayPage() {
 
   useEffect(() => {
     setStatusMsg('正在连接服务器...')
-    const ws = startNewConnection(mode)
+    const ws = startNewConnection(mode, side)
     return () => {
       ws.close()
     }
@@ -115,7 +124,7 @@ export function PlayPage() {
     setStatusMsg(`您走了 ${move}，AI 思考中…`)
   }
 
-  function handleRestart(activeMode?: GameMode) {
+  function handleRestart(activeMode?: GameMode, activeSide?: HumanSide) {
     cancelSpeech()
     setFen(START_FEN)
     setFenKey(k => k + 1)
@@ -127,12 +136,17 @@ export function PlayPage() {
     setAwaitingAi(false)
     setGameResult(null)
     setStatusError(false)
-    startNewConnection(activeMode ?? mode)
+    startNewConnection(activeMode ?? mode, activeSide ?? side)
   }
 
   function handleModeChange(newMode: GameMode) {
     setMode(newMode)
-    handleRestart(newMode)
+    handleRestart(newMode, side)
+  }
+
+  function handleSideChange(newSide: HumanSide) {
+    setSide(newSide)
+    handleRestart(mode, newSide)
   }
 
   // 窄屏下棋盘尺寸：视口宽度减边距，最大 460
@@ -205,6 +219,27 @@ export function PlayPage() {
         </span>
       </div>
 
+      <div style={styles.modeBar}>
+        <span style={styles.modeLabel}>执棋方：</span>
+        <button
+          style={{ ...styles.modeBtn, ...(side === 'red' ? styles.modeBtnRedActive : {}) }}
+          onClick={() => handleSideChange('red')}
+          title="执红先手"
+        >
+          执红（先手）
+        </button>
+        <button
+          style={{ ...styles.modeBtn, ...(side === 'black' ? styles.modeBtnBlackActive : {}) }}
+          onClick={() => handleSideChange('black')}
+          title="执黑后手，AI 红方先走"
+        >
+          执黑（后手）
+        </button>
+        <span style={styles.modeHint}>
+          {side === 'red' ? '你执红先走' : 'AI 执红先走，你执黑'}
+        </span>
+      </div>
+
       <div style={styles.controls}>
         <button style={styles.btn} onClick={() => handleRestart()}>
           重新开始
@@ -231,7 +266,7 @@ export function PlayPage() {
       )}
 
       <p style={styles.hint}>
-        支持拖拽或点选走棋 · 红方执先 · 切换模式即刻重开新局
+        支持拖拽或点选走棋 · 切换执棋方或模式即刻重开新局
       </p>
     </div>
   )
@@ -433,5 +468,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '0.8rem',
     color: '#888',
     fontStyle: 'italic' as const,
+  },
+  modeBtnRedActive: {
+    background: '#c0392b',
+    color: '#fff',
+    border: '1px solid #c0392b',
+    fontWeight: 700,
+  },
+  modeBtnBlackActive: {
+    background: '#333',
+    color: '#fff',
+    border: '1px solid #888',
+    fontWeight: 700,
   },
 }
