@@ -22,18 +22,40 @@ import { describeMoveZh } from './rules/describe-move.js'
 import { MessagesRepo } from './store/messages-repo.js'
 import { serializeGame, validateImport } from './store/game-export.js'
 import type { EngineLine } from './types.js'
+import type { LLMProvider } from './llm/provider.js'
 
-export async function buildServer(opts: { dbPath: string; enginePath?: string }) {
+/** 引擎接口(与 GameSession.EngineLike 保持一致) */
+export interface EngineLike {
+  analyze(fen: string, opts: { multipv: number; movetime?: number; depth?: number }): Promise<EngineLine[]>
+  /** 可选:释放引擎子进程。真实 UciEngine 实现此方法；假引擎可省略。 */
+  close?(): void
+}
+
+export async function buildServer(opts: {
+  dbPath: string
+  enginePath?: string
+  /** 若传入则直接使用,跳过 enginePath 构造(传 null 表示强制无引擎) */
+  engine?: EngineLike | null
+  /** 若传入则替换默认 LLM(FakeLLM/VolcanoLLM) */
+  llm?: LLMProvider
+}) {
   const db = openDb(opts.dbPath)
   const repo = new GamesRepo(db)
   const messages = new MessagesRepo(db)
 
-  // 引擎可选:缺失或路径不存在时降级为 null
-  const engine = opts.enginePath && existsSync(opts.enginePath)
-    ? new UciEngine(spawnTransport(opts.enginePath))
-    : null
-  if (!engine) {
-    console.warn('象棋引擎未配置或路径不存在:对弈/诊断功能不可用,聊天与复盘仍可用')
+  // 引擎:优先使用注入值;未注入则按 enginePath 构造
+  let engine: EngineLike | null
+  if ('engine' in opts) {
+    // 显式传入(含 null):直接使用
+    engine = opts.engine ?? null
+  } else {
+    // 未注入:按原始逻辑按路径构造
+    engine = opts.enginePath && existsSync(opts.enginePath)
+      ? new UciEngine(spawnTransport(opts.enginePath))
+      : null
+    if (!engine) {
+      console.warn('象棋引擎未配置或路径不存在:对弈/诊断功能不可用,聊天与复盘仍可用')
+    }
   }
 
   // 引擎 stub:同时满足 GameSession.EngineLike 与 DiagnoseDeps.EngineLike,
@@ -47,11 +69,16 @@ export async function buildServer(opts: { dbPath: string; enginePath?: string })
   // --- 聊天基础设施 ---
   const pmem = new PersonaMemoryRepo(db)
 
-  // LLM 可选:缺少 ARK key 时降级为 FakeLLM(返回空串 → chat-engine 静默)
-  const hasArk = !!(process.env.ARK_API_KEY && process.env.ARK_BASE_URL)
-  const llm = hasArk ? new VolcanoLLM() : new FakeLLM([], '')
-  if (!hasArk) {
-    console.warn('未配置 ARK_API_KEY/ARK_BASE_URL:观棋聊天功能不可用,对弈/诊断照常运行')
+  // LLM:优先使用注入值;未注入则按原始逻辑(ARK env → VolcanoLLM / FakeLLM)
+  let llm: LLMProvider
+  if (opts.llm) {
+    llm = opts.llm
+  } else {
+    const hasArk = !!(process.env.ARK_API_KEY && process.env.ARK_BASE_URL)
+    llm = hasArk ? new VolcanoLLM() : new FakeLLM([], '')
+    if (!hasArk) {
+      console.warn('未配置 ARK_API_KEY/ARK_BASE_URL:观棋聊天功能不可用,对弈/诊断照常运行')
+    }
   }
 
   // 活跃 /play WebSocket 连接集合,用于广播聊天消息
@@ -154,7 +181,7 @@ export async function buildServer(opts: { dbPath: string; enginePath?: string })
 
   // 优雅关闭:关闭 Fastify 时同步释放引擎子进程与 SQLite WAL
   app.addHook('onClose', async () => {
-    try { engine?.close() } catch {}
+    try { engine?.close?.() } catch {}
     try { db.close() } catch {}
   })
 
