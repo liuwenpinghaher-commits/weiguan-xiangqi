@@ -1,4 +1,4 @@
-const BASE = 'http://localhost:8787'
+import { HTTP_BASE as BASE } from './config.js'
 
 export const THEME_LABEL: Record<string, string> = {
   ok: '精准', inaccuracy: '缓手', mistake: '错误', blunder: '漏着',

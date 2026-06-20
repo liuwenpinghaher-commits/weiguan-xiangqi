@@ -7,5 +7,7 @@ if (!enginePath) {
 }
 
 const app = await buildServer({ dbPath: process.env.DB_PATH ?? './weiguan.sqlite', enginePath })
-await app.listen({ port: 8787 })
-console.log('server on ws://localhost:8787/play')
+// 固定端口约定:后端 3410(可用 PORT 覆盖)。前端 3420(见 web/vite.config.ts)。
+const port = Number(process.env.PORT ?? 3410)
+await app.listen({ port, host: '127.0.0.1' })
+console.log(`server on ws://localhost:${port}/play`)

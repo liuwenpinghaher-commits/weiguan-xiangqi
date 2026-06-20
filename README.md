@@ -56,6 +56,14 @@
 
 ---
 
+## 端口约定（固定）
+
+本项目固定使用:**后端 3410 / 前端 3420**。
+
+- 后端:`server/src/index.ts`(可用环境变量 `PORT` 覆盖,默认 3410)
+- 前端:`web/vite.config.ts`(`strictPort`,固定 3420)
+- 前端访问后端的地址集中在一处:`web/src/api/config.ts`(`API_HOST=localhost:3410`)
+
 ## 运行步骤
 
 **第一步：安装依赖**
@@ -71,20 +79,20 @@ export PIKAFISH_PATH=./engine/pikafish   # macOS/Linux
 # Windows: set PIKAFISH_PATH=.\engine\pikafish.exe
 
 npm run dev:server
-# → WebSocket 监听 ws://localhost:8787/play
-# → HTTP 只读接口 GET http://localhost:8787/games/:id
+# → WebSocket 监听 ws://localhost:3410/play
+# → HTTP 只读接口 GET http://localhost:3410/games/:id
 ```
 
 **第三步：另开终端，启动前端**
 
 ```bash
 npm run dev:web
-# → http://localhost:5173
+# → http://localhost:3420
 ```
 
 **第四步：浏览器访问**
 
-打开 `http://localhost:5173`，进入对局页与 AI 对弈；对局结束后可前往复盘页逐步回顾。
+打开 `http://localhost:3420`，进入对局页与 AI 对弈；对局结束后可前往复盘页逐步回顾。
 
 ---
 
@@ -141,7 +149,7 @@ M2 在 M1 对弈闭环基础上增加了「局后自动诊断」能力：对每�
 **命令行触发**（会真跑 Pikafish 逐手分析，手数越多耗时越长）：
 
 ```bash
-curl -X POST http://localhost:8787/games/<id>/diagnose
+curl -X POST http://localhost:3410/games/<id>/diagnose
 ```
 
 **浏览器触发**：

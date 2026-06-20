@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Board } from '../board/Board.js'
+import { HTTP_BASE } from '../api/config.js'
 
 interface MoveRow { ply: number; move: string; fenAfter: string; byAi: boolean; scoreCp: number | null }
 
@@ -9,7 +10,7 @@ export function ReviewPage(props: { gameId: number }) {
   const [idx, setIdx] = useState(0) // 0=开局,k=第k手后
 
   useEffect(() => {
-    fetch(`http://localhost:8787/games/${props.gameId}`).then(r => r.json()).then(d => {
+    fetch(`${HTTP_BASE}/games/${props.gameId}`).then(r => r.json()).then(d => {
       setMoves(d.moves); setStartFen(d.game.startFen)
     })
   }, [props.gameId])
