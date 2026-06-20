@@ -51,18 +51,7 @@ CREATE TABLE IF NOT EXISTS growth_metrics (
   result TEXT
 );
 
--- 角色长期记忆(跨会话):episode=互动片段, fact=抽取的事实, insight=反思洞见
-CREATE TABLE IF NOT EXISTS persona_memory (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  persona_id TEXT NOT NULL,
-  kind TEXT NOT NULL,                 -- episode | fact | insight
-  content TEXT NOT NULL,
-  game_id INTEGER,                    -- 关联对局(可空)
-  importance INTEGER NOT NULL DEFAULT 1,  -- 1..5
-  created_at TEXT NOT NULL,
-  heat REAL NOT NULL DEFAULT 1.0      -- 衰减热度(检索用)
-);
-CREATE INDEX IF NOT EXISTS idx_pmem_persona ON persona_memory(persona_id, created_at);
+-- 注:角色长期记忆已迁至 SurrealDB 语义存储(SurrealMemoryStore),旧 persona_memory 表已移除。
 
 -- 训练作答记录(做题结果持久化)
 CREATE TABLE IF NOT EXISTS drill_attempts (
