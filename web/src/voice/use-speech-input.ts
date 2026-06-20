@@ -12,15 +12,18 @@ export function isSttSupported(): boolean {
 
 /**
  * 一次性中文听写。调用 start() 开始听,识别到结果回调 onResult(text) 并自动停止。
- * 返回 listening 状态用于 UI(麦克风高亮)。
+ * 返回 listening 状态与 error 原因用于 UI。
+ * error 常见值：'not-allowed' / 'no-speech' / 'network' / 'audio-capture' / 其他浏览器字符串。
  */
 export function useSpeechInput(onResult: (text: string) => void) {
   const [listening, setListening] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const recRef = useRef<any>(null)
 
   const start = useCallback(() => {
     const Ctor = getRecognitionCtor()
     if (!Ctor || listening) return
+    setError(null)
     const rec = new Ctor()
     recRef.current = rec
     rec.lang = 'zh-CN'
@@ -31,7 +34,11 @@ export function useSpeechInput(onResult: (text: string) => void) {
       if (text) onResult(text)
     }
     rec.onend = () => setListening(false)
-    rec.onerror = () => setListening(false)
+    rec.onerror = (e: any) => {
+      // e.error 为浏览器标准错误码字符串
+      setError((e?.error as string) ?? 'error')
+      setListening(false)
+    }
     setListening(true)
     rec.start()
   }, [listening, onResult])
@@ -41,5 +48,5 @@ export function useSpeechInput(onResult: (text: string) => void) {
     setListening(false)
   }, [])
 
-  return { listening, start, stop, supported: isSttSupported() }
+  return { listening, start, stop, supported: isSttSupported(), error }
 }

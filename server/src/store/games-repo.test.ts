@@ -79,3 +79,22 @@ test('recentResults 只返回已结束局(result NOT NULL)', () => {
   expect(results).toHaveLength(1)
   expect(results[0]).toBe('win')
 })
+
+test('listGames: 返回所有对局按 id 升序', () => {
+  const r = repo()
+  const id1 = r.createGame({ mode: 'coach', humanSide: 'red', startFen: 'FEN_A', startedAt: '2026-06-20T01:00:00Z' })
+  const id2 = r.createGame({ mode: 'humanlike', humanSide: 'black', startFen: 'FEN_B', startedAt: '2026-06-20T02:00:00Z' })
+  r.finishGame(id1, 'red', '2026-06-20T01:10:00Z')
+  const list = r.listGames()
+  expect(list).toHaveLength(2)
+  expect(list[0].id).toBe(id1)
+  expect(list[1].id).toBe(id2)
+  expect(list[0].result).toBe('red')
+  expect(list[1].result).toBeNull()
+  expect(list[0].startFen).toBe('FEN_A')
+})
+
+test('listGames: 空库返回空数组', () => {
+  const r = repo()
+  expect(r.listGames()).toEqual([])
+})

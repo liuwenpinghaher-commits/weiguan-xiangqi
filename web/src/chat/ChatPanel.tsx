@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { speak, setMuted, isMuted, isTtsSupported, cancelSpeech } from '../voice/browser-tts.js'
+import { speak, setMuted, isMuted, isTtsSupported, hasZhVoice, cancelSpeech } from '../voice/browser-tts.js'
 import { useSpeechInput } from '../voice/use-speech-input.js'
 
 export interface ChatLine {
@@ -9,14 +9,22 @@ export interface ChatLine {
   ts: string
 }
 
-const PERSONA_NAMES: Record<string, string> = {
+export const PERSONA_NAMES: Record<string, string> = {
   player: '老黑',
   laopaoer: '炮儿爷',
   coach: '林教练',
   netizen: '吃瓜阿强',
+  human: '你',
 }
 
-const PERSONA_COLORS: Record<string, string> = {
+/** addressee 字段转可读中文名：'human'→'你'，'all'/空→不显示，其余查映射表 */
+function addresseeName(addressee: string): string | null {
+  if (!addressee || addressee === 'all') return null
+  if (addressee === 'human') return '你'
+  return PERSONA_NAMES[addressee] ?? addressee
+}
+
+export const PERSONA_COLORS: Record<string, string> = {
   player: '#e74c3c',
   laopaoer: '#e67e22',
   coach: '#27ae60',
@@ -44,6 +52,7 @@ export function ChatPanel({ lines, onSay }: Props) {
   const spokenCount = useRef(0)
   const [muted, setMutedState] = useState(isMuted())
   const ttsOk = isTtsSupported()
+  const zhVoiceOk = hasZhVoice()
 
   useEffect(() => {
     for (let i = spokenCount.current; i < lines.length; i++) {
@@ -55,6 +64,16 @@ export function ChatPanel({ lines, onSay }: Props) {
 
   // ── 麦克风听写 ────────────────────────────────────────
   const stt = useSpeechInput((text) => onSay(text))
+  // STT 错误提示（not-allowed / no-speech / network 等）
+  const sttErrorMsg: string | null = stt.error === 'not-allowed'
+    ? '麦克风权限被拒，请在浏览器设置中允许麦克风'
+    : stt.error === 'no-speech'
+    ? '未检测到语音，请再试一次'
+    : stt.error === 'network'
+    ? '语音识别网络错误，请检查网络'
+    : stt.error
+    ? `语音识别出错：${stt.error}`
+    : null
 
   // ── 新消息滚到底部 ────────────────────────────────────
   useEffect(() => {
@@ -74,7 +93,7 @@ export function ChatPanel({ lines, onSay }: Props) {
 
   function toggleMute() {
     const n = !muted
-    setMuted(n)
+    setMuted(n)       // browser-tts 内部已持久化 localStorage
     setMutedState(n)
   }
 
@@ -85,38 +104,49 @@ export function ChatPanel({ lines, onSay }: Props) {
     <div style={styles.panel}>
       <div style={styles.header}>
         <span>观众席</span>
-        <button
-          style={{
-            ...styles.muteBtn,
-            opacity: ttsOk ? 1 : 0.4,
-            cursor: ttsOk ? 'pointer' : 'not-allowed',
-          }}
-          onClick={ttsOk ? toggleMute : undefined}
-          title={ttsOk ? (muted ? '点击开启播报' : '点击静音') : '浏览器不支持语音合成'}
-          disabled={!ttsOk}
-        >
-          {muted ? '🔇' : '🔊'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {/* 无中文嗓子提示 */}
+          {ttsOk && !zhVoiceOk && (
+            <span style={styles.noVoiceHint} title="系统未安装中文 TTS 语音包">
+              无中文语音，弹幕仅文字
+            </span>
+          )}
+          <button
+            style={{
+              ...styles.muteBtn,
+              opacity: ttsOk ? 1 : 0.4,
+              cursor: ttsOk ? 'pointer' : 'not-allowed',
+            }}
+            onClick={ttsOk ? toggleMute : undefined}
+            title={ttsOk ? (muted ? '点击开启播报' : '点击静音') : '浏览器不支持语音合成'}
+            aria-label={ttsOk ? (muted ? '开启语音播报' : '关闭语音播报') : '浏览器不支持语音合成'}
+            disabled={!ttsOk}
+          >
+            {muted ? '🔇' : '🔊'}
+          </button>
+        </div>
       </div>
 
-      <div style={styles.list}>
+      {/* 消息列表：aria-live 让读屏器播报新弹幕 */}
+      <div style={styles.list} aria-live="polite" aria-label="观众弹幕列表">
         {lines.length === 0 && (
           <div style={styles.empty}>还没有消息……等一等看</div>
         )}
         {lines.map((line, i) => {
           const color = avatarColor(line.personaId)
           const name = personaName(line.personaId)
+          const addrDisplay = addresseeName(line.addressee)
           return (
             <div key={i} style={styles.row}>
               {/* 头像色块 */}
-              <div style={{ ...styles.avatar, background: color }}>
+              <div style={{ ...styles.avatar, background: color }} aria-hidden="true">
                 {name.charAt(0)}
               </div>
               <div style={styles.bubble}>
                 <div style={styles.meta}>
                   <span style={{ ...styles.name, color }}>{name}</span>
-                  {line.addressee && line.addressee !== 'all' && (
-                    <span style={styles.addressee}>→ {line.addressee}</span>
+                  {addrDisplay && (
+                    <span style={styles.addressee}>→ {addrDisplay}</span>
                   )}
                   <span style={styles.ts}>
                     {line.ts ? new Date(line.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''}
@@ -141,6 +171,8 @@ export function ChatPanel({ lines, onSay }: Props) {
             }}
             onClick={stt.listening ? stt.stop : stt.start}
             title={stt.listening ? '聆听中，点击停止' : '点击语音输入'}
+            aria-label={stt.listening ? '停止语音输入' : '开始语音输入'}
+            aria-pressed={stt.listening}
           >
             {stt.listening ? '🎤聆听中' : '🎤'}
           </button>
@@ -149,6 +181,7 @@ export function ChatPanel({ lines, onSay }: Props) {
             style={{ ...styles.micBtn, opacity: 0.3, cursor: 'not-allowed' }}
             disabled
             title="浏览器不支持语音识别"
+            aria-label="浏览器不支持语音识别"
           >
             🎤
           </button>
@@ -160,11 +193,16 @@ export function ChatPanel({ lines, onSay }: Props) {
           onKeyDown={handleKeyDown}
           placeholder="说点什么…"
           maxLength={200}
+          aria-label="弹幕输入框"
         />
-        <button style={styles.sayBtn} onClick={submit}>
+        <button style={styles.sayBtn} onClick={submit} aria-label="发送弹幕">
           说
         </button>
       </div>
+      {/* STT 错误提示 */}
+      {sttErrorMsg && (
+        <div style={styles.sttError} role="alert">{sttErrorMsg}</div>
+      )}
     </div>
   )
 }
@@ -304,5 +342,18 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontWeight: 700,
     fontSize: '0.85rem',
+  },
+  noVoiceHint: {
+    fontSize: '0.7rem',
+    color: '#aaa',
+    whiteSpace: 'nowrap' as const,
+  },
+  sttError: {
+    padding: '4px 10px',
+    fontSize: '0.75rem',
+    color: '#ff6b6b',
+    background: 'rgba(255,107,107,0.1)',
+    borderTop: '1px solid rgba(255,107,107,0.2)',
+    textAlign: 'center' as const,
   },
 }

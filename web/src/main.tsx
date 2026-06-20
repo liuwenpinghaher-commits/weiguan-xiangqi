@@ -5,6 +5,7 @@ import { ReviewPage } from './pages/ReviewPage.js'
 import { AnalysisPage } from './pages/AnalysisPage.js'
 import { GrowthPage } from './pages/GrowthPage.js'
 import { TrainingPage } from './pages/TrainingPage.js'
+import { HTTP_BASE } from './api/config.js'
 
 // 极简 hash 路由 hook: 解析 window.location.hash
 type Route =
@@ -58,6 +59,10 @@ function Nav() {
       <a href="#/" style={LINK_STYLE}>对局</a>
       <span style={{ color: '#555' }}>|</span>
       <a href="#/growth" style={LINK_STYLE}>成长</a>
+      <span style={{ color: '#555' }}>|</span>
+      <a href={`${HTTP_BASE}/export`} style={LINK_STYLE} download="xiangqi-export.json" title="导出全部棋谱数据">
+        导出全部
+      </a>
     </nav>
   )
 }

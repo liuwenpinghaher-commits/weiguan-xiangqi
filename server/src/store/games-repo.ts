@@ -47,6 +47,17 @@ export class GamesRepo {
     this.db.prepare('UPDATE games SET result=?, ended_at=? WHERE id=?').run(result, endedAt, id)
   }
 
+  /** 返回所有对局，按 id 升序（供全库导出） */
+  listGames(): GameRow[] {
+    const rows: any[] = this.db.prepare(
+      'SELECT * FROM games ORDER BY id ASC'
+    ).all()
+    return rows.map(r => ({
+      id: r.id, startedAt: r.started_at, endedAt: r.ended_at, mode: r.mode,
+      humanSide: r.human_side, result: r.result, startFen: r.start_fen,
+    }))
+  }
+
   /** 最近已结束对局,相对各局自己的 human_side 映射成 玩家 视角的胜负(最近在前) */
   recentResults(limit: number): RecentResult[] {
     const rows: any[] = this.db.prepare(

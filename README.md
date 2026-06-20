@@ -1,6 +1,6 @@
 # 围观象棋
 
-中国象棋 AI 陪练工具——支持和 AI 对弈,下完后可在复盘页逐步回顾对局。M1 实现了核心对弈闭环:从落子到 AI 应答,再到对局持久化与复盘。
+中国象棋 AI 陪练工具——支持和 AI 对弈（陪练/拟人两种模式）、下完后复盘、局后智能诊断与训练、以及有性格的观棋者实时弹幕聊天（含语音）。
 
 ---
 
@@ -8,8 +8,10 @@
 
 | 层次 | 技术 |
 |------|------|
-| 后端 | Node.js + Fastify + `@fastify/websocket`、SQLite (`better-sqlite3`)、Pikafish(UCI 象棋引擎)、`elephantops`(规则库) |
-| 前端 | Vite + React 18 + TypeScript、`react-xiangqiboard`(棋盘组件) |
+| 后端 | Node.js + Fastify + `@fastify/websocket`、SQLite (`better-sqlite3`)、Pikafish（UCI 象棋引擎，可选）、`elephantops`（规则库） |
+| 前端 | Vite + React 18 + TypeScript、`react-xiangqiboard`（棋盘组件）、recharts（图表） |
+| LLM | 火山方舟 / 豆包（`doubao-seed-2.0-pro`，可选；无 key 时 FakeLLM 占位） |
+| 语音 | 浏览器 Web Speech API（TTS + STT，零外部依赖） |
 
 ---
 
@@ -17,24 +19,51 @@
 
 ```
 围观象棋/
-├── server/          # 后端(WebSocket 服务 + AI 引擎封装 + SQLite 存储)
+├── server/             # 后端（WebSocket 服务 + AI 引擎封装 + SQLite 存储）
 │   └── src/
-│       ├── engine/      # Pikafish UCI 封装与解析
-│       ├── director/    # 导演控制器(陪练防穿帮 + 拟人采样)
-│       ├── rules/       # elephantops 适配层(合法着法、坐标转换)
-│       ├── session/     # GameSession 对局编排
-│       ├── store/       # SQLite 持久化(games / moves)
-│       ├── ws-server.ts # WebSocket 对弈入口
-│       └── index.ts     # 服务启动(需 PIKAFISH_PATH)
-├── web/             # 前端
+│       ├── engine/         # Pikafish UCI 封装与解析（uci-parse, engine）
+│       ├── director/       # 导演控制器（陪练/拟人模式强度调度）
+│       ├── rules/          # elephantops 适配层（合法着法、坐标转换、中文描述）
+│       ├── session/        # GameSession 对局编排（player-state, game-session）
+│       ├── store/          # SQLite 持久化（games/moves/messages/analysis/training/memory）
+│       │   ├── schema.sql
+│       │   ├── games-repo.ts
+│       │   ├── messages-repo.ts
+│       │   ├── analysis-repo.ts
+│       │   ├── training-repo.ts
+│       │   └── game-export.ts
+│       ├── analysis/       # 逐手诊断（cploss, elo, phase, tags, diagnose-game）
+│       ├── training/       # 训练题生成（generate-drills）
+│       ├── report/         # 历史对比（compare）
+│       ├── memory/         # 角色长期记忆（persona-memory-repo, reflection）
+│       ├── chat/           # 聊天引擎（chat-engine, speaker-select, tempo）
+│       ├── personas/       # 角色定义与差异化引擎读数（personas, engine-view）
+│       ├── llm/            # LLM 抽象（volcano, fake, provider）
+│       ├── ws-server.ts    # HTTP+WebSocket 路由总入口
+│       └── index.ts        # 服务启动（引擎/LLM 均为可选）
+├── web/                # 前端
 │   └── src/
-│       ├── board/       # 棋盘相关组件
-│       ├── pages/       # PlayPage(对弈)、ReviewPage(复盘)
-│       └── main.tsx
+│       ├── board/          # 棋盘组件（Board, coords）
+│       ├── charts/         # 数据图表（ScoreLine, WeaknessRadar）
+│       ├── chat/           # 聊天面板（ChatPanel）
+│       ├── voice/          # 语音（browser-tts, use-speech-input, voice-config）
+│       ├── hooks/          # 通用 hooks（use-viewport）
+│       ├── ui/             # 页面壳（PageShell）
+│       ├── api/            # 接口封装（http-client, ws-client, config, contracts）
+│       ├── pages/          # 五大页面
+│       │   ├── PlayPage.tsx     # 对弈（含模式/换边/聊天/语音）
+│       │   ├── ReviewPage.tsx   # 复盘（含对话回放）
+│       │   ├── AnalysisPage.tsx # 诊断
+│       │   ├── GrowthPage.tsx   # 成长曲线 + 弱点画像 + 历史对比
+│       │   └── TrainingPage.tsx # 训练题
+│       └── main.tsx        # hash 路由入口
+├── engine/             # Pikafish 二进制 + NNUE 权重（需自行下载，见下）
 ├── docs/
-│   └── superpowers/plans/
-│       └── M1-OPEN-ISSUES.md   # 已知风险与待验证项
-└── package.json     # npm workspaces 根配置
+│   └── superpowers/
+│       ├── AUDIT-2026-06-20.md
+│       └── plans/
+│           └── M1-OPEN-ISSUES.md
+└── package.json        # npm workspaces 根配置
 ```
 
 ---
@@ -42,29 +71,47 @@
 ## 前置依赖
 
 1. **Node.js 20+**（开发期在 Node 25 上实测可用）
-2. **Pikafish 可执行文件 + NNUE 权重**
 
-   从 [Pikafish 官方仓库](https://github.com/official-pikafish/Pikafish) 下载对应平台的二进制文件与 NNUE 权重文件，放入项目根目录下的 `engine/` 文件夹：
+2. **Pikafish 可执行文件 + NNUE 权重（可选，无引擎仍可聊天和查复盘）**
+
+   从 [Pikafish 官方仓库](https://github.com/official-pikafish/Pikafish) 下载对应平台二进制与 NNUE 权重，放入 `engine/`：
 
    ```
    engine/
-   ├── pikafish         # 或 pikafish.exe（Windows）
-   └── pikafish.nnue    # NNUE 权重文件
+   ├── pikafish        # 或 pikafish.exe（Windows）
+   └── pikafish.nnue   # NNUE 权重文件
    ```
 
-   > **注意**：实现期需自行核对 Pikafish 及 NNUE 权重的开源许可证（GPL v3）以及各平台（macOS/Linux/Windows）二进制的可用性。
+   > 注意：Pikafish 采用 GPL v3 许可证。使用前请核对各平台二进制可用性。
+   > **无引擎时降级：** 对弈/诊断功能不可用，聊天与复盘仍可用。
+
+3. **火山方舟 LLM key（可选，无 key 仍可对弈和诊断）**
+
+   配置 `server/.env`（见 `server/.env.example`，勿提交）：
+
+   ```
+   ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
+   ARK_API_KEY=你的火山 key
+   ARK_MODEL=doubao-seed-2.0-pro
+   ```
+
+   > **无 key 时降级：** 观棋聊天功能不可用（FakeLLM 占位），对弈/诊断照常运行。
 
 ---
 
 ## 端口约定（固定）
 
-本项目固定使用:**后端 3410 / 前端 3420**。
+本项目固定使用：**后端 3410 / 前端 3420**。
 
-- 后端:`server/src/index.ts`(可用环境变量 `PORT` 覆盖,默认 3410)
-- 前端:`web/vite.config.ts`(`strictPort`,固定 3420)
-- 前端访问后端的地址集中在一处:`web/src/api/config.ts`(`API_HOST=localhost:3410`)
+- 后端：`server/src/index.ts`（可用环境变量 `PORT` 覆盖，默认 3410）
+- 前端：`web/vite.config.ts`（`strictPort`，固定 3420）
+- 前端访问后端的地址集中在一处：`web/src/api/config.ts`（`API_HOST=localhost:3410`）
+
+---
 
 ## 运行步骤
+
+### 开发模式
 
 **第一步：安装依赖**
 
@@ -75,12 +122,14 @@ npm install
 **第二步：启动后端**
 
 ```bash
+# 有引擎时（对弈+诊断全功能）
 export PIKAFISH_PATH=./engine/pikafish   # macOS/Linux
 # Windows: set PIKAFISH_PATH=.\engine\pikafish.exe
-
 npm run dev:server
-# → WebSocket 监听 ws://localhost:3410/play
-# → HTTP 只读接口 GET http://localhost:3410/games/:id
+
+# 无引擎时（聊天/复盘模式）
+npm run dev:server
+# 后端会自动降级，打印 warn 并继续启动
 ```
 
 **第三步：另开终端，启动前端**
@@ -90,18 +139,135 @@ npm run dev:web
 # → http://localhost:3420
 ```
 
-**第四步：浏览器访问**
+### 生产模式
 
-打开 `http://localhost:3420`，进入对局页与 AI 对弈；对局结束后可前往复盘页逐步回顾。
+```bash
+# 构建后端
+npm -w server run build
+
+# 启动生产后端
+export PIKAFISH_PATH=./engine/pikafish
+npm -w server run start
+# → 监听 http://localhost:3410
+
+# 前端生产构建
+npm -w web run build
+# → dist/ 可托管到任意静态服务
+```
+
+> **优雅关闭：** 收到 `SIGTERM`/`SIGINT` 时，服务关闭 Pikafish 子进程并刷写 SQLite WAL，再退出。
+
+> **重启续局：** 对局元数据持久化在 SQLite；重启后已完成局可复盘，进行中的局需重开（内存状态不跨进程）。
+
+---
+
+## WebSocket 与 HTTP 路由一览
+
+### WebSocket — `ws://localhost:3410/play`
+
+| 客户端消息 | 说明 |
+|-----------|------|
+| `{type:'new', mode:'coach'\|'humanlike', humanSide:'red'\|'black', startFen?}` | 新对局（若执黑且引擎可用，AI 先手） |
+| `{type:'move', gameId, move}` | 提交人类着法 |
+| `{type:'say', gameId, text}` | 玩家发言（触发观棋者响应） |
+
+| 服务端推送 | 说明 |
+|-----------|------|
+| `{type:'started', gameId}` | 对局已建立 |
+| `{type:'update', fen, lastMove, scoreCp, over?, result?}` | 局面更新（含 AI 应手） |
+| `{type:'chat', personaId, text, addressee, ts}` | 观棋者/AI 棋手发言 |
+| `{type:'error', message}` | 错误提示 |
+
+### HTTP 路由
+
+| 端点 | 说明 |
+|------|------|
+| `GET /games/:id` | 复盘数据（对局 + 走法 + 聊天消息） |
+| `POST /games/:id/diagnose` | 触发局后诊断（需引擎，异步） |
+| `GET /games/:id/diagnosis` | 逐手诊断结果（cp\_loss + 阶段 + 标签） |
+| `GET /games/:id/drills` | 训练题组 + 进度 stats |
+| `POST /games/:id/drills/attempt` | 提交训练作答（后端判定 correct + 回写 stats） |
+| `GET /growth` | 成长曲线数据点（逐局指标时间序列） |
+| `GET /weakness?side=red\|black` | 弱点画像（按阶段 × 标签聚合） |
+| `GET /compare` | 最近两段历史对比摘要 |
+| `GET /training/stats` | 全局训练进度 |
+| `GET /games/:id/export` | 单局导出（JSON，触发浏览器下载） |
+| `GET /export` | 全库导出（JSON） |
+| `POST /games/import` | 棋谱导入（本系统 JSON 格式） |
+
+---
+
+## 前端路由
+
+| Hash 路由 | 页面 |
+|----------|------|
+| `#/` | 对局（陪练/拟人模式切换、换边、聊天、语音） |
+| `#/review/:id` | 复盘（逐步回顾走法 + 对话回放） |
+| `#/analysis/:id` | 诊断（触发 + 查看逐手 cp\_loss） |
+| `#/growth` | 成长曲线 + 弱点画像 + 历史对比 |
+| `#/training/:id` | 训练题（失误复盘题组） |
+
+---
+
+## 功能概览
+
+### 对弈核心
+
+- 陪练模式（coach）与拟人模式（humanlike）可实时切换
+- 一键换边（执红/执黑，执黑时 AI 自动先手）
+- WS 断连自动重连（指数退避）
+- 最后一手高亮、AI 思考时锁盘防误操作、输赢结果展示
+- 非法着法提示
+
+### M2：局后诊断与成长飞轮
+
+| 功能 | 说明 |
+|------|------|
+| 自动诊断 | 对局结束后**自动后台触发** Pikafish 逐手分析，写入 DB |
+| 逐手诊断 | 计算 cp\_loss（mate 丢分封顶 1000），按阶段（开/中/残）分类，打主题标签 |
+| 弱点画像 | 按阶段 × 标签聚合历史数据，找出最频繁的失误类型 |
+| 训练题 | 从失误局面生成题组；作答由后端判定 correct 并持久化 |
+| 训练回写 | `drill_attempts` 记录正确率与统计；弱点画像暂不自动反哺 |
+| 成长曲线 | 逐局写入 `growth_metrics`（ACPL、准确率、估算 Elo） |
+| 历史对比 | 前后两段指标对比（规则版文字摘要） |
+
+### M3a：角色与聊天
+
+四位有性格的观棋者（老黑/炮儿爷/林教练/吃瓜阿强）在对弈中实时弹幕：
+- 各角色看到**差异化的引擎读数**（弱角色有噪声，真的会看走眼）
+- 发言调度：加权打分（张力 × 角色 × 去重）决定谁说/何时说
+- 同回合其他角色最近发言注入 prompt，支持接话/拉踩/抬杠
+- 玩家可打字/语音与观棋者对话
+- 聊天落库（`messages` 表）；复盘页回放对局对话
+- 冷场定时器：20 秒触发概率 35% 的 idle 刺激（张力 0.55）
+- 中途关页面（≥6 手人类走法）也触发反思，沉淀跨会话记忆
+
+### M3b：语音
+
+- **TTS**：观棋者每条发言用 `SpeechSynthesis` 朗读，音高/语速区分角色
+- **STT**：点麦克风，中文说话识别为文字走 `say` 路径
+- **语音开关**：持久化；新局自动清队列
+- 优雅降级：浏览器不支持时按钮禁用 + 提示
 
 ---
 
 ## 测试
 
-**后端单元测试（vitest，67 个用例，含 M1 + M2）：**
+**后端（vitest）：**
 
 ```bash
 npm -w server run test
+# 179 tests passed (31 test files)
+# 含：单元测试（rules/analysis/chat/session/memory/training/report）
+#     + ws-server 端到端集成测试（真实 Position + Fake 引擎/LLM，HTTP + WS 完整流程）
+```
+
+**前端（vitest）：**
+
+```bash
+npm -w web run test
+# 18 tests passed (2 test files)
+# 含：棋盘坐标往返测试、WS 契约一致性测试
 ```
 
 **前端类型检查 + 生产构建：**
@@ -111,96 +277,73 @@ npm -w web run typecheck
 npm -w web run build
 ```
 
+**验证 LLM 连通（需 .env）：**
+
+```bash
+node --env-file=server/.env --import tsx server/scripts/smoke-llm.ts
+```
+
 ---
 
-## 已知限制与待办
+## 数据库结构（SQLite）
 
-详见 [`docs/superpowers/plans/M1-OPEN-ISSUES.md`](docs/superpowers/plans/M1-OPEN-ISSUES.md)。
+| 表 | 说明 |
+|----|------|
+| `games` | 对局元数据（模式、执方、结果、起始 FEN） |
+| `moves` | 逐手走法（含 FEN、评分、是否 AI） |
+| `messages` | 聊天消息（角色发言 + 玩家发言，按局持久化） |
+| `move_annotations` | 逐手诊断标注（cp\_loss、bestMove、阶段、主题） |
+| `growth_metrics` | 逐局成长指标快照（ACPL、准确率、估算 Elo） |
+| `drill_attempts` | 训练作答记录 |
+| `persona_memory` | 角色长期记忆（episode / fact / insight） |
 
-主要注意点：
+---
 
-- **坐标朝向需端到端验证**：`elephantops` 适配层（`server/src/rules/position.ts` 的 `elToPika`/`pikaToEl`）在单测内部自洽，但接入真实 Pikafish 二进制后需核对引擎返回的 move 字符串与适配层记法是否一致。若出现"illegal move"，把映射公式从 `10 - rank` 改为 `rank - 1` 即可（前端 Board 同理）。
-- **完整端到端对弈**需提供 Pikafish 二进制后才能验证，M1 代码逻辑已具备完整闭环，但引擎连接部分未经真机测试。
+## 已知简化与限制（诚实记录）
 
-**后续里程碑（M3 尚未实现）：**
+- **坐标朝向**：`elToPika`/`pikaToEl` 已经对真机 Pikafish perft 验证，映射公式 `pika_rank = el_rank - 1` 正确，单测与真实引擎对齐。
+- **长捉（perpetual chase）未实现**：长将用「同一局面重复三次 → 认负」近似处理；长捉暂无判定，不等同于完整象棋规则。
+- **60 回合无吃子和棋**：已实现（`isDrawBy60Move`）；原 elephantops 的 50 半回合错误判和已修复。
+- **mate 丢分**：封顶 1000 cp（避免单手 3 万污染 ACPL）；实际让将或被将杀时影响仍会反映，但不再产生断崖。
+- **估算 Elo**：`2600 - 6 × ACPL` 粗映射，仅供看趋势，非真实棋力评级。
+- **弱点画像**：SQL 实时聚合，不物化（单机数据量小）。
+- **训练回写**：`drill_attempts` 记录正确率统计；暂不自动反哺弱点画像画像权重。
+- **导出/导入**：本系统 JSON 格式往返（export → import 完整还原）；不解析 PGN / ICCS 等外部棋谱格式。
+- **黑方棋盘视角**：顶部为黑方，`react-xiangqiboard` 组件不翻转棋盘——执黑时棋盘视觉方向不切换，功能可用但非标准黑方视角。
+- **记忆检索**：中文按字、英文按词的重合度匹配，非嵌入语义检索。
+- **角色互动**：同回合聊天上下文已注入 prompt；但仅注入最近发言文本，不含完整的"角色关系旧账"建模。
+- **`hangs_piece`（丢子）标签**：用对手一手后子力净减少近似，非严格对杀计算。
+- **历史对比**：规则版文字摘要；LLM 措辞接口（`ReportProvider`）留给后续扩展。
+- **浏览器语音**：TTS 音色依赖系统，Chrome/Edge 最佳；STT 为一次性听写，非持续聆听；Firefox 基本无 STT。
+- **Pikafish 强度档**：`UCI_Elo`/`LimitStrength` 暂未下发，拟人模式靠 MultiPV 浅采样近似强度差异。
+- **专项陪练**：裁剪到 M2.5，当前版本不含（计划中）。
+- **导演心流 EDDA**：悔棋频率/参与度趋势等字段尚未采集；当前仅连败时静态下调评分带。
 
-- **M3**：AI 棋手人设、观棋者视角、长期记忆、语音交互。
+---
+
+## M1 对弈闭环说明
+
+M1 实现了完整的对弈闭环：从落子到 AI 应答，再到对局持久化与复盘。
+
+- 引擎封装：队列 + 超时 + 进程崩溃 reject
+- GameSession 原子落库回滚
+- 终局规则：将死、重复局面（三次）、60 回合无吃子、长将（近似）
 
 ---
 
 ## M2：智能分析层
 
-M2 在 M1 对弈闭环基础上增加了「局后自动诊断」能力：对每一手棋打分、贴标签，并聚合为弱点画像、成长曲线和训练题组。
+M2 在对弈闭环基础上增加了局后自动诊断：
 
-### 功能简介
-
-| 功能 | 说明 |
-|------|------|
-| 逐手诊断 | 调用 Pikafish 对每手棋评分，计算 cp 丢分；按开局/中局/残局标注阶段，同时打「主题标签」（吃子、闲手、丢子、防守、将军等） |
-| 弱点画像 | 按阶段 × 标签聚合历史诊断数据，找出哪个阶段哪类失误最多 |
-| 训练题 | 从历史败局中提取丢分超过阈值的关键局面，生成复盘训练题组 |
-| 成长曲线 | 每局诊断后写入 `growth_metrics` 快照；前端展示 ACPL、准确率、估算 Elo 随对局数的变化趋势 |
-| 历史对比 | 对比最近两段历史的各项指标，输出规则版文字摘要（LLM 措辞接口留给 M3） |
-
-### 诊断用法
-
-先按 M1 说明下完并存一局，获得 `gameId`（整数，可在网络请求或 URL 中看到）；然后任选一种方式触发诊断：
-
-**命令行触发**（会真跑 Pikafish 逐手分析，手数越多耗时越长）：
-
-```bash
-curl -X POST http://localhost:3410/games/<id>/diagnose
-```
-
-**浏览器触发**：
-
-打开 `http://localhost:3420/#/analysis/<id>`，点击「诊断本局」按钮。
-
-诊断完成后：
-
-- `http://localhost:3420/#/growth` — 成长曲线、弱点分布、两段历史对比
-- `http://localhost:3420/#/training/<id>` — 当局失误复盘训练题
-
-### 分析 API 一览
-
-| 端点 | 说明 |
-|------|------|
-| `POST /games/:id/diagnose` | 触发指定局的逐手诊断（异步，Pikafish 分析完后写入 DB） |
-| `GET /games/:id/diagnosis` | 查询某局诊断结果（逐手 cp_loss + 阶段 + 标签） |
-| `GET /growth` | 返回全量 `growth_metrics` 快照列表（成长曲线数据点） |
-| `GET /weakness?side=red\|black` | 返回弱点画像（按阶段 × 标签聚合的失误分布） |
-| `GET /games/:id/drills` | 返回当局训练题组（关键失误局面 + 最佳走法） |
-| `GET /compare` | 返回最近两段历史的对比摘要（ACPL、准确率、Elo 趋势等） |
-
-### 前端路由
-
-| 路由 | 页面 |
-|------|------|
-| `#/` | 对局（与 AI 对弈） |
-| `#/review/:id` | 复盘（逐步回顾对局记录） |
-| `#/analysis/:id` | 诊断（触发 + 查看逐手诊断结果） |
-| `#/growth` | 成长（成长曲线 + 弱点画像 + 历史对比） |
-| `#/training/:id` | 训练（失误复盘题组） |
-
-### 已知简化项（诚实记录）
-
-- **估算 Elo** 为 ACPL 粗映射（`2600 - 6 × ACPL` 钳制在合理区间），仅供看趋势，非真实棋力评级。
-- **弱点画像** 用 SQL 聚合查询动态计算，未物化 `weakness_profile` 表（个人单机数据量小，无需物化）。
-- **`hangs_piece`（丢子）** 标签用「本方此手后经对手一手、子力净减少」近似判定，非严格对杀计算。
-- **单局诊断页** 展示每手 cp 丢分；绝对评分曲线未存入 DB（接口已预留）。
-- **历史对比** 为规则版文字摘要；LLM 措辞留 `ReportProvider` 接口给 M3 接入。
-- **图表库**：前端使用 [recharts](https://recharts.org/)。
-- **M2 设计 §5.4「专项陪练」** 已裁剪到 M2.5，将复用 M1 对弈 + 弱点画像选场景实现，M2 本轮不包含。
+- 对局结束后**自动**触发 Pikafish 逐手评分（fire-and-forget，不阻塞主流程）
+- 成长曲线（ACPL / 准确率 / 估算 Elo）、弱点画像、训练题
+- 训练作答回写 `drill_attempts`，正确率统计可查
 
 ---
 
 ## M3a：角色与聊天（文字版）
 
-对弈时,2-3 个**有性格、有身世、会看走眼**的观棋者围着棋局**与回合解耦**地自然冒泡:点评、拉踩、接梗、闲聊;玩家可打字与他们对话。角色跨会话记得你(长期记忆 + 反思)。语音留给 M3b。
-
-### LLM 配置（火山方舟 / 豆包）
-
-大脑用火山方舟(OpenAI 兼容),配置三个环境变量(放 `server/.env`,见 `server/.env.example`,**勿提交**):
+见功能概览。LLM 配置（`server/.env`）：
 
 ```
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
@@ -208,56 +351,10 @@ ARK_API_KEY=你的火山 key
 ARK_MODEL=doubao-seed-2.0-pro
 ```
 
-- 观棋者高频弹幕默认 `thinking:{type:"disabled"}` 关推理(实测一句约 83 token);诊断/反思才开推理。
-- 单独验证 LLM:`node --env-file=server/.env --import tsx server/scripts/smoke-llm.ts`。
-
-### 角色与机制
-
-| 角色 | 棋力档 | 帮踩倾向 |
-|------|--------|----------|
-| 老黑(AI 棋手) | 强 | 你的对手 |
-| 炮儿爷(观棋) | 强 | 专踩软招,妙手真心叫好 |
-| 林教练(观棋) | 中 | 偏帮你,给提示 |
-| 吃瓜阿强(观棋) | 弱 | 墙头草,谁优势踩谁 |
-
-- **防趋同**:按棋力档给角色**差异化的引擎读数**(弱角色读数含噪、真的会看走眼),不只靠 prompt。
-- **集中式发言调度**:加权打分(张力 + 随机 − 最近发言惩罚)决定谁说/说不说,规则优先于纯 LLM。
-- **节奏护栏**:最小静默间隔 + 每分钟上限,防刷屏/防 token 失控。
-- **长期记忆 + 反思**:每句发言记 episode;局末把零散观察抽象成高权重 insight,检索注入后续对话。
-
-### 聊天协议
-
-- 后端推 `{type:'chat', personaId, text, addressee, ts}`;前端发 `{type:'say', gameId, text}` 与观棋者对话。
-- 刺激来源:落子 / 妙手漏着 / 玩家说话 / 冷场定时器(与回合解耦)。
-
-### 已知简化项（诚实记录）
-
-- 记忆相关度用「中文按字 + 英文按词」重合度,非嵌入语义检索(数据量小够用)。
-- 张力为评分/丢分的粗映射;冷场用定时器 + 低张力刺激。
-- 一个豆包模型 + thinking 开关覆盖「弹幕/分析」两档,未做多模型路由。
-- 首版让**观棋者**主动冒泡;AI 棋手主动搭话为后续小扩展。
-- 端到端聊天需后端运行 + ARK key;`VolcanoLLM` 与 `say` 路径已真实冒烟,完整对局内联动需本机起服务验证。
-
 ---
 
-## M3b：语音（浏览器原生)
+## M3b：语音（浏览器原生）
 
-全程语音,**零新凭证、零新依赖**——用浏览器内置 Web Speech API:
+见功能概览。无额外凭证，浏览器内置 Web Speech API。
 
-- **念弹幕(TTS)**:观棋者/棋手的每条发言用 `SpeechSynthesis` 念出来,各角色用**音高/语速**区分(老炮儿低沉、教练平稳、阿强尖快,见 `web/src/voice/voice-config.ts`)。
-- **说话(STT)**:点 🎤 用中文说话(`webkitSpeechRecognition`,`zh-CN`,一次性听写)→ 识别为文字走现有 `say` → 观棋者回应。
-- **🔊 开关**:一键静音;重开局自动清掉排队语音。
-- **优雅降级**:浏览器不支持时按钮禁用 + 提示,不报错。
-
-**浏览器兼容性:** Chrome / Edge 最佳(TTS + STT 都成熟)。Safari 的 STT 支持有限,Firefox 基本无 STT——已做特性检测降级,TTS 在主流浏览器都可用。
-
-### 已知简化项
-
-- 浏览器 TTS 音色有限,只能音高/语速区分角色,不如云端自然(升级见下)。
-- STT 为「按一次说一句」的一次性听写,非持续聆听。
-- web 无测试框架,语音逻辑以 typecheck + build + 浏览器手动验收为准。
-
-### 火山云 TTS 升级路径(有语音凭证再做)
-
-浏览器音色不够"人味"时,可切火山云 TTS 拿自然多音色。需**独立的火山「语音技术」凭证**(appid + access_token,**非 ARK LLM key**):
-- 后端 `POST https://openspeech.bytedance.com/api/v1/tts`(`Authorization: Bearer;<token>`,`cluster=volcano_tts`,按 persona 映射 `voice_type`)→ 返回 base64 音频;前端把 `browser-tts.ts` 抽象成 `VoiceProvider`,加 `ServerTTS` 实现 + 来源开关。env:`VOLC_TTS_APPID`/`VOLC_TTS_TOKEN`(放 `.env`)。详见 [M3b 计划文末](docs/superpowers/plans/2026-06-20-m3b-voice.md)。
+**火山云 TTS 升级路径（有语音凭证再做）：** 详见 `docs/superpowers/plans/2026-06-20-m3b-voice.md`。
