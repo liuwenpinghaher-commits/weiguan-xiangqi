@@ -1,4 +1,4 @@
-import type { MemoryStore, MemoryRecord, MemoryInput, MemoryKind } from './store.js'
+import type { MemoryStore, MemoryRecord, MemoryInput, MemoryKind, MemoryListFilter } from './store.js'
 import type { PersonaId } from '../types.js'
 
 const RECENCY_HALFLIFE_MS = 1000 * 60 * 60 * 24 * 14 // 14 天,与原实现一致
@@ -29,7 +29,7 @@ export class FakeMemoryStore implements MemoryStore {
       .map(s => s.r)
   }
 
-  async list(filter: { personaId?: PersonaId; kind?: MemoryKind; includeSuperseded?: boolean }): Promise<MemoryRecord[]> {
+  async list(filter: MemoryListFilter): Promise<MemoryRecord[]> {
     return this.rows.filter(r =>
       (!filter.personaId || r.personaId === filter.personaId) &&
       (!filter.kind || r.kind === filter.kind) &&
