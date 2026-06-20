@@ -226,12 +226,14 @@ export class GameSession {
     const recent = this.deps.repo.recentResults(10)  // 按各局自身 human_side 映射,无需传入
     const lastMoveMs = this.lastMoveMs.get(gameId) ?? 0
     const playerState = computePlayerState(recent, lastMoveMs)
+    // humanlike 模式用拟人强度 0.5（随机性适中）；coach 模式 strength 不参与决策但保持合理值
+    const strength = mode === 'humanlike' ? 0.5 : 0.6
     return {
       mode,
       playerState,
       maxDropCp: 320,
       targetBand: { low: -50, high: 80 },
-      strength: 0.6,
+      strength,
       rng: Math.random,
     }
   }

@@ -7,6 +7,7 @@ import { cancelSpeech } from '../voice/browser-tts.js'
 const START_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
 type GameStatus = 'connecting' | 'waiting' | 'playing' | 'over' | 'error'
+type GameMode = 'coach' | 'humanlike'
 
 export function PlayPage() {
   const [fen, setFen] = useState(START_FEN)
@@ -15,6 +16,7 @@ export function PlayPage() {
   const [gameId, setGameId] = useState<number | null>(null)
   const [lastAiMove, setLastAiMove] = useState<string | null>(null)
   const [lines, setLines] = useState<ChatLine[]>([])
+  const [mode, setMode] = useState<GameMode>('coach')
 
   const wsRef = useRef<ReturnType<typeof connect> | null>(null)
 
@@ -48,7 +50,7 @@ export function PlayPage() {
   }
 
   // 创建 WebSocket 连接并发起新对局
-  function startNewConnection() {
+  function startNewConnection(activeMode: GameMode = 'coach') {
     wsRef.current?.close()
     const ws = connect(handleServerMsg, (s) => {
       if (s === 'closed') {
@@ -60,7 +62,7 @@ export function PlayPage() {
       }
     })
     wsRef.current = ws
-    ws.send({ type: 'new', mode: 'coach', humanSide: 'red', startFen: START_FEN })
+    ws.send({ type: 'new', mode: activeMode, humanSide: 'red', startFen: START_FEN })
     setStatus('waiting')
     setStatusMsg('正在创建对局...')
     return ws
@@ -68,7 +70,7 @@ export function PlayPage() {
 
   useEffect(() => {
     setStatusMsg('正在连接服务器...')
-    const ws = startNewConnection()
+    const ws = startNewConnection(mode)
     return () => {
       ws.close()
     }
@@ -81,7 +83,7 @@ export function PlayPage() {
     setStatusMsg(`您走了 ${move}，等待 AI 响应...`)
   }
 
-  function handleRestart() {
+  function handleRestart(activeMode?: GameMode) {
     cancelSpeech()
     setFen(START_FEN)
     setGameId(null)
@@ -89,7 +91,12 @@ export function PlayPage() {
     setLines([])
     setStatus('connecting')
     setStatusMsg('正在连接服务器...')
-    startNewConnection()
+    startNewConnection(activeMode ?? mode)
+  }
+
+  function handleModeChange(newMode: GameMode) {
+    setMode(newMode)
+    handleRestart(newMode)
   }
 
   return (
@@ -113,8 +120,31 @@ export function PlayPage() {
         />
       </div>
 
+      <div style={styles.modeBar}>
+        <span style={styles.modeLabel}>对局模式：</span>
+        <button
+          style={{ ...styles.modeBtn, ...(mode === 'coach' ? styles.modeBtnActive : {}) }}
+          onClick={() => handleModeChange('coach')}
+          title="AI 会带你、动态控盘，保持局面胶着让你跳一跳够得着"
+        >
+          陪练模式
+        </button>
+        <button
+          style={{ ...styles.modeBtn, ...(mode === 'humanlike' ? styles.modeBtnActive : {}) }}
+          onClick={() => handleModeChange('humanlike')}
+          title="AI 像真人棋风，输赢自然，随机性中带有真实下法"
+        >
+          拟人对手
+        </button>
+        <span style={styles.modeHint}>
+          {mode === 'coach'
+            ? 'AI 会带你、动态控盘'
+            : 'AI 像真人棋风，输赢自然'}
+        </span>
+      </div>
+
       <div style={styles.controls}>
-        <button style={styles.btn} onClick={handleRestart}>
+        <button style={styles.btn} onClick={() => handleRestart()}>
           重新开始
         </button>
         {status === 'over' && gameId !== null && (
@@ -131,7 +161,7 @@ export function PlayPage() {
       </div>
 
       <p style={styles.hint}>
-        支持拖拽或点选走棋 · 红方执先 · coach 模式
+        支持拖拽或点选走棋 · 红方执先 · 切换模式即刻重开新局
       </p>
     </div>
   )
@@ -222,5 +252,39 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: '16px',
     fontSize: '0.8rem',
     color: '#888',
+  },
+  modeBar: {
+    display: 'flex',
+    gap: '10px',
+    alignItems: 'center',
+    marginBottom: '12px',
+    flexWrap: 'wrap' as const,
+    justifyContent: 'center',
+  },
+  modeLabel: {
+    fontSize: '0.9rem',
+    color: '#aaa',
+  },
+  modeBtn: {
+    padding: '6px 18px',
+    fontSize: '0.9rem',
+    background: 'rgba(255,255,255,0.1)',
+    color: '#ccc',
+    border: '1px solid rgba(255,255,255,0.2)',
+    borderRadius: '20px',
+    cursor: 'pointer',
+    fontWeight: 500,
+    transition: 'all 0.15s',
+  },
+  modeBtnActive: {
+    background: '#f5c518',
+    color: '#1a1a2e',
+    border: '1px solid #f5c518',
+    fontWeight: 700,
+  },
+  modeHint: {
+    fontSize: '0.8rem',
+    color: '#888',
+    fontStyle: 'italic' as const,
   },
 }

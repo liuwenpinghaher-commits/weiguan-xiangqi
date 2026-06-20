@@ -181,3 +181,33 @@ test('测试 C — 非吃子时 AI 张力 ≥ 0.5(fakePosition 无真实 fen 无
   // 并且没有超出合法范围
   expect(aiStim.tension).toBeLessThanOrEqual(1)
 })
+
+test('humanlike 模式:newGame+playHumanMove 不报错,AI 能从多候选中走子', async () => {
+  // fakeEngine 返回 3 条候选，覆盖 selectHumanlike 的加权采样逻辑
+  const repo = new GamesRepo(openDb(':memory:'))
+  const multiEngine = {
+    analyze: vi.fn(async (): Promise<EngineLine[]> => [
+      { multipv: 1, move: 'b0c2', scoreCp: 30, mate: null, pv: ['b0c2'] },
+      { multipv: 2, move: 'h2e2', scoreCp: 10, mate: null, pv: ['h2e2'] },
+      { multipv: 3, move: 'c3c4', scoreCp: -5, mate: null, pv: ['c3c4'] },
+    ]),
+  }
+  const session = new GameSession({
+    repo,
+    engine: multiEngine as any,
+    makePosition: fakePosition as any,
+    clock: () => 't',
+  })
+  const gameId = session.newGame({ mode: 'humanlike', humanSide: 'red', startFen: 'START w - - 0 1' })
+
+  const res = await session.playHumanMove(gameId, 'h2e2')
+  // AI 必须走了某步（humanlike 从候选中采样）
+  expect(res.aiMove).toBeTruthy()
+  // 人着 + AI 着均入库
+  const moves = repo.getMoves(gameId)
+  expect(moves).toHaveLength(2)
+  expect(moves[0].byAi).toBe(false)
+  expect(moves[1].byAi).toBe(true)
+  // aiMove 必须是引擎候选之一（采样不越界）
+  expect(['b0c2', 'h2e2', 'c3c4']).toContain(res.aiMove)
+})
