@@ -30,7 +30,7 @@ describe.skipIf(!hasBin)('SurrealMemoryStore (集成)', () => {
   function makeStore(llm = new FakeLLM(['keep'])) {
     return new SurrealMemoryStore({
       url: URL, namespace: 'test', database: 'test', username: 'root', password: 'root',
-      embedding: new FakeEmbedding(16), llm, now: () => clock,
+      embedding: new FakeEmbedding(16), llm, now: () => clock, simThreshold: -1,
     })
   }
 
@@ -73,7 +73,7 @@ describe.skipIf(!hasBin)('SurrealMemoryStore (集成)', () => {
     const failing = { embed: async () => { throw new Error('boom') }, dimension: 16 }
     const store = new SurrealMemoryStore({
       url: URL, namespace: 'test', database: 'test2', username: 'root', password: 'root',
-      embedding: failing as any, llm: new FakeLLM(['keep']), now: () => clock,
+      embedding: failing as any, llm: new FakeLLM(['keep']), now: () => clock, simThreshold: -1,
     })
     await store.connect()
     const id = await store.record({ personaId: 'p3', kind: 'fact', content: '爱走当头炮', importance: 3, gameId: null, createdAt: new Date(clock).toISOString() })

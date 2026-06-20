@@ -11,12 +11,14 @@ const RECENCY_HALFLIFE_MS = 1000 * 60 * 60 * 24 * 14
 // 数学上正交/负相关(基本无关)的噪声,避免浪费一次 judge 调用。
 // 注意:不能用高阈值(如 0.85)——生产嵌入维度高、近义短句的余弦相似度往往只有 0.5~0.7,
 // 高阈值会让"残局易急躁→残局已变稳健"这类真正需要 judge 的更新被直接漏判。
-const SIM_FLOOR = -1 // 始终对 top-1 候选调用 judge;judge 才是真正的裁决者
+const DEFAULT_SIM_THRESHOLD = 0.85 // 余弦相似度高于此值才对 top-1 候选调用 judge,把 judge 调用成本限定在「足够相似」的写入上
 const HNSW_EF = 64 // HNSW 查询时的候选列表大小;v3 的 KNN 算子要求显式给出
 
 export interface SurrealMemoryDeps {
   url: string; namespace: string; database: string; username: string; password: string
   embedding: EmbeddingProvider; llm: LLMProvider; now: () => number
+  /** 余弦相似度高于此值才触发 judge;默认 0.85;测试可注入低值以确定性触发 judge 路径。 */
+  simThreshold?: number
 }
 
 interface Row {
@@ -63,7 +65,7 @@ export class SurrealMemoryStore implements MemoryStore {
     const vec = await this.embedOne(e.content)
     if (!vec) return this.insert(e, null)
     const [nn] = await this.knn(e.personaId, e.kind, vec, 1)
-    if (nn && nn.sim >= SIM_FLOOR) {
+    if (nn && nn.sim >= (this.deps.simThreshold ?? DEFAULT_SIM_THRESHOLD)) {
       const verdict = await judgeMemory(this.deps.llm, nn.row.content, e.content)
       if (verdict.action === 'merge') {
         const mvec = await this.embedOne(verdict.merged)
