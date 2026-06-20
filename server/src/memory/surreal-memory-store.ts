@@ -18,7 +18,7 @@ const HNSW_EF = 64 // HNSW 查询时的候选列表大小;v3 的 KNN 算子要�
 export interface SurrealMemoryDeps {
   url: string; namespace: string; database: string; username: string; password: string
   embedding: EmbeddingProvider; llm: LLMProvider; now: () => number
-  /** 余弦相似度高于此值才触发 judge;默认 0.85;测试可注入低值以确定性触发 judge 路径。 */
+  /** 余弦相似度高于此值才触发 judge;默认 DEFAULT_SIM_THRESHOLD(0.6);测试可注入低值以确定性触发 judge 路径。 */
   simThreshold?: number
 }
 
