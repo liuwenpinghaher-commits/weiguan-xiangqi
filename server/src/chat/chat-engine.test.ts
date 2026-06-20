@@ -2,16 +2,26 @@ import { test, expect } from 'vitest'
 import { FakeMemoryStore } from '../memory/fake-memory-store.js'
 import { FakeLLM } from '../llm/fake.js'
 import { ChatEngine } from './chat-engine.js'
+import { RuntimeConfig } from '../config/runtime-config.js'
+import { SettingsRepo } from '../store/settings-repo.js'
+import { openDb } from '../store/db.js'
 import type { Stimulus } from '../types.js'
+
+/** 新建一个独立内存 db 的 RuntimeConfig;可选传入 chat 段覆盖 */
+function makeCfg(chatOverride?: Record<string, unknown>): RuntimeConfig {
+  const cfg = new RuntimeConfig(new SettingsRepo(openDb(':memory:')), () => '2026-06-20T00:00:00.000Z')
+  if (chatOverride) cfg.updateSection('chat', chatOverride)
+  return cfg
+}
 
 function setup(llm: FakeLLM, now = () => 1000) {
   const mem = new FakeMemoryStore(now)
   const out: any[] = []
+  const cfg = makeCfg({ minSilenceMs: 0, maxPerMin: 100 })
   const engine = new ChatEngine({
-    llm, mem, now,
+    llm, mem, cfg, now,
     emit: (line) => out.push(line),
     rng: () => 0.9,
-    tempo: { minSilenceMs: 0, maxPerMin: 100 },
   })
   return { engine, out, mem }
 }
@@ -35,7 +45,8 @@ test('节奏护栏:静默期内的刺激不产出', async () => {
   const llm = new FakeLLM(() => 'x')
   const mem = new FakeMemoryStore(() => now)
   const out: any[] = []
-  const engine = new ChatEngine({ llm, mem, now: () => now, emit: (l) => out.push(l), rng: () => 0.9, tempo: { minSilenceMs: 5000, maxPerMin: 100 } })
+  const cfg = makeCfg({ minSilenceMs: 5000, maxPerMin: 100 })
+  const engine = new ChatEngine({ llm, mem, cfg, now: () => now, emit: (l) => out.push(l), rng: () => 0.9 })
   await engine.onStimulus({ kind: 'move', gameId: 1, scoreCp: 0, tension: 0.95 })
   const after = out.length
   now = 1000
@@ -166,11 +177,11 @@ test('AI 棋手自评:byPlayerPersona=true + rng<0.4 时 player 出现在 out �
     return 0.9
   }
 
+  const cfg = makeCfg({ minSilenceMs: 0, maxPerMin: 100 })
   const engine = new ChatEngine({
-    llm, mem, now: () => 1000,
+    llm, mem, cfg, now: () => 1000,
     emit: (line) => out.push(line),
     rng,
-    tempo: { minSilenceMs: 0, maxPerMin: 100 },
   })
 
   const stim: Stimulus = {
@@ -254,11 +265,11 @@ test('跨刺激记忆:第 2 次刺激的 prompt 含上一次 recent 中的内容
   // 使用独立的 engine(tempo=0 允许连续触发)
   const mem = new FakeMemoryStore(() => 1000)
   const out: any[] = []
+  const cfg = makeCfg({ minSilenceMs: 0, maxPerMin: 100 })
   const engine = new ChatEngine({
-    llm, mem, now: () => 1000,
+    llm, mem, cfg, now: () => 1000,
     emit: (line) => out.push(line),
     rng: () => 0.9,
-    tempo: { minSilenceMs: 0, maxPerMin: 100 },
   })
 
   const stim1: Stimulus = {
