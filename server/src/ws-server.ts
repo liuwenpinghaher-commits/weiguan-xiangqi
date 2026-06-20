@@ -213,6 +213,7 @@ export async function buildServer(opts: {
   app.addHook('onClose', async () => {
     try { engine?.close?.() } catch {}
     try { db.close() } catch {}
+    try { if (mem instanceof SurrealMemoryStore) await mem.close() } catch {}
   })
 
   await app.register(fastifyWebsocket)
