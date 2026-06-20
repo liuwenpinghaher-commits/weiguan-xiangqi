@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { connect, type ServerMsg } from '../api/ws-client.js'
 import { Board } from '../board/Board.js'
+import { ChatPanel, type ChatLine } from '../chat/ChatPanel.js'
 
 const START_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
@@ -12,6 +13,7 @@ export function PlayPage() {
   const [statusMsg, setStatusMsg] = useState('正在连接服务器...')
   const [gameId, setGameId] = useState<number | null>(null)
   const [lastAiMove, setLastAiMove] = useState<string | null>(null)
+  const [lines, setLines] = useState<ChatLine[]>([])
 
   const wsRef = useRef<ReturnType<typeof connect> | null>(null)
 
@@ -34,6 +36,13 @@ export function PlayPage() {
     } else if (msg.type === 'error') {
       setStatusMsg(`错误：${msg.message}`)
       // 不改变 status，让用户可以继续
+    } else if (msg.type === 'chat') {
+      setLines(prev => [...prev, {
+        personaId: msg.personaId,
+        text: msg.text,
+        addressee: msg.addressee,
+        ts: msg.ts,
+      }])
     }
   }
 
@@ -75,6 +84,7 @@ export function PlayPage() {
     setFen(START_FEN)
     setGameId(null)
     setLastAiMove(null)
+    setLines([])
     setStatus('connecting')
     setStatusMsg('正在连接服务器...')
     startNewConnection()
@@ -91,8 +101,14 @@ export function PlayPage() {
         )}
       </div>
 
-      <div style={styles.boardWrapper}>
-        <Board fen={fen} onMove={handleMove} />
+      <div style={styles.boardArea}>
+        <div style={styles.boardWrapper}>
+          <Board fen={fen} onMove={handleMove} />
+        </div>
+        <ChatPanel
+          lines={lines}
+          onSay={(t) => wsRef.current?.send({ type: 'say', gameId, text: t })}
+        />
       </div>
 
       <div style={styles.controls}>
@@ -155,6 +171,12 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '0.85rem',
     color: '#f5c518',
     fontFamily: 'monospace',
+  },
+  boardArea: {
+    display: 'flex',
+    flexDirection: 'row',
+    gap: '20px',
+    alignItems: 'flex-start',
   },
   boardWrapper: {
     borderRadius: '8px',

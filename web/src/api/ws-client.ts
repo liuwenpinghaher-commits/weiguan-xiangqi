@@ -4,6 +4,7 @@ export type ServerMsg =
   | { type: 'started'; gameId: number }
   | { type: 'update'; aiMove: string | null; fen: string; over: boolean }
   | { type: 'error'; message: string }
+  | { type: 'chat'; gameId: number; personaId: string; text: string; addressee: string; ts: string }
 
 export type ConnStatus = 'open' | 'closed' | 'error'
 
