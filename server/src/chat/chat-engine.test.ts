@@ -141,3 +141,101 @@ test('去重护栏:同一 speaker 连续返回相同文本时第二次不 emit �
   )
   expect(duplicates.length).toBe(0)
 })
+
+// ─── 新增测试(Fix Task 5) ────────────────────────────────────────────────────
+
+test('AI 棋手自评:byPlayerPersona=true + rng<0.4 时 player 出现在 out 且 prompt 含"自评"', async () => {
+  // 捕获所有 LLM 调用的 user 消息
+  const capturedUsers: string[] = []
+  const llm = new FakeLLM((msgs) => {
+    const u = msgs.find(m => m.role === 'user')
+    if (u) capturedUsers.push(u.content)
+    return '我这步稳一手'
+  })
+
+  const mem = new PersonaMemoryRepo(openDb(':memory:'))
+  const out: any[] = []
+
+  // rng 序列:
+  //   call 1-3: pickSpeakers 对 3 个 spectator 各调一次(返回 0.9 → 高分让其通过)
+  //   call 4  : 判断 byPlayerPersona 条件(返回 0.2 < 0.4 → 加入 player)
+  //   call 5+ : buildPrompt 内 viewScore 调用(返回 0.9)
+  let callCount = 0
+  const rng = () => {
+    callCount++
+    if (callCount === 4) return 0.2
+    return 0.9
+  }
+
+  const engine = new ChatEngine({
+    llm, mem, now: () => 1000,
+    emit: (line) => out.push(line),
+    rng,
+    tempo: { minSilenceMs: 0, maxPerMin: 100 },
+  })
+
+  const stim: Stimulus = {
+    kind: 'move', gameId: 1, scoreCp: 50, tension: 0.95,
+    moveZh: '黑马2进3', side: 'black', ply: 2, phase: 'opening',
+    byPlayerPersona: true,
+  }
+
+  await engine.onStimulus(stim)
+
+  // out 里应有 personaId === 'player' 的条目
+  const playerLines = out.filter((l: any) => l.personaId === 'player')
+  expect(playerLines.length).toBeGreaterThanOrEqual(1)
+
+  // player 对应的 LLM prompt user 消息应含"自评"
+  expect(capturedUsers.some(u => u.includes('自评'))).toBe(true)
+})
+
+test('人着不让 player 自评:byPlayerPersona 未设时 out 中不含 player', async () => {
+  const llm = new FakeLLM(() => '说一句')
+  const { engine, out } = setup(llm)
+
+  const stim: Stimulus = {
+    kind: 'move', gameId: 1, scoreCp: 50, tension: 0.95,
+    moveZh: '红炮二平五', side: 'red', ply: 1, phase: 'opening',
+    // byPlayerPersona 不设
+  }
+
+  await engine.onStimulus(stim)
+
+  const playerLines = out.filter((l: any) => l.personaId === 'player')
+  expect(playerLines.length).toBe(0)
+})
+
+test('内容质量:连发两个不同 moveZh 的刺激,各自 LLM prompt 含各自着法', async () => {
+  // 捕获每次调用的 user 消息
+  const capturedUsers: string[] = []
+  const llm = new FakeLLM((msgs) => {
+    const u = msgs.find(m => m.role === 'user')
+    if (u) capturedUsers.push(u.content)
+    return '说一句'
+  })
+  const { engine } = setup(llm, () => 1000)
+
+  const stim1: Stimulus = {
+    kind: 'move', gameId: 1, scoreCp: 100, tension: 0.95,
+    moveZh: '红炮二平五', side: 'red', ply: 1, phase: 'opening',
+  }
+  const stim2: Stimulus = {
+    kind: 'move', gameId: 1, scoreCp: -80, tension: 0.95,
+    moveZh: '黑马2进3', side: 'black', ply: 2, phase: 'opening',
+  }
+
+  await engine.onStimulus(stim1)
+  // 重置 guard 让第二次也能触发
+  const beforeCount = capturedUsers.length
+  // 需要跳过 tempo 冷静期:用新 engine(tempo=0,minSilenceMs=0 在 setup 里已配好)
+  await engine.onStimulus(stim2)
+
+  // 第一次刺激的 user 消息应含 stim1 着法
+  const stim1Users = capturedUsers.slice(0, beforeCount)
+  expect(stim1Users.some(u => u.includes('红炮二平五'))).toBe(true)
+
+  // 第二次刺激的 user 消息应含 stim2 着法(去重后可能因文本相同被跳过,但至少有一次新调用含该着法)
+  const stim2Users = capturedUsers.slice(beforeCount)
+  expect(stim2Users.some(u => u.includes('黑马2进3'))).toBe(true)
+})

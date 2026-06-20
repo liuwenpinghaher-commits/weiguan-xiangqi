@@ -138,6 +138,7 @@ export class GameSession {
       kind: 'move', gameId, scoreCp: redCp,
       moveZh: aiZh, side: aiSide, ply: aiPly, phase: aiPhase,
       tension: aiTension,
+      byPlayerPersona: true,
     })
 
     const aiOver = afterAI.isGameOver()

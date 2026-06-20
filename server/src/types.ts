@@ -129,4 +129,6 @@ export interface Stimulus {
   humanText?: string
   /** 张力 0..1:越高越该有人说话 */
   tension: number
+  /** true = 这步是 AI 棋手"老黑"走的,允许 player 自评 */
+  byPlayerPersona?: boolean
 }

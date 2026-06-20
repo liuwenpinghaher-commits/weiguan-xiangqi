@@ -33,6 +33,12 @@ export class ChatEngine {
     if (!this.guard.allow()) return
     const recentSecs = this.recentMap()
     const speakers = pickSpeakers(stim, spectators(), recentSecs, this.deps.rng)
+
+    // 若这步是 AI 棋手走的,以 40% 概率让 player 自评(放末尾)
+    if (stim.byPlayerPersona && this.deps.rng() < 0.4) {
+      speakers.push('player')
+    }
+
     if (speakers.length === 0) return
     this.guard.record()
     for (const id of speakers) {
@@ -108,6 +114,8 @@ export class ChatEngine {
     let user: string
     if (stim.kind === 'human_said') {
       user = `玩家刚说:"${stim.humanText}"。回他一句:`
+    } else if (p.isPlayer && stim.byPlayerPersona) {
+      user = `你(${p.name})刚走了「${stim.moveZh ?? '一步'}」,当前${qual}。自评一句(≤25字,别空泛):`
     } else if (stim.moveZh) {
       user = `第${stim.ply ?? '?'}手(${stim.phase ?? ''}):${stim.moveZh}。当前${qual}。说一句:`
     } else {
