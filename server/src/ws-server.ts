@@ -12,6 +12,8 @@ import { TrainingRepo } from './store/training-repo.js'
 import { diagnoseGame } from './analysis/diagnose-game.js'
 import { generateDrills } from './training/generate-drills.js'
 import { compareWindows } from './report/compare.js'
+import { growthReport } from './report/llm-report.js'
+import { prevFenForPly, worstHumanPly } from './report/sparring.js'
 import { ChatEngine } from './chat/chat-engine.js'
 import { VolcanoLLM } from './llm/volcano.js'
 import { FakeLLM } from './llm/fake.js'
@@ -390,11 +392,31 @@ export async function buildServer(opts: {
     return training.drillStatsAll()
   })
 
-  // 历史对比(已诊断局按时间对半:前半 vs 后半)
+  // 历史对比(已诊断局按时间对半:前半 vs 后半) + LLM 自然语言成长报告
   app.get('/compare', async () => {
     const all = analysis.listGrowthMetrics()
     const mid = Math.floor(all.length / 2)
-    return compareWindows(all.slice(0, mid), all.slice(mid))
+    const cmp = compareWindows(all.slice(0, mid), all.slice(mid))
+    const report = await growthReport(llm, cmp)
+    return { ...cmp, report }
+  })
+
+  // 专项陪练:从该局人方丢分最大的那手走子前局面开始
+  app.get('/games/:id/sparring', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id)
+    if (!Number.isInteger(id) || isNaN(id)) return reply.code(400).send({ error: 'invalid id' })
+    const game = repo.getGame(id)
+    if (!game) return reply.code(404).send({ error: 'not found' })
+
+    const anns = analysis.getAnnotations(id)
+    const ply = worstHumanPly(anns, game.humanSide)
+    if (ply === null) {
+      // 无诊断数据或无失误
+      return { startFen: null, humanSide: game.humanSide, ply: null }
+    }
+    const moves = repo.getMoves(id)
+    const startFen = prevFenForPly(game, moves, ply)
+    return { startFen, humanSide: game.humanSide, ply }
   })
 
   // ── 棋谱导出/导入 ──────────────────────────────────────────

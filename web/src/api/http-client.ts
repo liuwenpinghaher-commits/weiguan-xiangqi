@@ -16,6 +16,12 @@ export interface DrillAttemptResult {
   stats: { total: number; correct: number }
 }
 
+export interface SparringResult {
+  startFen: string | null
+  humanSide: 'red' | 'black'
+  ply: number | null
+}
+
 export const diagnoseGame = (id: number) =>
   fetch(`${BASE}/games/${id}/diagnose`, { method: 'POST' }).then((r) => r.json())
 export const getDiagnosis = (id: number) => jget(`/games/${id}/diagnosis`)
@@ -23,6 +29,7 @@ export const getGrowth = () => jget('/growth')
 export const getWeakness = (side: 'red' | 'black') => jget(`/weakness?side=${side}`)
 export const getDrills = (id: number) => jget(`/games/${id}/drills`)
 export const getCompare = () => jget('/compare')
+export const getSparring = (id: number): Promise<SparringResult> => jget(`/games/${id}/sparring`)
 
 export const postDrillAttempt = (
   id: number,

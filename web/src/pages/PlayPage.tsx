@@ -25,6 +25,7 @@ export function PlayPage() {
   const [side, setSide] = useState<HumanSide>('red') // 人类执哪方
   const [awaitingAi, setAwaitingAi] = useState(false) // AI 思考期间锁盘
   const [gameResult, setGameResult] = useState<GameResult>(null)
+  const [isSparring, setIsSparring] = useState(false) // 是否从陪练局面起手
 
   const wsRef = useRef<ReturnType<typeof connect> | null>(null)
   const isNarrow = useIsNarrow()
@@ -78,7 +79,7 @@ export function PlayPage() {
   }
 
   // 创建 WebSocket 连接并发起新对局
-  function startNewConnection(activeMode: GameMode = 'coach', activeSide: HumanSide = 'red') {
+  function startNewConnection(activeMode: GameMode = 'coach', activeSide: HumanSide = 'red', startFen: string = START_FEN) {
     wsRef.current?.close()
     const ws = connect(handleServerMsg, (s) => {
       if (s === 'reconnecting') {
@@ -101,7 +102,7 @@ export function PlayPage() {
       }
     })
     wsRef.current = ws
-    ws.send({ type: 'new', mode: activeMode, humanSide: activeSide, startFen: START_FEN })
+    ws.send({ type: 'new', mode: activeMode, humanSide: activeSide, startFen })
     setStatus('waiting')
     setStatusMsg('正在创建对局...')
     return ws
@@ -109,6 +110,21 @@ export function PlayPage() {
 
   useEffect(() => {
     setStatusMsg('正在连接服务器...')
+
+    // 检查是否有专项陪练局面（由 GrowthPage 写入 sessionStorage）
+    const sparringFen = sessionStorage.getItem('weiguan_sparring_fen')
+    const sparringSide = sessionStorage.getItem('weiguan_sparring_side') as HumanSide | null
+    if (sparringFen) {
+      // 清除避免下次仍沿用
+      sessionStorage.removeItem('weiguan_sparring_fen')
+      sessionStorage.removeItem('weiguan_sparring_side')
+      const activeSide: HumanSide = sparringSide === 'black' ? 'black' : 'red'
+      setSide(activeSide)
+      setIsSparring(true)
+      const ws = startNewConnection(mode, activeSide, sparringFen)
+      return () => { ws.close() }
+    }
+
     const ws = startNewConnection(mode, side)
     return () => {
       ws.close()
@@ -136,6 +152,7 @@ export function PlayPage() {
     setAwaitingAi(false)
     setGameResult(null)
     setStatusError(false)
+    setIsSparring(false) // 手动重开时取消陪练提示
     startNewConnection(activeMode ?? mode, activeSide ?? side)
   }
 
@@ -159,6 +176,12 @@ export function PlayPage() {
   return (
     <div style={styles.page}>
       <h1 style={styles.title}>围观象棋</h1>
+
+      {isSparring && (
+        <div style={styles.sparringBanner}>
+          专项陪练：从你上次的失误局面开始
+        </div>
+      )}
 
       <div style={styles.statusBar} aria-live="polite" aria-label="对局状态">
         <span style={statusError ? styles.statusTextError : styles.statusText}>
@@ -281,6 +304,17 @@ export function PlayPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  sparringBanner: {
+    marginBottom: '10px',
+    padding: '8px 20px',
+    background: 'rgba(142,68,173,0.2)',
+    border: '1px solid #8e44ad',
+    borderRadius: '8px',
+    color: '#d7bde2',
+    fontSize: '0.88rem',
+    fontWeight: 600,
+    letterSpacing: '0.02em',
+  },
   page: {
     minHeight: '100vh',
     display: 'flex',
