@@ -101,4 +101,21 @@ function registerMemoryRoutes(app: FastifyInstance, { mem }: AdminDeps): void {
     return { ok: true }
   })
 }
-function registerGamesRoutes(_app: FastifyInstance, _deps: AdminDeps): void {}
+function registerGamesRoutes(app: FastifyInstance, { games, messages }: AdminDeps): void {
+  app.get('/admin/games', async () => games.listGames())
+
+  app.get('/admin/games/:id', async (req, reply) => {
+    const id = parseInt((req.params as { id: string }).id, 10)
+    if (isNaN(id)) return reply.code(400).send({ error: 'invalid id' })
+    const game = games.getGame(id)
+    if (!game) return reply.code(404).send({ error: 'not found' })
+    return { game, moves: games.getMoves(id), messages: messages.getMessages(id) }
+  })
+
+  app.delete('/admin/games/:id', async (req, reply) => {
+    const id = parseInt((req.params as { id: string }).id, 10)
+    if (isNaN(id)) return reply.code(400).send({ error: 'invalid id' })
+    games.deleteGame(id)
+    return { ok: true }
+  })
+}

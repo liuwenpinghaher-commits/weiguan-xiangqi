@@ -101,3 +101,32 @@ describe('admin memory 路由(经 MemoryStore)', () => {
     expect(res.json<any[]>().map(r => r.kind)).toEqual(['fact'])
   })
 })
+
+describe('admin games 路由', () => {
+  it('GET /admin/games 列表;GET /admin/games/:id 取详情;DELETE 级联删', async () => {
+    const db2 = openDb(':memory:')
+    const cfg2 = new RuntimeConfig(new SettingsRepo(db2), () => 't')
+    const games = new GamesRepo(db2); const messages = new MessagesRepo(db2)
+    const app = Fastify()
+    registerAdminRoutes(app, { cfg: cfg2, mem: new FakeMemoryStore(() => 0), games, messages })
+    const id = games.createGame({ mode: 'humanlike', humanSide: 'red', startFen: 'startpos', startedAt: 't0' })
+    games.addMove({ gameId: id, side: 'red', move: 'h2e2', fenAfter: 'f', scoreCp: 10, byAi: false })
+    messages.addMessage({ gameId: id, personaId: 'coach', role: 'persona', text: 'hi', addressee: null, ts: 't0' })
+
+    const list = await app.inject({ method: 'GET', url: '/admin/games' })
+    expect(list.json<any[]>().length).toBe(1)
+
+    const detail = await app.inject({ method: 'GET', url: `/admin/games/${id}` })
+    const d = detail.json<any>()
+    expect(d.game.id).toBe(id); expect(d.moves).toHaveLength(1); expect(d.messages).toHaveLength(1)
+
+    const del = await app.inject({ method: 'DELETE', url: `/admin/games/${id}` })
+    expect(del.statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/admin/games' })).json<any[]>()).toHaveLength(0)
+  })
+  it('GET /admin/games/:id 不存在 → 404', async () => {
+    const { app } = makeApp()
+    const res = await app.inject({ method: 'GET', url: '/admin/games/999' })
+    expect(res.statusCode).toBe(404)
+  })
+})
