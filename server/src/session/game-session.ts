@@ -61,6 +61,9 @@ export interface GameSessionDeps {
 
 const MULTIPV = 5
 
+/** 人着用时超过此值(毫秒)时触发 long_think 刺激 */
+const LONG_THINK_THRESHOLD_MS = 8000
+
 /** 根据手数推断对局阶段 */
 function calcPhase(ply: number): 'opening' | 'midgame' | 'endgame' {
   if (ply <= 16) return 'opening'
@@ -157,10 +160,12 @@ export class GameSession {
       this.finish(gameId, result)
       const humanPly = this.deps.repo.getMoves(gameId).length
       const phase = calcPhase(humanPly)
+      const endHumanLastMs = this.lastMoveMs.get(gameId) ?? 0
+      const endHumanKind = endHumanLastMs > LONG_THINK_THRESHOLD_MS ? 'long_think' : 'move'
       this.deps.onStimulus?.({
-        kind: 'move', gameId, scoreCp: null,
+        kind: endHumanKind, gameId, scoreCp: null,
         moveZh: humanZh, side: humanTurn, ply: humanPly, phase,
-        tension: humanZh?.includes('吃') ? 0.9 : 0.4,
+        tension: humanZh?.includes('吃') ? 0.9 : (endHumanKind === 'long_think' ? 0.7 : 0.4),
       })
       return { aiMove: null, fen: afterHuman.fen(), over: true }
     }
@@ -188,11 +193,16 @@ export class GameSession {
     const humanPhase = calcPhase(humanPly)
     const aiPhase = calcPhase(aiPly)
 
-    // 人着刺激(无评分,红方视角 scoreCp=null)
+    // 人着刺激:长考(>8s)时升级为 long_think 刺激并提升张力
+    const humanLastMs = this.lastMoveMs.get(gameId) ?? 0
+    const humanKind = humanLastMs > LONG_THINK_THRESHOLD_MS ? 'long_think' : 'move'
+    const humanTension = humanKind === 'long_think'
+      ? 0.7
+      : (humanZh?.includes('吃') ? 0.9 : 0.55)
     this.deps.onStimulus?.({
-      kind: 'move', gameId, scoreCp: null,
+      kind: humanKind, gameId, scoreCp: null,
       moveZh: humanZh, side: humanTurn, ply: humanPly, phase: humanPhase,
-      tension: humanZh?.includes('吃') ? 0.9 : 0.55,
+      tension: humanTension,
     })
 
     // AI 着刺激:decision.chosenLine.scoreCp 是"AI 走子方视角",转为红方视角

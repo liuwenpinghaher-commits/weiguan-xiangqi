@@ -92,10 +92,12 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
     onStimulus: (s) => { void chat.onStimulus(s) },
   })
 
-  // 冷场定时器:每 20 秒投一个低张力 idle 刺激
+  // 冷场定时器:每 20 秒以 35% 概率投一个高张力 idle 刺激,让茶馆偶尔有人闲扯,又不刷屏
   const idleInterval = setInterval(() => {
     if (lastGameId === null) return
-    void chat.onStimulus({ kind: 'idle', gameId: lastGameId, scoreCp: null, tension: 0.15 })
+    if (Math.random() < 0.35) {
+      void chat.onStimulus({ kind: 'idle', gameId: lastGameId, scoreCp: null, tension: 0.55 })
+    }
   }, 20_000)
   idleInterval.unref?.()
 

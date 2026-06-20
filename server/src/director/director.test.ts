@@ -76,3 +76,59 @@ test('拟人:同样守杀棋例外', () => {
   ]
   expect(selectMove(mateLines, { ...baseHuman, strength: 0.1, rng: () => 0.99 }).move).toBe('c3c4')
 })
+
+// ─── P1-6: 导演使用长考信号 ────────────────────────────────────────────────────
+
+/**
+ * 长考信号测试设计:
+ *
+ * 候选集: x=300, y=72, z=40
+ * targetBand={low:60, high:80}, maxDropCp=320
+ * center = (60+80)/2 = 70
+ *
+ * 无长考(lastMoveMs=0):
+ *   shift = 0*(-20)+0*15 = 0 → band=[60,80]
+ *   pool=[x=300, y=72, z=40](均在 maxDropCp=320 内)
+ *   inBand: x=300>80 排出, y=72 in [60,80] ✓, z=40<60 排出
+ *   inBand=[y_mid=72] → 选 y_mid
+ *
+ * 长考(lastMoveMs=12000>8000):
+ *   shift = 0*(-20)+0*15 + (-10) = -10 → band=[50,70]
+ *   pool=[x,y,z]
+ *   inBand: x=300>70 排出, y=72>70 排出, z=40<50 排出 → inBand=[]
+ *   回退到 pool → center=(50+70)/2=60 → 距: x=240, y=12, z=20 → y最近 → 仍选 y_mid
+ *   —— 仍相同 ——
+ *
+ * 重设: targetBand={low:60, high:80}, 长考时 band=[50,70]
+ * 需要让 y 在无长考时 in band 但长考后 fall out 且另一个着法更近:
+ *   候选: x=300, y=72(无长考带内), z=55(无长考也在带内 55>60? 不满足)
+ *
+ * 最终方案: 让 z=55 在长考带[50,70]内但不在无长考带[60,80]内:
+ *   无长考: band=[60,80] → y=72 in, z=55<60 out → inBand=[y] → 选 y_mid
+ *   长考:   band=[50,70] → y=72>70 out, z=55 in [50,70] ✓ → inBand=[z] → 选 z_lower
+ */
+const longThinkLines: EngineLine[] = [
+  { multipv: 1, move: 'x_best',  scoreCp: 300, mate: null, pv: ['x_best'] },
+  { multipv: 2, move: 'y_mid',   scoreCp: 72,  mate: null, pv: ['y_mid'] },
+  { multipv: 3, move: 'z_lower', scoreCp: 55,  mate: null, pv: ['z_lower'] },
+]
+const longThinkBase: DirectorContext = {
+  mode: 'coach',
+  playerState: { winStreak: 0, lossStreak: 0, lastMoveMs: 0 },
+  maxDropCp: 320,
+  targetBand: { low: 60, high: 80 },
+  strength: 0.5,
+  rng: () => 0,
+}
+
+test('长考信号:lastMoveMs=0 时陪练带内选 y_mid(scoreCp=72)', () => {
+  const d = selectMove(longThinkLines, { ...longThinkBase, playerState: { winStreak: 0, lossStreak: 0, lastMoveMs: 0 } })
+  // band=[60,80]: y=72 in ✓, z=55<60 out → 选 y_mid
+  expect(d.move).toBe('y_mid')
+})
+
+test('长考信号:lastMoveMs=12000(>8000) 时 band 下移-10=[50,70], y=72超上沿改选 z_lower(55)', () => {
+  const d = selectMove(longThinkLines, { ...longThinkBase, playerState: { winStreak: 0, lossStreak: 0, lastMoveMs: 12000 } })
+  // shift=-10 → band=[50,70]: y=72>70 out ✓, z=55 in [50,70] → 选 z_lower
+  expect(d.move).toBe('z_lower')
+})

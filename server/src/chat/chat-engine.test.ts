@@ -283,6 +283,37 @@ test('跨刺激记忆:第 2 次刺激的 prompt 含上一次 recent 中的内容
   expect(hasRecentContext).toBe(true)
 })
 
+// ─── P1-5 新增测试:idle/topic_open 走闲聊掌故分支; long_think 走调侃分支 ────────
+
+test('idle 刺激:user prompt 含"棋外"或"掌故"提示,不含"这步"等着法评价词', async () => {
+  const capturedUsers: string[] = []
+  const llm = new FakeLLM((msgs) => {
+    const u = msgs.find(m => m.role === 'user')
+    if (u) capturedUsers.push(u.content)
+    return '说个棋谚'
+  })
+  const { engine } = setup(llm)
+  const stim: Stimulus = { kind: 'idle', gameId: 1, scoreCp: null, tension: 0.95 }
+  await engine.onStimulus(stim)
+  expect(capturedUsers.length).toBeGreaterThanOrEqual(1)
+  // idle prompt 应提示闲聊/掌故内容
+  expect(capturedUsers.some(u => u.includes('棋外') || u.includes('掌故') || u.includes('棋谚'))).toBe(true)
+})
+
+test('long_think 刺激:user prompt 含"想了很久"或"长考"或"调侃"相关词', async () => {
+  const capturedUsers: string[] = []
+  const llm = new FakeLLM((msgs) => {
+    const u = msgs.find(m => m.role === 'user')
+    if (u) capturedUsers.push(u.content)
+    return '这步想这么久?'
+  })
+  const { engine } = setup(llm)
+  const stim: Stimulus = { kind: 'long_think', gameId: 1, scoreCp: null, tension: 0.95, moveZh: '红炮二平五' }
+  await engine.onStimulus(stim)
+  expect(capturedUsers.length).toBeGreaterThanOrEqual(1)
+  expect(capturedUsers.some(u => u.includes('想了') || u.includes('长考') || u.includes('调侃') || u.includes('落子'))).toBe(true)
+})
+
 test('内容质量:连发两个不同 moveZh 的刺激,各自 LLM prompt 含各自着法', async () => {
   // 捕获每次调用的 user 消息
   const capturedUsers: string[] = []

@@ -16,8 +16,12 @@ export function selectMove(lines: EngineLine[], ctx: DirectorContext): DirectorD
   return selectHumanlike(sorted, best, ctx)
 }
 
+/** 玩家长考阈值(毫秒):超过此值视为吃力,额外松一档 */
+const LONG_THINK_MS = 8000
+
 function selectCoach(sorted: EngineLine[], best: EngineLine, ctx: DirectorContext): DirectorDecision {
-  const shift = ctx.playerState.lossStreak * -20 + ctx.playerState.winStreak * 15
+  const longThinkShift = ctx.playerState.lastMoveMs > LONG_THINK_MS ? -10 : 0
+  const shift = ctx.playerState.lossStreak * -20 + ctx.playerState.winStreak * 15 + longThinkShift
   const band = { low: ctx.targetBand.low + shift, high: ctx.targetBand.high + shift }
 
   const allowed = sorted.filter(l => best.scoreCp - l.scoreCp <= ctx.maxDropCp)

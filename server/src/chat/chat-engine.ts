@@ -147,7 +147,7 @@ export class ChatEngine {
       : '(刚开局,还没人说话)'
 
     const sys = `你是「${p.name}」:${p.background} 口吻:${p.voice} 立场:${p.leaning}\n`
-      + `你在围观一局中国象棋,用你的水平和脾气,针对刚走的这步说一句(≤25字),可抛棋招/调侃/拉踩,允许看走眼。别空泛说"看不懂",要点到具体的子或着法。只输出这一句。\n`
+      + `你在围观一局中国象棋,用你的水平和脾气说一句(≤25字),可抛棋招/调侃/拉踩,允许看走眼。你懂棋,适时可抛个棋谚或小典故。只输出这一句。\n`
       + `你可以顺着别人的话接、抬杠或拉踩某位棋友,也可以只评这步棋;像真人围观那样自然。\n`
       + `你对这位棋手的了解:\n${facts}\n`
       + `最近这桌在聊(可点名回应、拉踩、抬杠或附和某人):\n${contextLine}`
@@ -155,6 +155,10 @@ export class ChatEngine {
     let user: string
     if (stim.kind === 'human_said') {
       user = `玩家刚说:"${stim.humanText}"。回他一句:`
+    } else if (stim.kind === 'long_think') {
+      user = `玩家这步想了很久还没落子,用你的脾气调侃/安慰/施压一句:`
+    } else if (stim.kind === 'idle' || (stim.kind === 'topic_open' && !stim.moveZh)) {
+      user = `棋局正平静,随口聊点棋外的(行业/往事/家常)或讲个棋坛掌故/棋谚/开局套路,一句话,别评具体某步:`
     } else if (p.isPlayer && stim.byPlayerPersona) {
       user = `你(${p.name})刚走了「${stim.moveZh ?? '一步'}」,当前${qual}。自评一句(≤25字,别空泛):`
     } else if (stim.moveZh) {
