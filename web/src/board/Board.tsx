@@ -45,14 +45,14 @@ export interface BoardProps {
 }
 
 /** 将库的 Square（e.g. "e1"）转为 Pikafish 坐标（e.g. "e0"） */
-function squareToPikafish(sq: Square): string {
+export function squareToPikafish(sq: Square): string {
   const col = sq[0]
   const row = parseInt(sq.slice(1), 10)
   return col + String(row - 1)
 }
 
 /** 将 Pikafish 坐标（e.g. "e0"）转为库的 Square（e.g. "e1"） */
-function pikafishToSquare(pika: string): Square {
+export function pikafishToSquare(pika: string): Square {
   const col = pika[0]
   const row = parseInt(pika[1], 10)
   return col + String(row + 1)

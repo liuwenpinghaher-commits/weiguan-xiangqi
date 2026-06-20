@@ -9,7 +9,7 @@ export interface ChatLine {
   ts: string
 }
 
-const PERSONA_NAMES: Record<string, string> = {
+export const PERSONA_NAMES: Record<string, string> = {
   player: '老黑',
   laopaoer: '炮儿爷',
   coach: '林教练',
@@ -24,7 +24,7 @@ function addresseeName(addressee: string): string | null {
   return PERSONA_NAMES[addressee] ?? addressee
 }
 
-const PERSONA_COLORS: Record<string, string> = {
+export const PERSONA_COLORS: Record<string, string> = {
   player: '#e74c3c',
   laopaoer: '#e67e22',
   coach: '#27ae60',
