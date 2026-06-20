@@ -15,6 +15,18 @@ describe('parseJudge', () => {
   it('无法识别时回退 keep(安全:不动旧记忆)', () => {
     expect(parseJudge('啊我不知道')).toEqual({ action: 'keep' })
   })
+  it('merge 无正文时回退 keep(安全)', () => {
+    expect(parseJudge('merge')).toEqual({ action: 'keep' })
+    expect(parseJudge('merge:')).toEqual({ action: 'keep' })
+  })
+  it('容忍 markdown 反引号/代码块包裹', () => {
+    expect(parseJudge('`supersede`')).toEqual({ action: 'supersede' })
+    expect(parseJudge('```\nmerge: 爱走当头炮\n```')).toEqual({ action: 'merge', merged: '爱走当头炮' })
+  })
+  it('多行回复只取首行,解释行不污染 merged', () => {
+    expect(parseJudge('merge: 爱走当头炮\n(解释:两条都讲开局偏好)')).toEqual({ action: 'merge', merged: '爱走当头炮' })
+    expect(parseJudge('supersede\n因为残局风格变了')).toEqual({ action: 'supersede' })
+  })
 })
 
 describe('judgeMemory', () => {

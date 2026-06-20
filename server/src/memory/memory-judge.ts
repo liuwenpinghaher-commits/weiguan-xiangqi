@@ -7,7 +7,10 @@ export type JudgeResult =
 
 /** 解析裁决文本。容忍偏差:无法识别一律回退 keep(最安全:既不合并也不作废)。 */
 export function parseJudge(raw: string): JudgeResult {
-  const text = raw.trim()
+  // 容忍 markdown 代码块/反引号包裹,并只取首个非空行
+  // (模型开推理时可能在裁决行后附带解释,绝不能让解释污染 merged 文本)
+  const cleaned = raw.replace(/```[^\n]*\n?/g, '').replace(/`/g, '')
+  const text = (cleaned.split('\n').map((l) => l.trim()).find(Boolean) ?? '')
   const lower = text.toLowerCase()
   if (lower.startsWith('merge')) {
     const merged = text.replace(/^merge\s*[:：]?\s*/i, '').trim()
@@ -30,6 +33,6 @@ export async function judgeMemory(llm: LLMProvider, existing: string, incoming: 
         + '只输出这一行,不要解释。',
     },
     { role: 'user', content: `已有记忆:${existing}\n新记忆:${incoming}` },
-  ], { disableThinking: false, maxTokens: 120 })
+  ], { disableThinking: false /* 需要推理判断语义关系 */, maxTokens: 120 /* ≈60 汉字,够一句归并 */ })
   return parseJudge(raw)
 }
