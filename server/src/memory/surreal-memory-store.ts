@@ -9,9 +9,11 @@ const RECENCY_HALFLIFE_MS = 1000 * 60 * 60 * 24 * 14
 // 余弦相似度高于此阈值才对 KNN top-1 候选调用 judge(merge/supersede/keep)。
 // 取值权衡:过高 → 真正需要合并/作废的近义更新被漏判,记忆去重/纠错形同虚设;
 //          过低 → 不相关记忆也触发 judge,徒增 LLM 调用。
-// 0.6 是偏向"宁可多判一次"的初值——本应用反思写入低频(每局每角色约数条),
-// 多几次 judge 成本可忽略,且 judge 自带"相关但不同→keep"分支兜底误合并。
-// 待接入真实 text-embedding-v3 后用实测相似度分布校准;可经 deps.simThreshold 覆盖。
+// 0.6 已用真实 text-embedding-v3 标定(见 scripts/calibrate-sim-threshold.ts):
+// 无关对相似度 ≤0.50,复述/典型矛盾更新对 ≥0.69——0.6 正落在二者间隙:
+// 跳过全部无关对(不浪费 judge),命中所有典型合并/更新;只有"改走完全不同开局"
+// 这类语义很远的更新(~0.50)会被当新事实另存(可接受)。judge 自带"相关但不同→keep"
+// 分支兜底误合并。可经 deps.simThreshold 覆盖。
 const DEFAULT_SIM_THRESHOLD = 0.6
 const HNSW_EF = 64 // HNSW 查询时的候选列表大小;v3 的 KNN 算子要求显式给出
 
