@@ -22,4 +22,10 @@ describe('validateSection', () => {
   it('未知 section 抛错', () => {
     expect(() => validateSection('bogus' as any, {})).toThrow()
   })
+  it('director: modeCleaner 丢弃 NaN', () => {
+    expect(validateSection('director', { coach: { maxDropCp: NaN, strength: 0.5 } })).toEqual({ coach: { strength: 0.5 } })
+  })
+  it('engine: pikafishPath=null 透传(用于清空路径)', () => {
+    expect(validateSection('engine', { pikafishPath: null })).toEqual({ pikafishPath: null })
+  })
 })

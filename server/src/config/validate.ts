@@ -12,14 +12,14 @@ const numRange = (lo: number, hi: number): Cleaner => (v) => (typeof v === 'numb
 function modeCleaner(v: unknown): unknown {
   if (typeof v !== 'object' || v === null) return undefined
   const m = v as any; const out: any = {}
-  if (typeof m.maxDropCp === 'number') out.maxDropCp = clamp(Math.round(m.maxDropCp), 0, 2000)
+  if (typeof m.maxDropCp === 'number' && isFinite(m.maxDropCp)) out.maxDropCp = clamp(Math.round(m.maxDropCp), 0, 2000)
   if (m.targetBand && typeof m.targetBand === 'object') {
     const tb: any = {}
-    if (typeof m.targetBand.low === 'number') tb.low = clamp(Math.round(m.targetBand.low), -2000, 2000)
-    if (typeof m.targetBand.high === 'number') tb.high = clamp(Math.round(m.targetBand.high), -2000, 2000)
+    if (typeof m.targetBand.low === 'number' && isFinite(m.targetBand.low)) tb.low = clamp(Math.round(m.targetBand.low), -2000, 2000)
+    if (typeof m.targetBand.high === 'number' && isFinite(m.targetBand.high)) tb.high = clamp(Math.round(m.targetBand.high), -2000, 2000)
     if ('low' in tb || 'high' in tb) out.targetBand = tb
   }
-  if (typeof m.strength === 'number') out.strength = clamp(m.strength, 0, 1)
+  if (typeof m.strength === 'number' && isFinite(m.strength)) out.strength = clamp(m.strength, 0, 1)
   return Object.keys(out).length ? out : undefined
 }
 
@@ -29,7 +29,7 @@ const SCHEMA: Record<ConfigSection, Record<string, Cleaner>> = {
     idleProb: prob, idleIntervalMs: intMin0, reactProb: prob, lenShortP: prob, lenLongP: prob,
   },
   director: { coach: modeCleaner, humanlike: modeCleaner },
-  engine: { pikafishPath: (v) => (typeof v === 'string' ? v : undefined), multipv: intRange(1, 10), movetime: intRange(50, 5000) },
+  engine: { pikafishPath: (v) => (typeof v === 'string' ? v : v === null ? null : undefined), multipv: intRange(1, 10), movetime: intRange(50, 5000) },
   diagnose: { depth: intRange(1, 30) },
   llm: { apiKey: str, model: str, baseURL: str },
   tts: { endpoint: str, model: str },
