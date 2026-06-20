@@ -15,8 +15,9 @@ import { compareWindows } from './report/compare.js'
 import { growthReport } from './report/llm-report.js'
 import { prevFenForPly, worstHumanPly } from './report/sparring.js'
 import { ChatEngine } from './chat/chat-engine.js'
-import { VolcanoLLM } from './llm/volcano.js'
+import { DashscopeLLM } from './llm/dashscope.js'
 import { FakeLLM } from './llm/fake.js'
+import { synthesize, voiceForPersona } from './voice/dashscope-tts.js'
 import { PersonaMemoryRepo } from './memory/persona-memory-repo.js'
 import { reflect } from './memory/reflection.js'
 import { spectators } from './personas/personas.js'
@@ -71,15 +72,15 @@ export async function buildServer(opts: {
   // --- 聊天基础设施 ---
   const pmem = new PersonaMemoryRepo(db)
 
-  // LLM:优先使用注入值;未注入则按原始逻辑(ARK env → VolcanoLLM / FakeLLM)
+  // LLM:优先使用注入值;未注入则按原始逻辑(DASHSCOPE env → DashscopeLLM / FakeLLM)
   let llm: LLMProvider
   if (opts.llm) {
     llm = opts.llm
   } else {
-    const hasArk = !!(process.env.ARK_API_KEY && process.env.ARK_BASE_URL)
-    llm = hasArk ? new VolcanoLLM() : new FakeLLM([], '')
-    if (!hasArk) {
-      console.warn('未配置 ARK_API_KEY/ARK_BASE_URL:观棋聊天功能不可用,对弈/诊断照常运行')
+    const hasDashscope = !!process.env.DASHSCOPE_API_KEY
+    llm = hasDashscope ? new DashscopeLLM() : new FakeLLM([], '')
+    if (!hasDashscope) {
+      console.warn('未配置 DASHSCOPE_API_KEY:观棋聊天功能不可用,对弈/诊断照常运行')
     }
   }
 
@@ -498,6 +499,39 @@ export async function buildServer(opts: {
     }
 
     return { gameId }
+  })
+
+  // ── 云端 TTS 合成 ─────────────────────────────────────────────────────────────
+  // GET /tts?personaId=xxx&text=xxx
+  // 无 DASHSCOPE_API_KEY → 503(前端回退浏览器 TTS)
+  // 成功 → audio/mpeg Buffer;出错 → 500
+  app.get('/tts', async (req, reply) => {
+    if (!process.env.DASHSCOPE_API_KEY) {
+      return reply.code(503).send({ error: '未配置 DASHSCOPE_API_KEY,TTS 不可用' })
+    }
+    const query = req.query as { personaId?: string; text?: string }
+    const personaId = String(query.personaId ?? '')
+    const rawText = String(query.text ?? '').trim()
+    if (!rawText) {
+      return reply.code(400).send({ error: 'text 参数不能为空' })
+    }
+    // 截断到最多 120 字
+    const text = rawText.slice(0, 120)
+    const voice = voiceForPersona(personaId)
+    const wsUrl = process.env.DASHSCOPE_TTS_WS ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/inference'
+    const model = process.env.DASHSCOPE_TTS_MODEL ?? 'cosyvoice-v2'
+    try {
+      const buf = await synthesize(text, voice, {
+        wsUrl,
+        apiKey: process.env.DASHSCOPE_API_KEY,
+        model,
+      })
+      reply.header('Content-Type', 'audio/mpeg')
+      reply.header('Content-Length', buf.length)
+      return reply.send(buf)
+    } catch (e) {
+      return reply.code(500).send({ error: (e as Error).message })
+    }
   })
 
   return app

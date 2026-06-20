@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { speak, setMuted, isMuted, isTtsSupported, hasZhVoice, cancelSpeech } from '../voice/browser-tts.js'
+import { setMuted, isMuted, isTtsSupported, hasZhVoice, cancelSpeech } from '../voice/browser-tts.js'
+import { speakServer } from '../voice/server-tts.js'
 import { useSpeechInput } from '../voice/use-speech-input.js'
 
 export interface ChatLine {
@@ -57,7 +58,7 @@ export function ChatPanel({ lines, onSay }: Props) {
   useEffect(() => {
     for (let i = spokenCount.current; i < lines.length; i++) {
       const l = lines[i]
-      speak(l.personaId, l.text)
+      speakServer(l.personaId, l.text)
     }
     spokenCount.current = lines.length
   }, [lines])
