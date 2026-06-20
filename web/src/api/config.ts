@@ -2,3 +2,8 @@
 export const API_HOST = 'localhost:3410'
 export const HTTP_BASE = `http://${API_HOST}`
 export const WS_BASE = `ws://${API_HOST}`
+
+/** 云端 TTS 接口 URL */
+export function ttsUrl(personaId: string, text: string): string {
+  return `${HTTP_BASE}/tts?personaId=${encodeURIComponent(personaId)}&text=${encodeURIComponent(text)}`
+}
