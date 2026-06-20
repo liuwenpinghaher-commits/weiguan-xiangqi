@@ -1,6 +1,7 @@
 import type { GamesRepo } from '../store/games-repo.js'
 import type { EngineLine, GameMode, Side, DirectorContext, Stimulus } from '../types.js'
 import { selectMove } from '../director/director.js'
+import { describeMoveZh } from '../rules/describe-move.js'
 
 interface PositionLike {
   fen(): string
@@ -21,6 +22,22 @@ export interface GameSessionDeps {
 }
 
 const MULTIPV = 5
+
+/** 根据手数推断对局阶段 */
+function calcPhase(ply: number): 'opening' | 'midgame' | 'endgame' {
+  if (ply <= 16) return 'opening'
+  if (ply <= 60) return 'midgame'
+  return 'endgame'
+}
+
+/** 安全调用 describeMoveZh,失败返回 undefined(保护假局面/异常不破坏主流程) */
+function safeDescribeMove(fenBefore: string, move: string): string | undefined {
+  try {
+    return describeMoveZh(fenBefore, move)
+  } catch {
+    return undefined
+  }
+}
 
 export class GameSession {
   private positions = new Map<number, PositionLike>()
@@ -49,6 +66,8 @@ export class GameSession {
     if (!pos.legalMoves().includes(move)) throw new Error(`illegal move: ${move}`)
 
     // 2. 纯计算人着后的局面(暂不落库、不 set)
+    const beforeFen = pos.fen()
+    const humanZh = safeDescribeMove(beforeFen, move)
     const afterHuman = pos.applyMove(move)
 
     // 3. 人着已直接终局:写人着 → finish → set,返回
@@ -57,7 +76,13 @@ export class GameSession {
       this.deps.repo.addMove({ gameId, side: humanTurn, move, fenAfter: afterHuman.fen(), scoreCp: null, byAi: false })
       this.positions.set(gameId, afterHuman)
       this.finish(gameId, humanOver.result!)
-      this.deps.onStimulus?.({ kind: 'move', gameId, scoreCp: null, tension: 0.4 })
+      const humanPly = this.deps.repo.getMoves(gameId).length
+      const phase = calcPhase(humanPly)
+      this.deps.onStimulus?.({
+        kind: 'move', gameId, scoreCp: null,
+        moveZh: humanZh, side: humanTurn, ply: humanPly, phase,
+        tension: humanZh?.includes('吃') ? 0.9 : 0.4,
+      })
       return { aiMove: null, fen: afterHuman.fen(), over: true }
     }
 
@@ -66,6 +91,8 @@ export class GameSession {
     const ctx = this.buildContext(gameId)
     const decision = selectMove(lines, ctx)
     const aiSide = afterHuman.sideToMove()
+    const aiBeforeFen = afterHuman.fen()
+    const aiZh = safeDescribeMove(aiBeforeFen, decision.move)
     const afterAI = afterHuman.applyMove(decision.move)
 
     // 5. 全部成功:一次性写人着、AI 着,set position 为 afterAI,判终局
@@ -73,13 +100,32 @@ export class GameSession {
     this.deps.repo.addMove({ gameId, side: aiSide, move: decision.move, fenAfter: afterAI.fen(), scoreCp: decision.chosenLine.scoreCp, byAi: true })
     this.positions.set(gameId, afterAI)
 
-    // 人着刺激(无评分)
-    this.deps.onStimulus?.({ kind: 'move', gameId, scoreCp: null, tension: 0.4 })
+    const allMoves = this.deps.repo.getMoves(gameId)
+    const humanPly = allMoves.length - 1  // 人着是倒数第二
+    const aiPly = allMoves.length          // AI 着是最后一条
+    const humanPhase = calcPhase(humanPly)
+    const aiPhase = calcPhase(aiPly)
 
-    // AI 着刺激(有评分,张力按 |scoreCp| 映射)
+    // 人着刺激(无评分,红方视角 scoreCp=null)
+    this.deps.onStimulus?.({
+      kind: 'move', gameId, scoreCp: null,
+      moveZh: humanZh, side: humanTurn, ply: humanPly, phase: humanPhase,
+      tension: humanZh?.includes('吃') ? 0.9 : 0.55,
+    })
+
+    // AI 着刺激:decision.chosenLine.scoreCp 是"AI 走子方视角",转为红方视角
     const aiCp = decision.chosenLine.scoreCp
-    const aiTension = Math.min(1, Math.abs(aiCp) / 300)
-    this.deps.onStimulus?.({ kind: 'move', gameId, scoreCp: aiCp, tension: aiTension })
+    // aiSide 是 AI 刚走完这步时的走子方(即 AI 方)
+    const redCp = aiSide === 'red' ? aiCp : -aiCp
+    const aiTension = Math.max(0.5, Math.min(1,
+      Math.abs(aiCp) / 300,
+      aiZh?.includes('吃') ? 0.9 : 0,
+    ))
+    this.deps.onStimulus?.({
+      kind: 'move', gameId, scoreCp: redCp,
+      moveZh: aiZh, side: aiSide, ply: aiPly, phase: aiPhase,
+      tension: aiTension,
+    })
 
     const aiOver = afterAI.isGameOver()
     if (aiOver.over) this.finish(gameId, aiOver.result!)

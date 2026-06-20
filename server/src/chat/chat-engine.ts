@@ -15,9 +15,15 @@ export interface ChatEngineDeps {
   tempo: { minSilenceMs: number; maxPerMin: number }
 }
 
+/** 去标点、转小写,用于去重比较 */
+function normalize(s: string): string {
+  return s.replace(/[，。！？,!?.、：:；;\s]/g, '').toLowerCase()
+}
+
 export class ChatEngine {
   private guard: TempoGuard
   private lastSpokeAt = new Map<string, number>()  // personaId -> ms
+  private lastText = new Map<string, string>()       // personaId -> 上次 emit 文本(原文)
 
   constructor(private deps: ChatEngineDeps) {
     this.guard = new TempoGuard({ ...deps.tempo, now: deps.now })
@@ -36,6 +42,17 @@ export class ChatEngine {
           disableThinking: true, maxTokens: 80,
         })).trim()
         if (!text) continue
+
+        // 去重护栏:与上次发言内容相同或互相包含则跳过
+        const prev = this.lastText.get(id)
+        if (prev !== undefined) {
+          const normText = normalize(text)
+          const normPrev = normalize(prev)
+          if (normText === normPrev || normText.includes(normPrev) || normPrev.includes(normText)) {
+            continue
+          }
+        }
+
         const line: ChatLine = {
           gameId: stim.gameId,
           personaId: id,
@@ -44,6 +61,7 @@ export class ChatEngine {
           ts: new Date(this.deps.now()).toISOString(),
         }
         this.deps.emit(line)
+        this.lastText.set(id, text)
         this.deps.mem.add({
           personaId: id,
           kind: 'episode',
@@ -62,14 +80,35 @@ export class ChatEngine {
 
   private buildPrompt(p: Persona, stim: Stimulus) {
     const seen = viewScore(stim.scoreCp, p.skill, this.deps.rng)
-    const mems = this.deps.mem.retrieve(p.id as PersonaId, stim.humanText ?? stim.kind, 4, this.deps.now)
-    const memText = mems.map(m => '· ' + m.content).join('\n') || '(暂无)'
+
+    // 局势定性描述
+    let qual: string
+    if (seen === null) {
+      qual = '局势未明'
+    } else if (seen > 200) {
+      qual = '红方大优'
+    } else if (seen >= 80) {
+      qual = '红方占优'
+    } else if (seen > -80) {
+      qual = '大致均势'
+    } else if (seen >= -200) {
+      qual = '黑方占优'
+    } else {
+      qual = '黑方大优'
+    }
+
     const sys = `你是「${p.name}」:${p.background} 口吻:${p.voice} 立场:${p.leaning}\n`
-      + `你是观棋者,正在围观一局中国象棋。用一句话(≤25字)即兴点评/拉踩/接梗,像真人棋友,可以看走眼、有脾气。只输出这句话。\n`
-      + `你对这个玩家的记忆:\n${memText}`
-    const user = stim.kind === 'human_said'
-      ? `玩家刚说:"${stim.humanText}"。回他一句:`
-      : `刚发生:${stim.kind};你看到的局势评分(你的水平视角,可能不准):${seen ?? '看不清'}。说一句:`
+      + `你在围观一局中国象棋,用你的水平和脾气,针对刚走的这步说一句(≤25字),可抛棋招/调侃/拉踩,允许看走眼。别空泛说"看不懂",要点到具体的子或着法。只输出这一句。`
+
+    let user: string
+    if (stim.kind === 'human_said') {
+      user = `玩家刚说:"${stim.humanText}"。回他一句:`
+    } else if (stim.moveZh) {
+      user = `第${stim.ply ?? '?'}手(${stim.phase ?? ''}):${stim.moveZh}。当前${qual}。说一句:`
+    } else {
+      user = `刚走了一步棋,当前${qual}。说一句:`
+    }
+
     return [
       { role: 'system' as const, content: sys },
       { role: 'user' as const, content: user },
