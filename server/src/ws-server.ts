@@ -315,26 +315,21 @@ export async function buildServer(opts: {
           // 玩家发言 → human_said 刺激,高张力必有人接
           const gid = msg.gameId
           if (typeof gid !== 'number') return
+          const text = String(msg.text ?? '')
+          const ts = new Date().toISOString()
           // 玩家发言持久化
           try {
-            messages.addMessage({
-              gameId: gid,
-              personaId: 'human',
-              role: 'human',
-              text: String(msg.text ?? ''),
-              addressee: 'all',
-              ts: new Date().toISOString(),
-            })
+            messages.addMessage({ gameId: gid, personaId: 'human', role: 'human', text, addressee: 'all', ts })
           } catch {
             // 落库失败静默忽略
           }
-          void chat.onStimulus({
-            kind: 'human_said',
-            gameId: gid,
-            scoreCp: null,
-            humanText: String(msg.text ?? ''),
-            tension: 0.9,
-          })
+          // 回显给所有客户端:角色消息走 chat.emit→sockets,人类消息此前漏了广播,
+          // 导致用户自己说的话不显示在聊天框。这里补上,与角色消息同一 chat 帧格式。
+          const echo = JSON.stringify({ type: 'chat', gameId: gid, personaId: 'human', text, addressee: 'all', ts })
+          for (const s of sockets) {
+            try { s.send(echo) } catch { /* 单连接发送失败忽略 */ }
+          }
+          void chat.onStimulus({ kind: 'human_said', gameId: gid, scoreCp: null, humanText: text, tension: 0.9 })
         } else {
           socket.send(JSON.stringify({ type: 'error', message: `unknown message type: ${msg.type}` }))
         }

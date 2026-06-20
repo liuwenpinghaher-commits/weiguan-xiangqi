@@ -237,6 +237,29 @@ describe('ws-server 集成测试', () => {
     expect((update.aiMove as string)).toMatch(/^[a-i][0-9][a-i][0-9]$/)
   }, 10_000)
 
+  it('WS /play：say 把用户自己的话回显为 chat(personaId=human)', async () => {
+    app = await makeApp()
+    await app.listen({ port: 0, host: '127.0.0.1' })
+    const addr = app.server.address()
+    if (!addr || typeof addr === 'string') throw new Error('unexpected address type')
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/play`)
+    wsClient = ws
+    await wsOpen(ws)
+
+    const chats: Array<Record<string, unknown>> = []
+    ws.on('message', (raw: Buffer | string) => {
+      const m = JSON.parse(raw.toString()) as Record<string, unknown>
+      if (m.type === 'chat') chats.push(m)
+    })
+
+    ws.send(JSON.stringify({ type: 'say', gameId: 1, text: '这步我觉得不错' }))
+    await new Promise((r) => setTimeout(r, 800))
+
+    const echo = chats.find((m) => m.personaId === 'human')
+    expect(echo, '用户消息应被回显为 chat(personaId=human)').toBeTruthy()
+    expect(echo!.text).toBe('这步我觉得不错')
+  }, 10_000)
+
   it('WS /play：发送非法着法 → 收到 error 消息', async () => {
     app = await makeApp()
     await app.listen({ port: 0, host: '127.0.0.1' })
