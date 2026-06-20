@@ -74,3 +74,15 @@ CREATE TABLE IF NOT EXISTS drill_attempts (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_drill_game ON drill_attempts(game_id);
+
+-- 聊天/发言持久化:每条消息一行(角色发言 + 玩家发言)
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  game_id INTEGER NOT NULL,
+  persona_id TEXT NOT NULL,      -- 角色 id;玩家发言用 'human'
+  role TEXT NOT NULL,            -- 'persona' | 'human'
+  text TEXT NOT NULL,
+  addressee TEXT,
+  ts TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_game ON messages(game_id, id);

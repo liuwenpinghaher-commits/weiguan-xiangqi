@@ -17,10 +17,12 @@ import { PersonaMemoryRepo } from './memory/persona-memory-repo.js'
 import { reflect } from './memory/reflection.js'
 import { spectators } from './personas/personas.js'
 import { describeMoveZh } from './rules/describe-move.js'
+import { MessagesRepo } from './store/messages-repo.js'
 
 export async function buildServer(opts: { dbPath: string; enginePath: string }) {
   const db = openDb(opts.dbPath)
   const repo = new GamesRepo(db)
+  const messages = new MessagesRepo(db)
   const engine = new UciEngine(spawnTransport(opts.enginePath))
 
   // --- 聊天基础设施 ---
@@ -38,6 +40,19 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
       const msg = JSON.stringify({ type: 'chat', ...line })
       for (const s of sockets) {
         try { s.send(msg) } catch {}
+      }
+      // 落库:广播完成后持久化,失败不影响推送
+      try {
+        messages.addMessage({
+          gameId: line.gameId,
+          personaId: line.personaId,
+          role: 'persona',
+          text: line.text,
+          addressee: line.addressee,
+          ts: line.ts,
+        })
+      } catch {
+        // 落库失败静默忽略,不影响 WS 推送
       }
     },
     rng: Math.random,
@@ -177,6 +192,19 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
           // 玩家发言 → human_said 刺激,高张力必有人接
           const gid = msg.gameId
           if (typeof gid !== 'number') return
+          // 玩家发言持久化
+          try {
+            messages.addMessage({
+              gameId: gid,
+              personaId: 'human',
+              role: 'human',
+              text: String(msg.text ?? ''),
+              addressee: 'all',
+              ts: new Date().toISOString(),
+            })
+          } catch {
+            // 落库失败静默忽略
+          }
           void chat.onStimulus({
             kind: 'human_said',
             gameId: gid,
@@ -206,7 +234,8 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
       return reply.code(404).send({ error: 'not found' })
     }
     const moves = repo.getMoves(numId)
-    return { game, moves }
+    const msgs = messages.getMessages(numId)
+    return { game, moves, messages: msgs }
   })
 
   // 触发局后诊断(真跑引擎,可能数十秒)
