@@ -47,8 +47,10 @@ export class ChatEngine {
   private recent = new Map<number, RecentEntry[]>()
 
   constructor(private deps: ChatEngineDeps) {
-    const t = deps.cfg.getChat()
-    this.guard = new TempoGuard({ minSilenceMs: t.minSilenceMs, maxPerMin: t.maxPerMin, now: deps.now })
+    this.guard = new TempoGuard({
+      limits: () => { const c = deps.cfg.getChat(); return { minSilenceMs: c.minSilenceMs, maxPerMin: c.maxPerMin } },
+      now: deps.now,
+    })
   }
 
   async onStimulus(stim: Stimulus): Promise<void> {

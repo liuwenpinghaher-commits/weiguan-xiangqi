@@ -192,15 +192,20 @@ export async function buildServer(opts: {
     onStimulus: (s) => { void chat.onStimulus(s) },
   })
 
-  // 冷场定时器:每 20 秒以 35% 概率投一个高张力 idle 刺激,让茶馆偶尔有人闲扯,又不刷屏
-  const idleInterval = setInterval(() => {
-    if (lastGameId === null) return
+  // 冷场定时器:每 20 秒(可配)以 35% 概率投一个高张力 idle 刺激,让茶馆偶尔有人闲扯,又不刷屏。
+  // 用自重排的 setTimeout 取代固定 setInterval,使 idleIntervalMs/idleProb 配置变更在下个周期即时生效。
+  let idleTimer: ReturnType<typeof setTimeout> | null = null
+  const scheduleIdle = () => {
     const c = cfg.getChat()
-    if (Math.random() < c.idleProb) {
-      void chat.onStimulus({ kind: 'idle', gameId: lastGameId, scoreCp: null, tension: 0.55 })
-    }
-  }, cfg.getChat().idleIntervalMs)
-  idleInterval.unref?.()
+    idleTimer = setTimeout(() => {
+      if (lastGameId !== null && Math.random() < cfg.getChat().idleProb) {
+        void chat.onStimulus({ kind: 'idle', gameId: lastGameId, scoreCp: null, tension: 0.55 })
+      }
+      scheduleIdle()
+    }, c.idleIntervalMs)
+    idleTimer.unref?.()
+  }
+  scheduleIdle()
 
   const analysis = new AnalysisRepo(db)
   const training = new TrainingRepo(db)
@@ -218,6 +223,7 @@ export async function buildServer(opts: {
 
   // 优雅关闭:关闭 Fastify 时同步释放引擎子进程与 SQLite WAL
   app.addHook('onClose', async () => {
+    if (idleTimer) clearTimeout(idleTimer)
     try { engine?.close?.() } catch {}
     try { db.close() } catch {}
     try { if (mem instanceof SurrealMemoryStore) await mem.close() } catch {}
