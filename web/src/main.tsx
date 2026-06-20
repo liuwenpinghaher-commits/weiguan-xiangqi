@@ -5,6 +5,7 @@ import { ReviewPage } from './pages/ReviewPage.js'
 import { AnalysisPage } from './pages/AnalysisPage.js'
 import { GrowthPage } from './pages/GrowthPage.js'
 import { TrainingPage } from './pages/TrainingPage.js'
+import { ConsolePage } from './pages/console/ConsolePage.js'
 import { HTTP_BASE } from './api/config.js'
 
 // 极简 hash 路由 hook: 解析 window.location.hash
@@ -14,6 +15,7 @@ type Route =
   | { page: 'analysis'; gameId: number }
   | { page: 'growth' }
   | { page: 'training'; gameId: number }
+  | { page: 'console' }
 
 function useHashRoute(): Route {
   const [hash, setHash] = useState(window.location.hash)
@@ -34,6 +36,7 @@ function useHashRoute(): Route {
   if (mTraining) return { page: 'training', gameId: Number(mTraining[1]) }
 
   if (hash === '#/growth') return { page: 'growth' }
+  if (hash === '#/console') return { page: 'console' }
 
   return { page: 'play' }
 }
@@ -60,6 +63,8 @@ function Nav() {
       <span style={{ color: '#555' }}>|</span>
       <a href="#/growth" style={LINK_STYLE}>成长</a>
       <span style={{ color: '#555' }}>|</span>
+      <a href="#/console" style={LINK_STYLE}>控制台</a>
+      <span style={{ color: '#555' }}>|</span>
       <a href={`${HTTP_BASE}/export`} style={LINK_STYLE} download="xiangqi-export.json" title="导出全部棋谱数据">
         导出全部
       </a>
@@ -77,6 +82,8 @@ function App() {
     page = <AnalysisPage gameId={route.gameId} />
   } else if (route.page === 'growth') {
     page = <GrowthPage />
+  } else if (route.page === 'console') {
+    page = <ConsolePage />
   } else if (route.page === 'training') {
     page = <TrainingPage gameId={route.gameId} />
   } else {
