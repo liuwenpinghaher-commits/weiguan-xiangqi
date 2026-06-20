@@ -154,12 +154,12 @@ curl -X POST http://localhost:3410/games/<id>/diagnose
 
 **浏览器触发**：
 
-打开 `http://localhost:5173/#/analysis/<id>`，点击「诊断本局」按钮。
+打开 `http://localhost:3420/#/analysis/<id>`，点击「诊断本局」按钮。
 
 诊断完成后：
 
-- `http://localhost:5173/#/growth` — 成长曲线、弱点分布、两段历史对比
-- `http://localhost:5173/#/training/<id>` — 当局失误复盘训练题
+- `http://localhost:3420/#/growth` — 成长曲线、弱点分布、两段历史对比
+- `http://localhost:3420/#/training/<id>` — 当局失误复盘训练题
 
 ### 分析 API 一览
 
