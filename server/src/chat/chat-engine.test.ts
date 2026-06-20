@@ -142,7 +142,6 @@ test('去重护栏:同一 speaker 连续返回相同文本时第二次不 emit �
   await engine.onStimulus(stim)
 
   // 统计第二次之后重复的 speaker + 相同文本的条数
-  const afterFirst = out.slice(0, firstSpeakers.length)
   const afterSecond = out.slice(firstSpeakers.length)
 
   // 第一次已发言的 speaker 不应在第二次再次出现相同内容

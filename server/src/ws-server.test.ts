@@ -81,22 +81,6 @@ function waitForMessage(
   })
 }
 
-// 兼容旧调用（只接第一条消息，不过滤类型）
-function nextMessage(ws: WebSocket, timeoutMs = 5000): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`nextMessage timeout after ${timeoutMs}ms`)), timeoutMs)
-    ws.once('message', (raw) => {
-      clearTimeout(timer)
-      try {
-        resolve(JSON.parse(raw.toString()) as Record<string, unknown>)
-      } catch (e) {
-        reject(e)
-      }
-    })
-    ws.once('error', (err) => { clearTimeout(timer); reject(err) })
-  })
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // 工具：等待 WS 连接建立
 // ──────────────────────────────────────────────────────────────────────────────

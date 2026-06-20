@@ -6,7 +6,7 @@ export class FakeLLM implements LLMProvider {
   calls: { messages: ChatMsg[]; opts?: LLMOpts }[] = []
   private queue: string[] | null
   private fn: ((m: ChatMsg[], o?: LLMOpts) => string) | null
-  constructor(private responder: Responder = [], private fallback = '') {
+  constructor(responder: Responder = [], private fallback = '') {
     this.queue = Array.isArray(responder) ? [...responder] : null
     this.fn = typeof responder === 'function' ? responder : null
   }
