@@ -3,42 +3,70 @@ import { connect, type ServerMsg } from '../api/ws-client.js'
 import { Board } from '../board/Board.js'
 import { ChatPanel, type ChatLine } from '../chat/ChatPanel.js'
 import { cancelSpeech } from '../voice/browser-tts.js'
+import { useIsNarrow } from '../hooks/use-viewport.js'
 
 const START_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
+/** 人类固定执红（当前版本写死） */
+const HUMAN_SIDE = 'red' as const
+
 type GameStatus = 'connecting' | 'waiting' | 'playing' | 'over' | 'error'
 type GameMode = 'coach' | 'humanlike'
+type GameResult = 'red' | 'black' | 'draw' | null
 
 export function PlayPage() {
   const [fen, setFen] = useState(START_FEN)
+  const [fenKey, setFenKey] = useState(0) // 改变 key 强制 Board 重置（非法着回弹）
   const [status, setStatus] = useState<GameStatus>('connecting')
   const [statusMsg, setStatusMsg] = useState('正在连接服务器...')
+  const [statusError, setStatusError] = useState(false) // 非法着法时用红字显示
   const [gameId, setGameId] = useState<number | null>(null)
   const [lastAiMove, setLastAiMove] = useState<string | null>(null)
   const [lines, setLines] = useState<ChatLine[]>([])
   const [mode, setMode] = useState<GameMode>('coach')
+  const [awaitingAi, setAwaitingAi] = useState(false) // AI 思考期间锁盘
+  const [gameResult, setGameResult] = useState<GameResult>(null)
 
   const wsRef = useRef<ReturnType<typeof connect> | null>(null)
+  const isNarrow = useIsNarrow()
 
-  // 共用消息处理函数,useEffect 与 handleRestart 均使用此函数
+  // 据 result 推导胜负文本
+  function resultText(result: GameResult): string {
+    if (!result) return ''
+    if (result === 'draw') return '和棋'
+    return result === HUMAN_SIDE ? '你赢了！' : '你输了'
+  }
+
+  // 共用消息处理函数，useEffect 与 handleRestart 均使用此函数
   function handleServerMsg(msg: ServerMsg) {
     if (msg.type === 'started') {
       setGameId(msg.gameId)
       setStatus('playing')
       setStatusMsg('对局开始，请走棋（红方先手）')
+      setStatusError(false)
     } else if (msg.type === 'update') {
       setFen(msg.fen)
+      setFenKey(k => k + 1) // 刷新 key，确保 Board 与最新 fen 同步
       setLastAiMove(msg.aiMove)
+      setAwaitingAi(false) // AI 已回应，解锁棋盘
+      setStatusError(false)
       if (msg.over) {
+        const result = msg.result ?? null
+        setGameResult(result)
         setStatus('over')
-        setStatusMsg('对局结束！')
+        const txt = resultText(result)
+        setStatusMsg(txt ? `对局结束 — ${txt}` : '对局结束！')
       } else {
         setStatus('playing')
         setStatusMsg(msg.aiMove ? `AI 走了 ${msg.aiMove}，轮到您走` : '轮到您走棋')
       }
     } else if (msg.type === 'error') {
-      setStatusMsg(`错误：${msg.message}`)
-      // 不改变 status，让用户可以继续
+      // 非法着法或其他错误：解锁棋盘并强制回弹到当前合法 fen
+      setAwaitingAi(false)
+      setStatusError(true)
+      setStatusMsg(`非法着法：${msg.message}`)
+      // 修改 fenKey 强制 Board key 变化，使其重新 mount 并显示真实局面
+      setFenKey(k => k + 1)
     } else if (msg.type === 'chat') {
       setLines(prev => [...prev, {
         personaId: msg.personaId,
@@ -56,13 +84,15 @@ export function PlayPage() {
       if (s === 'closed') {
         setStatus('error')
         setStatusMsg('连接断开，请刷新页面或重新开始')
+        setStatusError(false)
       } else if (s === 'error') {
         setStatus('error')
         setStatusMsg('连接出错，请检查网络后重试')
+        setStatusError(false)
       }
     })
     wsRef.current = ws
-    ws.send({ type: 'new', mode: activeMode, humanSide: 'red', startFen: START_FEN })
+    ws.send({ type: 'new', mode: activeMode, humanSide: HUMAN_SIDE, startFen: START_FEN })
     setStatus('waiting')
     setStatusMsg('正在创建对局...')
     return ws
@@ -80,17 +110,23 @@ export function PlayPage() {
   function handleMove(move: string) {
     if (status !== 'playing' || gameId === null) return
     wsRef.current?.send({ type: 'move', gameId, move })
-    setStatusMsg(`您走了 ${move}，等待 AI 响应...`)
+    setAwaitingAi(true) // 等待 AI 响应，锁盘
+    setStatusError(false)
+    setStatusMsg(`您走了 ${move}，AI 思考中…`)
   }
 
   function handleRestart(activeMode?: GameMode) {
     cancelSpeech()
     setFen(START_FEN)
+    setFenKey(k => k + 1)
     setGameId(null)
     setLastAiMove(null)
     setLines([])
     setStatus('connecting')
     setStatusMsg('正在连接服务器...')
+    setAwaitingAi(false)
+    setGameResult(null)
+    setStatusError(false)
     startNewConnection(activeMode ?? mode)
   }
 
@@ -99,20 +135,46 @@ export function PlayPage() {
     handleRestart(newMode)
   }
 
+  // 窄屏下棋盘尺寸：视口宽度减边距，最大 460
+  const boardSize = isNarrow
+    ? Math.min(typeof window !== 'undefined' ? window.innerWidth - 32 : 460, 460)
+    : 480
+
+  const resultTxt = resultText(gameResult)
+
   return (
     <div style={styles.page}>
       <h1 style={styles.title}>围观象棋</h1>
 
       <div style={styles.statusBar}>
-        <span style={styles.statusText}>{statusMsg}</span>
-        {lastAiMove && (
+        <span style={statusError ? styles.statusTextError : styles.statusText}>
+          {statusMsg}
+        </span>
+        {awaitingAi && !statusError && (
+          <span style={styles.thinkingBadge}>AI 思考中…</span>
+        )}
+        {lastAiMove && !awaitingAi && (
           <span style={styles.aiMove}>AI 上一手：{lastAiMove}</span>
         )}
       </div>
 
-      <div style={styles.boardArea}>
+      {/* 对局结束结果横幅 */}
+      {status === 'over' && resultTxt && (
+        <div style={resultTxt === '你赢了！' ? styles.resultWin : resultTxt === '和棋' ? styles.resultDraw : styles.resultLose}>
+          {resultTxt}
+        </div>
+      )}
+
+      <div style={{ ...styles.boardArea, flexDirection: isNarrow ? 'column' : 'row' }}>
         <div style={styles.boardWrapper}>
-          <Board fen={fen} onMove={handleMove} />
+          <Board
+            key={fenKey}
+            fen={fen}
+            onMove={handleMove}
+            size={boardSize}
+            lastMove={lastAiMove}
+            disabled={awaitingAi || status !== 'playing'}
+          />
         </div>
         <ChatPanel
           lines={lines}
@@ -195,26 +257,74 @@ const styles: Record<string, React.CSSProperties> = {
   },
   statusBar: {
     display: 'flex',
-    gap: '24px',
+    gap: '12px',
     alignItems: 'center',
-    marginBottom: '16px',
+    marginBottom: '12px',
     padding: '10px 20px',
     background: 'rgba(255,255,255,0.08)',
     borderRadius: '8px',
-    minWidth: '320px',
+    minWidth: '280px',
     justifyContent: 'center',
+    flexWrap: 'wrap',
   },
   statusText: {
     fontSize: '0.95rem',
+  },
+  statusTextError: {
+    fontSize: '0.95rem',
+    color: '#ff5252',
+    fontWeight: 600,
+  },
+  thinkingBadge: {
+    fontSize: '0.82rem',
+    color: '#f5c518',
+    background: 'rgba(245,197,24,0.12)',
+    padding: '2px 10px',
+    borderRadius: '12px',
+    border: '1px solid rgba(245,197,24,0.4)',
+    animation: 'none',
   },
   aiMove: {
     fontSize: '0.85rem',
     color: '#f5c518',
     fontFamily: 'monospace',
   },
+  // 结果横幅
+  resultWin: {
+    fontSize: '1.6rem',
+    fontWeight: 800,
+    color: '#f5c518',
+    background: 'rgba(245,197,24,0.15)',
+    border: '2px solid #f5c518',
+    borderRadius: '10px',
+    padding: '10px 40px',
+    marginBottom: '14px',
+    letterSpacing: '0.05em',
+  },
+  resultLose: {
+    fontSize: '1.6rem',
+    fontWeight: 800,
+    color: '#ff6b6b',
+    background: 'rgba(255,107,107,0.12)',
+    border: '2px solid #ff6b6b',
+    borderRadius: '10px',
+    padding: '10px 40px',
+    marginBottom: '14px',
+    letterSpacing: '0.05em',
+  },
+  resultDraw: {
+    fontSize: '1.6rem',
+    fontWeight: 800,
+    color: '#aaa',
+    background: 'rgba(170,170,170,0.1)',
+    border: '2px solid #888',
+    borderRadius: '10px',
+    padding: '10px 40px',
+    marginBottom: '14px',
+    letterSpacing: '0.05em',
+  },
   boardArea: {
     display: 'flex',
-    flexDirection: 'row',
     gap: '20px',
     alignItems: 'flex-start',
   },
@@ -228,6 +338,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     gap: '16px',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
   },
   btn: {
     padding: '10px 28px',
@@ -292,6 +404,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '10px',
     alignItems: 'center',
     marginBottom: '12px',
+    marginTop: '16px',
     flexWrap: 'wrap' as const,
     justifyContent: 'center',
   },

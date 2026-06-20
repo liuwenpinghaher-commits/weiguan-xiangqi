@@ -2,7 +2,7 @@ import { WS_BASE } from './config.js'
 
 export type ServerMsg =
   | { type: 'started'; gameId: number }
-  | { type: 'update'; aiMove: string | null; fen: string; over: boolean }
+  | { type: 'update'; aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw' }
   | { type: 'error'; message: string }
   | { type: 'chat'; gameId: number; personaId: string; text: string; addressee: string; ts: string }
 

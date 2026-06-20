@@ -184,7 +184,7 @@ export class GameSession {
     return id
   }
 
-  async playHumanMove(gameId: number, move: string): Promise<{ aiMove: string | null; fen: string; over: boolean }> {
+  async playHumanMove(gameId: number, move: string): Promise<{ aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw' }> {
     this.ensureLoaded(gameId)
     const pos = this.positions.get(gameId)
     if (!pos) throw new Error('game not found')
@@ -229,7 +229,7 @@ export class GameSession {
         moveZh: humanZh, side: humanTurn, ply: humanPly, phase,
         tension: humanZh?.includes('吃') ? 0.9 : (endHumanKind === 'long_think' ? 0.7 : 0.4),
       })
-      return { aiMove: null, fen: afterHuman.fen(), over: true }
+      return { aiMove: null, fen: afterHuman.fen(), over: true, result }
     }
 
     // 4. 计算 AI 回着(此处任何失败都抛出,且尚未写任何库、未改 position,可重试)
@@ -288,7 +288,7 @@ export class GameSession {
     if (aiOver.over || aiRepeat !== null) {
       const result = aiOver.over ? aiOver.result! : aiRepeat!.result
       this.finish(gameId, result)
-      return { aiMove: decision.move, fen: afterAI.fen(), over: true }
+      return { aiMove: decision.move, fen: afterAI.fen(), over: true, result }
     }
     return { aiMove: decision.move, fen: afterAI.fen(), over: false }
   }
