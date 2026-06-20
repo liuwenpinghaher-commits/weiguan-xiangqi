@@ -16,9 +16,12 @@ import { compareWindows } from './report/compare.js'
 import { growthReport } from './report/llm-report.js'
 import { prevFenForPly, worstHumanPly } from './report/sparring.js'
 import { ChatEngine } from './chat/chat-engine.js'
-import { DashscopeLLM } from './llm/dashscope.js'
 import { FakeLLM } from './llm/fake.js'
-import { synthesizeUrl, voiceForPersona } from './voice/dashscope-tts.js'
+import { RuntimeConfig } from './config/runtime-config.js'
+import { SettingsRepo } from './store/settings-repo.js'
+import { MutableLLM, buildInnerLlm } from './llm/mutable-llm.js'
+import { registerAdminRoutes } from './admin/admin-routes.js'
+import { synthesizeUrl } from './voice/dashscope-tts.js'
 import { SurrealMemoryStore } from './memory/surreal-memory-store.js'
 import { FakeMemoryStore } from './memory/fake-memory-store.js'
 import { DashscopeEmbedding } from './llm/dashscope-embedding.js'
@@ -48,6 +51,9 @@ export async function buildServer(opts: {
   const db = openDb(opts.dbPath)
   const repo = new GamesRepo(db)
   const messages = new MessagesRepo(db)
+
+  // 配置:代码默认 ⊕ DB 覆盖 的唯一读取入口(控制台改库即时生效)
+  const cfg = new RuntimeConfig(new SettingsRepo(db), () => new Date().toISOString())
 
   // 引擎:优先使用注入值;未注入则按 enginePath 构造
   let engine: EngineLike | null
@@ -79,11 +85,10 @@ export async function buildServer(opts: {
   if (opts.llm) {
     llm = opts.llm
   } else {
-    const hasDashscope = !!process.env.DASHSCOPE_API_KEY
-    llm = hasDashscope ? new DashscopeLLM() : new FakeLLM([], '')
-    if (!hasDashscope) {
-      console.warn('未配置 DASHSCOPE_API_KEY:观棋聊天功能不可用,对弈/诊断照常运行')
-    }
+    const mutable = new MutableLLM(buildInnerLlm(cfg.getLlm()))
+    cfg.onLlmChange = () => mutable.replace(buildInnerLlm(cfg.getLlm()))
+    llm = mutable
+    if (!cfg.getLlm().apiKey) console.warn('未配置 DASHSCOPE_API_KEY:观棋聊天功能不可用,对弈/诊断照常运行')
   }
 
   // 记忆:优先 SurrealDB 语义记忆;连接/配置失败则降级为内存 store(聊天/反思照常,只是不持久、不语义)
@@ -113,6 +118,7 @@ export async function buildServer(opts: {
   const chat = new ChatEngine({
     llm,
     mem,
+    cfg,
     now: () => Date.now(),
     emit: (line) => {
       const msg = JSON.stringify({ type: 'chat', ...line })
@@ -134,7 +140,6 @@ export async function buildServer(opts: {
       }
     },
     rng: Math.random,
-    tempo: { minSilenceMs: 4000, maxPerMin: 12 },
   })
 
   // 记最近一局 gameId,供冷场定时器使用
@@ -180,6 +185,7 @@ export async function buildServer(opts: {
 
   const session = new GameSession({
     repo,
+    cfg,
     engine: engine ?? engineStub,
     makePosition: (fen) => Position.fromFen(fen) as any,
     clock: () => new Date().toISOString(),
@@ -189,16 +195,17 @@ export async function buildServer(opts: {
   // 冷场定时器:每 20 秒以 35% 概率投一个高张力 idle 刺激,让茶馆偶尔有人闲扯,又不刷屏
   const idleInterval = setInterval(() => {
     if (lastGameId === null) return
-    if (Math.random() < 0.35) {
+    const c = cfg.getChat()
+    if (Math.random() < c.idleProb) {
       void chat.onStimulus({ kind: 'idle', gameId: lastGameId, scoreCp: null, tension: 0.55 })
     }
-  }, 20_000)
+  }, cfg.getChat().idleIntervalMs)
   idleInterval.unref?.()
 
   const analysis = new AnalysisRepo(db)
   const training = new TrainingRepo(db)
   // diagDeps.engine 仅在 engine 不为 null 时才会被实际调用(调用处均有守卫)
-  const diagDeps = { games: repo, analysis, engine: engine ?? engineStub, clock: () => new Date().toISOString(), depth: 12 }
+  const diagDeps = { games: repo, analysis, engine: engine ?? engineStub, clock: () => new Date().toISOString(), depth: cfg.getDiagnose().depth }
 
   // 局末自动诊断幂等 set(避免同一局重复触发引擎分析)
   const diagnosedGames = new Set<number>()
@@ -217,6 +224,9 @@ export async function buildServer(opts: {
   })
 
   await app.register(fastifyWebsocket)
+
+  // 控制台 admin 路由(配置/角色/记忆/对局管理)
+  registerAdminRoutes(app, { cfg, mem, games: repo, messages })
 
   // WebSocket 路由 /play
   // @fastify/websocket v10 handler 签名: (socket: WebSocket, req: FastifyRequest)
@@ -534,9 +544,6 @@ export async function buildServer(opts: {
   // 无 DASHSCOPE_API_KEY → 503(前端回退浏览器 TTS)
   // 成功 → JSON { url } (OSS 公网音频 URL,24h 有效);出错 → 500
   app.get('/tts', async (req, reply) => {
-    if (!process.env.DASHSCOPE_API_KEY) {
-      return reply.code(503).send({ error: '未配置 DASHSCOPE_API_KEY,TTS 不可用' })
-    }
     const query = req.query as { personaId?: string; text?: string }
     const personaId = String(query.personaId ?? '')
     const rawText = String(query.text ?? '').trim()
@@ -544,14 +551,15 @@ export async function buildServer(opts: {
       return reply.code(400).send({ error: 'text 参数不能为空' })
     }
     const text = rawText.slice(0, 200)
-    const voice = voiceForPersona(personaId)
-    const endpoint = process.env.DASHSCOPE_TTS_ENDPOINT ?? 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation'
-    const model = process.env.DASHSCOPE_TTS_MODEL ?? 'qwen3-tts-flash'
+    const voice = cfg.voiceForPersona(personaId)
+    const tts = cfg.getTts()
+    const apiKey = cfg.getLlm().apiKey
+    if (!apiKey) return reply.code(503).send({ error: '未配置 DASHSCOPE_API_KEY,TTS 不可用' })
     try {
       const url = await synthesizeUrl(text, voice, {
-        endpoint,
-        apiKey: process.env.DASHSCOPE_API_KEY,
-        model,
+        endpoint: tts.endpoint,
+        apiKey,
+        model: tts.model,
       })
       reply.header('Content-Type', 'application/json')
       return reply.send({ url })

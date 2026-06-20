@@ -144,6 +144,13 @@ describe('ws-server 集成测试', () => {
     expect(res.statusCode).toBe(404)
   })
 
+  it('GET /admin/config 经 buildServer 挂载可用', async () => {
+    app = await makeApp()
+    const res = await app.inject({ method: 'GET', url: '/admin/config' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json<any>().chat.maxPerMin).toBe(12)
+  })
+
   it('POST /games/import 导入棋谱，GET /games/:id/export 能取回', async () => {
     app = await makeApp()
 
