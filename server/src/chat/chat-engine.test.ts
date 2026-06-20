@@ -206,6 +206,83 @@ test('人着不让 player 自评:byPlayerPersona 未设时 out 中不含 player'
   expect(playerLines.length).toBe(0)
 })
 
+// ─── P1-2 新增测试:同回合上下文注入 + 跨刺激记忆 ───────────────────────────
+
+test('同回合上下文注入:第 2 个 speaker 的 prompt 含第 1 个 speaker 刚说的话', async () => {
+  // FakeLLM 按调用序返回不同串
+  let callIdx = 0
+  const replies = ['这步真妙', '我看未必']
+  const capturedUserMsgs: string[] = []
+
+  const llm = new FakeLLM((msgs) => {
+    // 收集每次调用的完整 user 消息内容
+    const userMsg = msgs.find(m => m.role === 'user')
+    if (userMsg) capturedUserMsgs.push(userMsg.content)
+    const sys = msgs.find(m => m.role === 'system')
+    if (sys) capturedUserMsgs.push(sys.content)
+    return replies[callIdx++ % replies.length]
+  })
+
+  // rng 固定 0.9 → jitter = (0.9-0.5)*0.3=0.12 → 所有 spectator 分数均 > 0.45
+  const { engine, out } = setup(llm)
+
+  const stim: Stimulus = {
+    kind: 'blunder', gameId: 42, scoreCp: -400, tension: 0.95,
+    moveZh: '红炮乱走', side: 'red', ply: 3, phase: 'opening',
+  }
+
+  await engine.onStimulus(stim)
+
+  // 至少 2 人发言(rng=0.9,tension=0.95,应触发多人)
+  expect(out.length).toBeGreaterThanOrEqual(2)
+
+  // 第 2 个 speaker 收到的 prompt 里应包含第 1 个 speaker 刚说的"这步真妙"
+  // capturedUserMsgs 交替存 user + system 消息,找含有第1次回复内容的后续消息
+  const hasContext = capturedUserMsgs.some(m => m.includes('这步真妙'))
+  expect(hasContext).toBe(true)
+})
+
+test('跨刺激记忆:第 2 次刺激的 prompt 含上一次 recent 中的内容', async () => {
+  const allPromptContents: string[] = []
+  let callIdx = 0
+
+  const llm = new FakeLLM((msgs) => {
+    msgs.forEach(m => allPromptContents.push(m.content))
+    callIdx++
+    return callIdx === 1 ? '第一炮拉中路' : '接上'
+  })
+
+  // 使用独立的 engine(tempo=0 允许连续触发)
+  const mem = new PersonaMemoryRepo(openDb(':memory:'))
+  const out: any[] = []
+  const engine = new ChatEngine({
+    llm, mem, now: () => 1000,
+    emit: (line) => out.push(line),
+    rng: () => 0.9,
+    tempo: { minSilenceMs: 0, maxPerMin: 100 },
+  })
+
+  const stim1: Stimulus = {
+    kind: 'move', gameId: 7, scoreCp: 100, tension: 0.95,
+    moveZh: '红炮二平五', side: 'red', ply: 1, phase: 'opening',
+  }
+  const stim2: Stimulus = {
+    kind: 'move', gameId: 7, scoreCp: -80, tension: 0.95,
+    moveZh: '黑马2进3', side: 'black', ply: 2, phase: 'opening',
+  }
+
+  await engine.onStimulus(stim1)
+  // 重置 prompt 捕获(只关心第 2 轮的)
+  const countAfterFirst = allPromptContents.length
+
+  await engine.onStimulus(stim2)
+
+  // 第 2 次刺激产生的 prompt 中应含第 1 次的输出"第一炮拉中路"
+  const stim2Contents = allPromptContents.slice(countAfterFirst)
+  const hasRecentContext = stim2Contents.some(c => c.includes('第一炮拉中路'))
+  expect(hasRecentContext).toBe(true)
+})
+
 test('内容质量:连发两个不同 moveZh 的刺激,各自 LLM prompt 含各自着法', async () => {
   // 捕获每次调用的 user 消息
   const capturedUsers: string[] = []
