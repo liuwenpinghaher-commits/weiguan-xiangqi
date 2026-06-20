@@ -63,3 +63,14 @@ CREATE TABLE IF NOT EXISTS persona_memory (
   heat REAL NOT NULL DEFAULT 1.0      -- 衰减热度(检索用)
 );
 CREATE INDEX IF NOT EXISTS idx_pmem_persona ON persona_memory(persona_id, created_at);
+
+-- 训练作答记录(做题结果持久化)
+CREATE TABLE IF NOT EXISTS drill_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  game_id INTEGER NOT NULL,
+  ply INTEGER NOT NULL,
+  chosen_move TEXT NOT NULL,
+  correct INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_drill_game ON drill_attempts(game_id);

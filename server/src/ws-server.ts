@@ -7,6 +7,7 @@ import { GameSession } from './session/game-session.js'
 import { Position } from './rules/position.js'
 import type { GameMode, Side } from './types.js'
 import { AnalysisRepo } from './store/analysis-repo.js'
+import { TrainingRepo } from './store/training-repo.js'
 import { diagnoseGame } from './analysis/diagnose-game.js'
 import { generateDrills } from './training/generate-drills.js'
 import { compareWindows } from './report/compare.js'
@@ -102,7 +103,11 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
   idleInterval.unref?.()
 
   const analysis = new AnalysisRepo(db)
+  const training = new TrainingRepo(db)
   const diagDeps = { games: repo, analysis, engine, clock: () => new Date().toISOString(), depth: 12 }
+
+  // 局末自动诊断幂等 set(避免同一局重复触发引擎分析)
+  const diagnosedGames = new Set<number>()
 
   const app = Fastify({ logger: true })
 
@@ -162,6 +167,11 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
           if (result.over) {
             const gameId = msg.gameId as number
             reflectGame(gameId).catch(() => { /* 反思失败静默忽略 */ })
+            // 局末自动后台诊断(fire-and-forget,幂等)
+            if (!diagnosedGames.has(gameId)) {
+              diagnosedGames.add(gameId)
+              void diagnoseGame(diagDeps, gameId).catch(() => { /* 诊断失败静默忽略,不影响对局 */ })
+            }
           }
         } else if (msg.type === 'say') {
           // 玩家发言 → human_said 刺激,高张力必有人接
@@ -204,7 +214,9 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
     const id = Number((req.params as { id: string }).id)
     if (!Number.isInteger(id)) return reply.code(400).send({ error: 'invalid id' })
     try {
-      return await diagnoseGame(diagDeps, id)
+      const result = await diagnoseGame(diagDeps, id)
+      diagnosedGames.add(id)  // 手动诊断后标记,避免局末再重复
+      return result
     } catch (e) {
       return reply.code(404).send({ error: (e as Error).message })
     }
@@ -227,7 +239,7 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
     return { side, profile: analysis.weaknessProfile(side) }
   })
 
-  // 训练题(从某局人方失误生成)
+  // 训练题(从某局人方失误生成),附带该局训练进度 stats
   app.get('/games/:id/drills', async (req, reply) => {
     const id = Number((req.params as { id: string }).id)
     const game = repo.getGame(id)
@@ -236,7 +248,43 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
       gameId: id, humanSide: game.humanSide, startFen: game.startFen,
       moves: repo.getMoves(id), annotations: analysis.getAnnotations(id),
     })
-    return { drills }
+    const stats = training.drillStats(id)
+    return { drills, stats }
+  })
+
+  // 提交训练作答(后端根据 bestMove 判定 correct,更可信)
+  app.post('/games/:id/drills/attempt', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id)
+    if (!Number.isInteger(id) || isNaN(id)) return reply.code(400).send({ error: 'invalid id' })
+    const game = repo.getGame(id)
+    if (!game) return reply.code(404).send({ error: 'game not found' })
+
+    const body = req.body as { ply?: unknown; chosenMove?: unknown }
+    const ply = Number(body?.ply)
+    const chosenMove = String(body?.chosenMove ?? '')
+    if (!Number.isInteger(ply) || ply <= 0) return reply.code(400).send({ error: 'invalid ply' })
+    if (!chosenMove) return reply.code(400).send({ error: 'chosenMove required' })
+
+    // 后端判定:从该局的 annotations 里找对应 ply 的 bestMove
+    const annotations = analysis.getAnnotations(id)
+    const ann = annotations.find((a) => a.ply === ply)
+    const correct = ann != null ? chosenMove === ann.bestMove : false
+
+    training.addDrillAttempt({
+      gameId: id,
+      ply,
+      chosenMove,
+      correct,
+      createdAt: new Date().toISOString(),
+    })
+
+    const stats = training.drillStats(id)
+    return { correct, stats }
+  })
+
+  // 全局训练进度
+  app.get('/training/stats', async () => {
+    return training.drillStatsAll()
   })
 
   // 历史对比(已诊断局按时间对半:前半 vs 后半)
