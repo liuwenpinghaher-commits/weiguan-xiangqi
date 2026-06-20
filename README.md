@@ -238,6 +238,26 @@ ARK_MODEL=doubao-seed-2.0-pro
 - 首版让**观棋者**主动冒泡;AI 棋手主动搭话为后续小扩展。
 - 端到端聊天需后端运行 + ARK key;`VolcanoLLM` 与 `say` 路径已真实冒烟,完整对局内联动需本机起服务验证。
 
-### 待续:M3b（语音）
+---
 
-`VoiceProvider` 接口 + 火山语音(STT/TTS 多音色,与 LLM 同厂),前端采音/播报。chat-engine 已产出结构化 `ChatLine`,M3b 在其后接 TTS 即可,无需改编排。
+## M3b：语音（浏览器原生)
+
+全程语音,**零新凭证、零新依赖**——用浏览器内置 Web Speech API:
+
+- **念弹幕(TTS)**:观棋者/棋手的每条发言用 `SpeechSynthesis` 念出来,各角色用**音高/语速**区分(老炮儿低沉、教练平稳、阿强尖快,见 `web/src/voice/voice-config.ts`)。
+- **说话(STT)**:点 🎤 用中文说话(`webkitSpeechRecognition`,`zh-CN`,一次性听写)→ 识别为文字走现有 `say` → 观棋者回应。
+- **🔊 开关**:一键静音;重开局自动清掉排队语音。
+- **优雅降级**:浏览器不支持时按钮禁用 + 提示,不报错。
+
+**浏览器兼容性:** Chrome / Edge 最佳(TTS + STT 都成熟)。Safari 的 STT 支持有限,Firefox 基本无 STT——已做特性检测降级,TTS 在主流浏览器都可用。
+
+### 已知简化项
+
+- 浏览器 TTS 音色有限,只能音高/语速区分角色,不如云端自然(升级见下)。
+- STT 为「按一次说一句」的一次性听写,非持续聆听。
+- web 无测试框架,语音逻辑以 typecheck + build + 浏览器手动验收为准。
+
+### 火山云 TTS 升级路径(有语音凭证再做)
+
+浏览器音色不够"人味"时,可切火山云 TTS 拿自然多音色。需**独立的火山「语音技术」凭证**(appid + access_token,**非 ARK LLM key**):
+- 后端 `POST https://openspeech.bytedance.com/api/v1/tts`(`Authorization: Bearer;<token>`,`cluster=volcano_tts`,按 persona 映射 `voice_type`)→ 返回 base64 音频;前端把 `browser-tts.ts` 抽象成 `VoiceProvider`,加 `ServerTTS` 实现 + 来源开关。env:`VOLC_TTS_APPID`/`VOLC_TTS_TOKEN`(放 `.env`)。详见 [M3b 计划文末](docs/superpowers/plans/2026-06-20-m3b-voice.md)。
