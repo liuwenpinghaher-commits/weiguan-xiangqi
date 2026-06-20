@@ -6,12 +6,13 @@ import type { PersonaId } from '../types.js'
 import { judgeMemory } from './memory-judge.js'
 
 const RECENCY_HALFLIFE_MS = 1000 * 60 * 60 * 24 * 14
-// KNN 已把候选限定在「同 persona + 同 kind + 未作废」里,返回的 top-1 就是语义最接近的
-// 既有记忆。是否合并/作废交给 LLM judge 决定,这里只用一个很低的相似度地板过滤掉
-// 数学上正交/负相关(基本无关)的噪声,避免浪费一次 judge 调用。
-// 注意:不能用高阈值(如 0.85)——生产嵌入维度高、近义短句的余弦相似度往往只有 0.5~0.7,
-// 高阈值会让"残局易急躁→残局已变稳健"这类真正需要 judge 的更新被直接漏判。
-const DEFAULT_SIM_THRESHOLD = 0.85 // 余弦相似度高于此值才对 top-1 候选调用 judge,把 judge 调用成本限定在「足够相似」的写入上
+// 余弦相似度高于此阈值才对 KNN top-1 候选调用 judge(merge/supersede/keep)。
+// 取值权衡:过高 → 真正需要合并/作废的近义更新被漏判,记忆去重/纠错形同虚设;
+//          过低 → 不相关记忆也触发 judge,徒增 LLM 调用。
+// 0.6 是偏向"宁可多判一次"的初值——本应用反思写入低频(每局每角色约数条),
+// 多几次 judge 成本可忽略,且 judge 自带"相关但不同→keep"分支兜底误合并。
+// 待接入真实 text-embedding-v3 后用实测相似度分布校准;可经 deps.simThreshold 覆盖。
+const DEFAULT_SIM_THRESHOLD = 0.6
 const HNSW_EF = 64 // HNSW 查询时的候选列表大小;v3 的 KNN 算子要求显式给出
 
 export interface SurrealMemoryDeps {
@@ -54,7 +55,7 @@ export class SurrealMemoryStore implements MemoryStore {
 
   private async embedOne(text: string): Promise<number[] | null> {
     try { return (await this.deps.embedding.embed([text]))[0] }
-    catch { return null }
+    catch (err) { console.warn('[memory] 嵌入失败,降级为无向量:', (err as Error).message); return null }
   }
 
   /** 把 record id 字符串("memory:xxx")转回可绑定的 RecordId,供 UPDATE/DELETE 复用。 */
@@ -109,7 +110,7 @@ export class SurrealMemoryStore implements MemoryStore {
     const t = this.deps.now()
     let rows: Array<{ row: Row; sim: number }> = []
     if (vec) {
-      for (const k of kinds) rows.push(...await this.knn(personaId, k, vec, Math.max(limit, 5)))
+      for (const k of kinds) rows.push(...await this.knn(personaId, k, vec, Math.max(limit, 5))) // 候选放宽到 ≥5:KNN 返回纯语义近邻,留更大池子让 recency/importance 重排
     } else {
       // 嵌入失败降级:不走 KNN,纯按 recency/importance 融合。
       const [res] = await this.db.query<[any[]]>(
