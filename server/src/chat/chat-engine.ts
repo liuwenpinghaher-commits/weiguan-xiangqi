@@ -1,7 +1,7 @@
 import type { LLMProvider } from '../llm/provider.js'
 import type { MemoryStore } from '../memory/store.js'
 import type { ChatLine, Stimulus, Persona, PersonaId } from '../types.js'
-import { spectators, getPersona } from '../personas/personas.js'
+import type { RuntimeConfig } from '../config/runtime-config.js'
 import { viewScore } from '../personas/engine-view.js'
 import { pickSpeakers } from './speaker-select.js'
 import { TempoGuard } from './tempo.js'
@@ -9,10 +9,10 @@ import { TempoGuard } from './tempo.js'
 export interface ChatEngineDeps {
   llm: LLMProvider
   mem: MemoryStore
+  cfg: RuntimeConfig
   now: () => number
   emit: (line: ChatLine) => void
   rng: () => number
-  tempo: { minSilenceMs: number; maxPerMin: number }
 }
 
 /** 最近聊天缓冲条目 */
@@ -47,13 +47,17 @@ export class ChatEngine {
   private recent = new Map<number, RecentEntry[]>()
 
   constructor(private deps: ChatEngineDeps) {
-    this.guard = new TempoGuard({ ...deps.tempo, now: deps.now })
+    this.guard = new TempoGuard({
+      limits: () => { const c = deps.cfg.getChat(); return { minSilenceMs: c.minSilenceMs, maxPerMin: c.maxPerMin } },
+      now: deps.now,
+    })
   }
 
   async onStimulus(stim: Stimulus): Promise<void> {
     if (!this.guard.allow()) return
     const recentSecs = this.recentMap()
-    const speakers = pickSpeakers(stim, spectators(), recentSecs, this.deps.rng)
+    const chat = this.deps.cfg.getChat()
+    const speakers = pickSpeakers(stim, this.deps.cfg.personas().filter(p => !p.isPlayer), recentSecs, this.deps.rng, chat.speakThreshold, chat.jitterWidth)
 
     // 若这步是 AI 棋手走的,以 40% 概率让 player 自评(放末尾)
     if (stim.byPlayerPersona && this.deps.rng() < 0.4) {
@@ -68,7 +72,7 @@ export class ChatEngine {
 
     for (const id of speakers) {
       try {
-        const persona = getPersona(id)
+        const persona = this.deps.cfg.getPersona(id)
 
         // 取该 gameId 的 recent(最近若干条) + 本回合前面已说的,合并为上下文
         const gameRecent = this.recent.get(stim.gameId) ?? []
@@ -135,6 +139,7 @@ export class ChatEngine {
     messages: { role: 'system' | 'user'; content: string }[]
     addressee: ChatLine['addressee']
   }> {
+    const c = this.deps.cfg.getChat()
     const seen = viewScore(stim.scoreCp, p.skill, this.deps.rng)
     const qual = qualWord(seen)
 
@@ -158,7 +163,7 @@ export class ChatEngine {
 
     // 长度风格:多数偏短,制造节奏
     const lr = this.deps.rng()
-    const len = lr < 0.5 ? '就两三个字或半句' : lr < 0.85 ? '一句话' : '一句话,可稍长但别啰嗦'
+    const len = lr < c.lenShortP ? '就两三个字或半句' : lr < c.lenLongP ? '一句话' : '一句话,可稍长但别啰嗦'
 
     // react 目标:最近一条不是自己说的
     const target = [...context].reverse().find(c => c.id !== p.id)
@@ -174,7 +179,7 @@ export class ChatEngine {
       user = `对方这步想了很久还没落子。${len},用你的脾气随口催两句/调侃/安慰,别太冲:`
     } else if (stim.kind === 'idle' || (stim.kind === 'topic_open' && !stim.moveZh)) {
       user = `这会儿没大事。${len},随口扯点棋外的(你自己的行当/家里/最近遇上的事),或棋摊闲话、一句棋谚掌故,别评具体某步:`
-    } else if (target && this.deps.rng() < 0.3) {
+    } else if (target && this.deps.rng() < c.reactProb) {
       // 真互动(占比小):接某人的话,但要说到棋上,不空贫
       user = `「${target.name}」刚说:"${target.text}"。${len},接他的话——同意就补一刀、不同意就摆棋上的道理反驳他,像老熟人拌嘴但别空贫:`
       addressee = target.id

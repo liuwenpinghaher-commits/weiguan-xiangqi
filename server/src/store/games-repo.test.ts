@@ -98,3 +98,29 @@ test('listGames: 空库返回空数组', () => {
   const r = repo()
   expect(r.listGames()).toEqual([])
 })
+
+import { describe, it } from 'vitest'
+import { MessagesRepo } from './messages-repo.js'
+
+describe('GamesRepo.deleteGame 级联', () => {
+  it('删局同时清空 moves/messages/move_annotations/drill_attempts/growth_metrics', () => {
+    const db = openDb(':memory:')
+    const games = new GamesRepo(db); const msgs = new MessagesRepo(db)
+    const id = games.createGame({ mode: 'humanlike', humanSide: 'red', startFen: 'startpos', startedAt: 't0' })
+    games.addMove({ gameId: id, side: 'red', move: 'h2e2', fenAfter: 'f', scoreCp: 10, byAi: false })
+    msgs.addMessage({ gameId: id, personaId: 'coach', role: 'persona', text: 'hi', addressee: null, ts: 't0' })
+    db.prepare("INSERT INTO move_annotations (game_id, ply, side, cp_loss, best_move, phase, theme) VALUES (?,1,'red',5,'h2e2','opening','x')").run(id)
+    db.prepare("INSERT INTO drill_attempts (game_id, ply, chosen_move, correct, created_at) VALUES (?,1,'h2e2',1,'t0')").run(id)
+    db.prepare("INSERT INTO growth_metrics (game_id, analyzed_at, human_side, acpl, accuracy, est_elo, opening_acpl, midgame_acpl, endgame_acpl, blunders, mistakes, result) VALUES (?, 't0','red',50,0.8,1500,40,50,60,1,2,'win')").run(id)
+
+    games.deleteGame(id)
+
+    expect(games.getGame(id)).toBeNull()
+    expect(games.getMoves(id)).toHaveLength(0)
+    expect(msgs.getMessages(id)).toHaveLength(0)
+    for (const t of ['move_annotations', 'drill_attempts', 'growth_metrics']) {
+      const n = (db.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE game_id=?`).get(id) as { n: number }).n
+      expect(n).toBe(0)
+    }
+  })
+})
