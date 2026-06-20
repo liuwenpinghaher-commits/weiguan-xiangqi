@@ -22,9 +22,10 @@ export class PersonaMemoryRepo {
     return this.rows('SELECT * FROM persona_memory WHERE persona_id=? ORDER BY created_at DESC', [personaId])
   }
 
-  /** 检索注入用:score = recency(指数衰减) + importance/5 + relevance(关键词重合) */
-  retrieve(personaId: PersonaId, query: string, limit: number, now: () => number): MemoryRow[] {
-    const rows = this.byPersona(personaId)
+  /** 检索注入用:score = recency(指数衰减) + importance/5 + relevance(关键词重合)
+   *  kinds 可选:提供时只在这些 kind 中检索;不提供则全部 kind */
+  retrieve(personaId: PersonaId, query: string, limit: number, now: () => number, kinds?: Array<'episode' | 'fact' | 'insight'>): MemoryRow[] {
+    const rows = kinds ? this.byPersona(personaId).filter(r => kinds.includes(r.kind)) : this.byPersona(personaId)
     const qTokens = tokens(query)
     const t = now()
     const scored = rows.map(r => {

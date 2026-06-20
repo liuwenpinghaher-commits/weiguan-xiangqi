@@ -115,10 +115,20 @@ export type StimulusKind =
 export interface Stimulus {
   kind: StimulusKind
   gameId: number
-  /** 当前局面引擎评分(走子方视角,厘兵);无则 null */
+  /** 红方视角厘兵分(正=红优);噪声由 engine-view 按角色加;无则 null */
   scoreCp: number | null
+  /** 中文着法,如 "红炮二平五(吃卒)" */
+  moveZh?: string
+  /** 这步谁走的 */
+  side?: Side
+  /** 第几手 */
+  ply?: number
+  /** 对局阶段 */
+  phase?: 'opening' | 'midgame' | 'endgame'
   /** 人类刚说的话(kind=human_said 时) */
   humanText?: string
   /** 张力 0..1:越高越该有人说话 */
   tension: number
+  /** true = 这步是 AI 棋手"老黑"走的,允许 player 自评 */
+  byPlayerPersona?: boolean
 }

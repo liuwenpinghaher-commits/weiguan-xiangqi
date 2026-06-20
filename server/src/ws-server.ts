@@ -15,6 +15,7 @@ import { VolcanoLLM } from './llm/volcano.js'
 import { PersonaMemoryRepo } from './memory/persona-memory-repo.js'
 import { reflect } from './memory/reflection.js'
 import { spectators } from './personas/personas.js'
+import { describeMoveZh } from './rules/describe-move.js'
 
 export async function buildServer(opts: { dbPath: string; enginePath: string }) {
   const db = openDb(opts.dbPath)
@@ -105,8 +106,32 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
             const gameId = msg.gameId as number
             if (!reflectedGames.has(gameId)) {
               reflectedGames.add(gameId)
+              // 拼玩家本局真实走法概述
+              let playerSummary = ''
+              try {
+                const game = repo.getGame(gameId)
+                const moves = repo.getMoves(gameId)
+                if (game) {
+                  const humanMoves = moves.filter(m => !m.byAi).slice(0, 12)
+                  const parts: string[] = []
+                  for (const m of humanMoves) {
+                    // 找上一手的 fenAfter,首手用 game.startFen
+                    const prevFen = m.ply <= 1
+                      ? game.startFen
+                      : (moves.find(x => x.ply === m.ply - 1)?.fenAfter ?? game.startFen)
+                    try {
+                      parts.push(describeMoveZh(prevFen, m.move))
+                    } catch {
+                      // 单步描述失败跳过
+                    }
+                  }
+                  playerSummary = parts.join(';')
+                }
+              } catch {
+                // 走法拼接失败,playerSummary 保持空字符串,reflect 会提前返回
+              }
               for (const p of spectators()) {
-                reflect({ repo: pmem, llm, personaId: p.id, gameId, now: () => Date.now() })
+                reflect({ repo: pmem, llm, personaId: p.id, gameId, now: () => Date.now(), playerSummary })
                   .catch(() => { /* 反思失败静默忽略 */ })
               }
             }
