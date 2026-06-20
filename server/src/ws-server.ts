@@ -10,17 +10,55 @@ import { AnalysisRepo } from './store/analysis-repo.js'
 import { diagnoseGame } from './analysis/diagnose-game.js'
 import { generateDrills } from './training/generate-drills.js'
 import { compareWindows } from './report/compare.js'
+import { ChatEngine } from './chat/chat-engine.js'
+import { VolcanoLLM } from './llm/volcano.js'
+import { PersonaMemoryRepo } from './memory/persona-memory-repo.js'
+import { reflect } from './memory/reflection.js'
+import { spectators } from './personas/personas.js'
 
 export async function buildServer(opts: { dbPath: string; enginePath: string }) {
   const db = openDb(opts.dbPath)
   const repo = new GamesRepo(db)
   const engine = new UciEngine(spawnTransport(opts.enginePath))
+
+  // --- 聊天基础设施 ---
+  const pmem = new PersonaMemoryRepo(db)
+  const llm = new VolcanoLLM()
+
+  // 活跃 /play WebSocket 连接集合,用于广播聊天消息
+  const sockets = new Set<any>()
+
+  const chat = new ChatEngine({
+    llm,
+    mem: pmem,
+    now: () => Date.now(),
+    emit: (line) => {
+      const msg = JSON.stringify({ type: 'chat', ...line })
+      for (const s of sockets) {
+        try { s.send(msg) } catch {}
+      }
+    },
+    rng: Math.random,
+    tempo: { minSilenceMs: 4000, maxPerMin: 12 },
+  })
+
+  // 记最近一局 gameId,供冷场定时器使用
+  let lastGameId: number | null = null
+
   const session = new GameSession({
     repo,
     engine,
     makePosition: (fen) => Position.fromFen(fen) as any,
     clock: () => new Date().toISOString(),
+    onStimulus: (s) => { void chat.onStimulus(s) },
   })
+
+  // 冷场定时器:每 20 秒投一个低张力 idle 刺激
+  const idleInterval = setInterval(() => {
+    if (lastGameId === null) return
+    void chat.onStimulus({ kind: 'idle', gameId: lastGameId, scoreCp: null, tension: 0.15 })
+  }, 20_000)
+  idleInterval.unref?.()
 
   const analysis = new AnalysisRepo(db)
   const diagDeps = { games: repo, analysis, engine, clock: () => new Date().toISOString(), depth: 12 }
@@ -33,6 +71,9 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
   // @fastify/websocket v10 handler 签名: (socket: WebSocket, req: FastifyRequest)
   // socket 直接是 ws.WebSocket 实例，使用 socket.on / socket.send
   app.get('/play', { websocket: true }, (socket, _req) => {
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+
     socket.on('message', async (raw) => {
       let parsed: unknown
       try {
@@ -51,10 +92,28 @@ export async function buildServer(opts: { dbPath: string; enginePath: string }) 
             humanSide: msg.humanSide as Side,
             startFen: (msg.startFen as string | undefined) ?? 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1',
           })
+          lastGameId = gameId
           socket.send(JSON.stringify({ type: 'started', gameId }))
         } else if (msg.type === 'move') {
           const result = await session.playHumanMove(msg.gameId as number, msg.move as string)
           socket.send(JSON.stringify({ type: 'update', ...result }))
+          // 局末:对每个旁观者触发反思(异步,失败不影响主流程)
+          if (result.over) {
+            const gameId = msg.gameId as number
+            for (const p of spectators()) {
+              reflect({ repo: pmem, llm, personaId: p.id, gameId, now: () => Date.now() })
+                .catch(() => { /* 反思失败静默忽略 */ })
+            }
+          }
+        } else if (msg.type === 'say') {
+          // 玩家发言 → human_said 刺激,高张力必有人接
+          void chat.onStimulus({
+            kind: 'human_said',
+            gameId: msg.gameId as number,
+            scoreCp: null,
+            humanText: String(msg.text ?? ''),
+            tension: 0.9,
+          })
         } else {
           socket.send(JSON.stringify({ type: 'error', message: `unknown message type: ${msg.type}` }))
         }

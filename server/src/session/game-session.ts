@@ -1,5 +1,5 @@
 import type { GamesRepo } from '../store/games-repo.js'
-import type { EngineLine, GameMode, Side, DirectorContext } from '../types.js'
+import type { EngineLine, GameMode, Side, DirectorContext, Stimulus } from '../types.js'
 import { selectMove } from '../director/director.js'
 
 interface PositionLike {
@@ -16,6 +16,8 @@ export interface GameSessionDeps {
   engine: EngineLike
   makePosition: (fen: string) => PositionLike
   clock: () => string
+  /** 可选:走子后触发聊天刺激 */
+  onStimulus?: (s: Stimulus) => void
 }
 
 const MULTIPV = 5
@@ -55,6 +57,7 @@ export class GameSession {
       this.deps.repo.addMove({ gameId, side: humanTurn, move, fenAfter: afterHuman.fen(), scoreCp: null, byAi: false })
       this.positions.set(gameId, afterHuman)
       this.finish(gameId, humanOver.result!)
+      this.deps.onStimulus?.({ kind: 'move', gameId, scoreCp: null, tension: 0.4 })
       return { aiMove: null, fen: afterHuman.fen(), over: true }
     }
 
@@ -69,6 +72,14 @@ export class GameSession {
     this.deps.repo.addMove({ gameId, side: humanTurn, move, fenAfter: afterHuman.fen(), scoreCp: null, byAi: false })
     this.deps.repo.addMove({ gameId, side: aiSide, move: decision.move, fenAfter: afterAI.fen(), scoreCp: decision.chosenLine.scoreCp, byAi: true })
     this.positions.set(gameId, afterAI)
+
+    // 人着刺激(无评分)
+    this.deps.onStimulus?.({ kind: 'move', gameId, scoreCp: null, tension: 0.4 })
+
+    // AI 着刺激(有评分,张力按 |scoreCp| 映射)
+    const aiCp = decision.chosenLine.scoreCp
+    const aiTension = Math.min(1, Math.abs(aiCp) / 300)
+    this.deps.onStimulus?.({ kind: 'move', gameId, scoreCp: aiCp, tension: aiTension })
 
     const aiOver = afterAI.isGameOver()
     if (aiOver.over) this.finish(gameId, aiOver.result!)
