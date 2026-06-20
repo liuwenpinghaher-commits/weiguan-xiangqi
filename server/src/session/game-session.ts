@@ -95,6 +95,67 @@ export class GameSession {
 
   constructor(private deps: GameSessionDeps) {}
 
+  /**
+   * 若 positions Map 里没有 gameId，从 DB 重建内存态（续局支持）。
+   * - 从 repo.getGame 取局信息；无 → 维持原 'game not found' 语义（不抛，让调用方抛）。
+   * - 用 makePosition(startFen) 起始，按 getMoves 顺序逐步 applyMove 重放。
+   * - 同步重建 modes、humanSides、repeatHistories、noCapturePlies。
+   * - lastMoveAt 不恢复（置 0，对续局张力检测无影响）。
+   */
+  private ensureLoaded(gameId: number): void {
+    if (this.positions.has(gameId)) return
+
+    const g = this.deps.repo.getGame(gameId)
+    if (!g) return  // 调用方的 positions.get 会返回 undefined，由调用方抛 'game not found'
+
+    // 从起始局面开始重放所有已入库的着法
+    let pos = this.deps.makePosition(g.startFen)
+    const moves = this.deps.repo.getMoves(gameId)
+
+    // 初始化 repeatHistories：与 newGame 逻辑一致
+    const startKey = safeKey(pos)
+    const repeatHistory: RepeatInfo[] = []
+    if (startKey !== null) {
+      const startInCheck = safeInCheck(pos)
+      const side = pos.sideToMove()
+      repeatHistory.push({
+        key: startKey,
+        redChecked: side === 'red' ? startInCheck : false,
+        blackChecked: side === 'black' ? startInCheck : false,
+      })
+    }
+    let noCapture = 0
+
+    for (const m of moves) {
+      const before = pos
+      pos = pos.applyMove(m.move)
+
+      // 更新 repeatHistories（仅当 key 能力可用时）
+      if (repeatHistory.length > 0) {
+        const afterKey = safeKey(pos)
+        if (afterKey !== null) {
+          const afterInCheck = safeInCheck(pos)
+          const moveSide = m.side
+          repeatHistory.push({
+            key: afterKey,
+            redChecked: moveSide === 'red' ? afterInCheck : false,
+            blackChecked: moveSide === 'black' ? afterInCheck : false,
+          })
+        }
+      }
+
+      // 更新无吃子计数
+      const captured = pieceCount(before.fen()) > pieceCount(pos.fen())
+      noCapture = captured ? 0 : noCapture + 1
+    }
+
+    this.positions.set(gameId, pos)
+    this.modes.set(gameId, g.mode)
+    this.humanSides.set(gameId, g.humanSide)
+    this.repeatHistories.set(gameId, repeatHistory)
+    this.noCapturePlies.set(gameId, noCapture)
+  }
+
   newGame(g: { mode: GameMode; humanSide: Side; startFen: string }): number {
     const id = this.deps.repo.createGame({ ...g, startedAt: this.deps.clock() })
     const startPos = this.deps.makePosition(g.startFen)
@@ -124,6 +185,7 @@ export class GameSession {
   }
 
   async playHumanMove(gameId: number, move: string): Promise<{ aiMove: string | null; fen: string; over: boolean }> {
+    this.ensureLoaded(gameId)
     const pos = this.positions.get(gameId)
     if (!pos) throw new Error('game not found')
 

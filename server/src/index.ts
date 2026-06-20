@@ -10,3 +10,11 @@ const app = await buildServer({ dbPath: process.env.DB_PATH ?? './weiguan.sqlite
 const port = Number(process.env.PORT ?? 3410)
 await app.listen({ port, host: '127.0.0.1' })
 console.log(`server on ws://localhost:${port}/play`)
+
+// 优雅关闭:SIGINT(Ctrl-C)与 SIGTERM(systemd/Docker)均触发 app.close()
+// app.close() 会依次执行 onClose hooks(engine.close + db.close),等 WAL checkpoint 完成后退出
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => {
+    app.close().then(() => process.exit(0)).catch(() => process.exit(1))
+  })
+}

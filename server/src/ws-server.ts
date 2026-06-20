@@ -152,6 +152,12 @@ export async function buildServer(opts: { dbPath: string; enginePath?: string })
 
   const app = Fastify({ logger: true })
 
+  // 优雅关闭:关闭 Fastify 时同步释放引擎子进程与 SQLite WAL
+  app.addHook('onClose', async () => {
+    try { engine?.close() } catch {}
+    try { db.close() } catch {}
+  })
+
   await app.register(fastifyWebsocket)
 
   // WebSocket 路由 /play

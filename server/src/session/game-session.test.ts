@@ -2,6 +2,7 @@ import { test, expect, vi } from 'vitest'
 import { openDb } from '../store/db.js'
 import { GamesRepo } from '../store/games-repo.js'
 import { GameSession } from './game-session.js'
+import { Position, START_FEN } from '../rules/position.js'
 import type { EngineLine } from '../types.js'
 
 // Fake 规则:着法即字符串,走两手就结束(便于测编排)
@@ -210,4 +211,73 @@ test('humanlike 模式:newGame+playHumanMove 不报错,AI 能从多候选中走�
   expect(moves[1].byAi).toBe(true)
   // aiMove 必须是引擎候选之一（采样不越界）
   expect(['b0c2', 'h2e2', 'c3c4']).toContain(res.aiMove)
+})
+
+// ── 续局（重启恢复）测试 ────────────────────────────────────────────────────
+// 目标：session A 新建对局并走一手后，session B（共享同一 repo、但 positions Map 为空）
+// 能对同一 gameId 继续 playHumanMove，证明 ensureLoaded 从 DB 重建内存态。
+// 使用真实 Position，fakeEngine 动态返回当前局面第一个合法着（避免非法移动报错）。
+
+/**
+ * 构造一个"真实局面合法着"引擎：analyze(fen) 时，解析 fen 的合法着，取第一着返回。
+ * 这样无论 session 内部 afterHuman 是什么局面，引擎总能给出一个合法回着。
+ */
+function makeLegalMoveEngine() {
+  return {
+    analyze: vi.fn(async (fen: string): Promise<EngineLine[]> => {
+      const pos = Position.fromFen(fen)
+      const moves = pos.legalMoves()
+      if (moves.length === 0) throw new Error('no legal moves in test position')
+      return [{ multipv: 1, move: moves[0], scoreCp: 0, mate: null, pv: [moves[0]] }]
+    }),
+  }
+}
+
+test('续局：新 session 共享 repo，对已入库 gameId 可继续 playHumanMove（ensureLoaded 重建内存态）', async () => {
+  // 共享同一个 :memory: DB（同一个 db 连接才是同一个内存库）
+  const db = openDb(':memory:')
+  const repo = new GamesRepo(db)
+
+  // Session A：newGame + 走第一手（红方合法着 h2e2 已经是标准开局着）
+  const sessionA = new GameSession({
+    repo,
+    engine: makeLegalMoveEngine() as any,
+    makePosition: (fen) => Position.fromFen(fen) as any,
+    clock: () => new Date().toISOString(),
+  })
+
+  const startPos = Position.fromFen(START_FEN)
+  const humanMove = startPos.legalMoves()[0]  // 取第一个合法红方着法
+
+  const gameId = sessionA.newGame({ mode: 'coach', humanSide: 'red', startFen: START_FEN })
+  await sessionA.playHumanMove(gameId, humanMove)
+
+  // 此时 DB 里已有 2 手（人着 + AI着）
+  const movesAfterA = repo.getMoves(gameId)
+  expect(movesAfterA).toHaveLength(2)
+
+  // Session B：全新 session，positions Map 为空（模拟重启）
+  // 但与 sessionA 共享同一 repo（同一 DB 连接）
+  const sessionB = new GameSession({
+    repo,
+    engine: makeLegalMoveEngine() as any,
+    makePosition: (fen) => Position.fromFen(fen) as any,
+    clock: () => new Date().toISOString(),
+  })
+
+  // B 的 positions Map 里没有 gameId——若无 ensureLoaded 会抛 'game not found'
+  // 从 DB 重建后，当前轮到红方（走了人1着+AI1着，回到红方）
+  // 再取一个红方合法着
+  const currentFen = movesAfterA[movesAfterA.length - 1].fenAfter
+  const currentPos = Position.fromFen(currentFen)
+  const nextHumanMove = currentPos.legalMoves()[0]
+
+  // 核心断言：不应抛 'game not found'，应成功返回
+  const res = await sessionB.playHumanMove(gameId, nextHumanMove)
+  expect(res).toHaveProperty('fen')
+  expect(typeof res.fen).toBe('string')
+
+  // DB 里应有 4 手（session B 又写了人着+AI着）
+  const movesAfterB = repo.getMoves(gameId)
+  expect(movesAfterB).toHaveLength(4)
 })
