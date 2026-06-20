@@ -80,3 +80,45 @@ export interface Drill {
   cpLoss: number
   theme: Theme
 }
+
+/** 角色 id(可配置;首版预置) */
+export type PersonaId = 'player' | 'laopaoer' | 'coach' | 'netizen'
+
+/** 棋力档:决定能看到多深的引擎读数(制造"看走眼") */
+export type SkillTier = 'strong' | 'medium' | 'weak'
+
+/** 角色档案 */
+export interface Persona {
+  id: PersonaId
+  name: string
+  isPlayer: boolean        // true=AI 棋手,false=观棋者
+  skill: SkillTier
+  background: string       // 职业/人生经历(喂给 LLM)
+  voice: string            // 口吻脾气/口头禅
+  leaning: string          // 帮踩倾向(自然语言,非死规则)
+}
+
+/** 聊天一条消息(落库 + 推前端) */
+export interface ChatLine {
+  gameId: number
+  personaId: PersonaId
+  text: string
+  addressee: 'human' | PersonaId | 'all'  // 说给谁
+  ts: string
+}
+
+/** 触发聊天的刺激 */
+export type StimulusKind =
+  | 'move' | 'blunder' | 'brilliant' | 'long_think'
+  | 'lose_streak' | 'idle' | 'human_said' | 'topic_open'
+
+export interface Stimulus {
+  kind: StimulusKind
+  gameId: number
+  /** 当前局面引擎评分(走子方视角,厘兵);无则 null */
+  scoreCp: number | null
+  /** 人类刚说的话(kind=human_said 时) */
+  humanText?: string
+  /** 张力 0..1:越高越该有人说话 */
+  tension: number
+}
