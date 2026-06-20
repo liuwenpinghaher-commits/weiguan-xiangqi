@@ -18,7 +18,7 @@ import { prevFenForPly, worstHumanPly } from './report/sparring.js'
 import { ChatEngine } from './chat/chat-engine.js'
 import { DashscopeLLM } from './llm/dashscope.js'
 import { FakeLLM } from './llm/fake.js'
-import { synthesize, voiceForPersona } from './voice/dashscope-tts.js'
+import { synthesizeUrl, voiceForPersona } from './voice/dashscope-tts.js'
 import { PersonaMemoryRepo } from './memory/persona-memory-repo.js'
 import { reflect } from './memory/reflection.js'
 import { spectators } from './personas/personas.js'
@@ -509,7 +509,7 @@ export async function buildServer(opts: {
   // ── 云端 TTS 合成 ─────────────────────────────────────────────────────────────
   // GET /tts?personaId=xxx&text=xxx
   // 无 DASHSCOPE_API_KEY → 503(前端回退浏览器 TTS)
-  // 成功 → audio/mpeg Buffer;出错 → 500
+  // 成功 → JSON { url } (OSS 公网音频 URL,24h 有效);出错 → 500
   app.get('/tts', async (req, reply) => {
     if (!process.env.DASHSCOPE_API_KEY) {
       return reply.code(503).send({ error: '未配置 DASHSCOPE_API_KEY,TTS 不可用' })
@@ -520,20 +520,18 @@ export async function buildServer(opts: {
     if (!rawText) {
       return reply.code(400).send({ error: 'text 参数不能为空' })
     }
-    // 截断到最多 120 字
-    const text = rawText.slice(0, 120)
+    const text = rawText.slice(0, 200)
     const voice = voiceForPersona(personaId)
-    const wsUrl = process.env.DASHSCOPE_TTS_WS ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/inference'
-    const model = process.env.DASHSCOPE_TTS_MODEL ?? 'cosyvoice-v2'
+    const endpoint = process.env.DASHSCOPE_TTS_ENDPOINT ?? 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation'
+    const model = process.env.DASHSCOPE_TTS_MODEL ?? 'qwen3-tts-flash'
     try {
-      const buf = await synthesize(text, voice, {
-        wsUrl,
+      const url = await synthesizeUrl(text, voice, {
+        endpoint,
         apiKey: process.env.DASHSCOPE_API_KEY,
         model,
       })
-      reply.header('Content-Type', 'audio/mpeg')
-      reply.header('Content-Length', buf.length)
-      return reply.send(buf)
+      reply.header('Content-Type', 'application/json')
+      return reply.send({ url })
     } catch (e) {
       return reply.code(500).send({ error: (e as Error).message })
     }

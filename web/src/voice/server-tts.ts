@@ -2,27 +2,36 @@ import { ttsUrl } from '../api/config.js'
 import { isMuted, speak as browserSpeak } from './browser-tts.js'
 
 /**
- * 云端 CosyVoice 语音播放。
+ * 云端 qwen3-tts-flash 语音播放,流水线预合成以降低时延。
  *
- * 关键点:浏览器自动播放策略要求音频在「用户手势」后才能 play()。
- * 由于弹幕的 play() 发生在 await fetch 之后(脱离手势调用栈),
- * 直接 new Audio().play() 会被拒(Safari 尤其严)。
- * 解决:复用**单个** <audio> 元素,并在首次用户手势(点击/键盘/走子)
- * 时用一段静音 WAV 解锁该元素;解锁后所有云端音频都能正常播放。
+ * 关键设计:
+ * 1. 手势解锁(保留原逻辑):复用单个 <audio> 元素,首次用户手势播放静音 WAV 解锁。
+ * 2. 预合成流水线:speakServer 被调用时**立即**发起 fetch(合成 HTTP 请求),
+ *    得到 Promise<url>,连同元数据推入有序队列。
+ *    多条弹幕并发预热 → 后续播放时 urlPromise 大概率已 resolve,起播极快。
+ * 3. drain 串行播放:取队首 → await urlPromise → 设 src → play → onended → 下一条。
+ *    合成失败 → 回退 browserSpeak,继续下一条。
+ * 4. 积压限制:队列 >3 时丢弃最旧,只保留最近 3 条。
  */
 
-type QueueItem = { personaId: string; text: string }
+type QueueItem = {
+  personaId: string
+  text: string
+  urlPromise: Promise<string>
+}
 
 let queue: QueueItem[] = []
-let playing = false
+let draining = false
 let unlocked = false
 let audioEl: HTMLAudioElement | null = null
 
-/** 生成一段极短静音 WAV 的 data URI,用于在用户手势内解锁音频元素。 */
+// ── 手势解锁(原逻辑不动) ──────────────────────────────────────────────────
+
+/** 生成极短静音 WAV data URI,用于在用户手势内解锁音频元素。 */
 function silentWav(): string {
   const sampleRate = 8000
   const numSamples = 80 // ~10ms
-  const dataSize = numSamples // 8-bit 单声道,每样本 1 字节
+  const dataSize = numSamples // 8-bit 单声道
   const buf = new ArrayBuffer(44 + dataSize)
   const v = new DataView(buf)
   const w = (off: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)) }
@@ -49,60 +58,84 @@ function tryUnlock(): void {
   a.src = silentWav()
   const p = a.play()
   if (p && typeof p.then === 'function') {
-    p.then(() => { unlocked = true; void playNext() }).catch(() => { /* 仍未解锁,等下次手势 */ })
+    p.then(() => { unlocked = true; void drain() }).catch(() => { /* 仍未解锁,等下次手势 */ })
   } else {
     unlocked = true
-    void playNext()
+    void drain()
   }
 }
 
-// 任意用户手势都尝试解锁(用户走子/点按钮即触发);幂等。
+// 任意用户手势都尝试解锁;幂等。
 if (typeof window !== 'undefined') {
   window.addEventListener('pointerdown', tryUnlock)
   window.addEventListener('keydown', tryUnlock)
   window.addEventListener('touchstart', tryUnlock)
 }
 
-async function playNext(): Promise<void> {
-  if (playing || queue.length === 0) return
-  // 未解锁:保留队列(已限深),等用户手势触发后再播,避免回退成机械音。
-  if (!unlocked) return
-  playing = true
-  const item = queue.shift()!
-  let objectUrl: string | null = null
-  try {
-    const resp = await fetch(ttsUrl(item.personaId, item.text))
-    if (!resp.ok) {
-      // 503(无 key)或服务错误 → 优雅回退浏览器 TTS
+// ── 流水线 drain ──────────────────────────────────────────────────────────────
+
+async function drain(): Promise<void> {
+  if (draining || queue.length === 0) return
+  if (!unlocked) return // 等待手势解锁后再播,避免回退成机械音
+  draining = true
+
+  while (queue.length > 0) {
+    const item = queue.shift()!
+    let url: string | null = null
+    try {
+      // await 预合成的 Promise;若合成已完成则立即返回 url
+      url = await item.urlPromise
+    } catch {
+      // 合成失败(无 key / 网络 / 服务错误) → 回退浏览器 TTS
       browserSpeak(item.personaId, item.text)
-    } else {
-      const blob = await resp.blob()
-      objectUrl = URL.createObjectURL(blob)
+      continue
+    }
+
+    // 用 OSS url 直接播放(浏览器从 CDN 流式拉,起播快)
+    try {
       const a = getAudio()
-      a.src = objectUrl
+      a.src = url
       await new Promise<void>((resolve) => {
         a.onended = () => resolve()
         a.onerror = () => resolve()
-        a.play().then(() => { /* 播放中 */ }).catch(() => resolve())
+        a.play().catch(() => resolve())
       })
+    } catch {
+      // play 异常 → 静默跳过(不需要 browserSpeak,合成本身成功了)
     }
-  } catch {
-    // 网络异常 → 回退浏览器 TTS
-    browserSpeak(item.personaId, item.text)
-  } finally {
-    if (objectUrl) URL.revokeObjectURL(objectUrl)
-    playing = false
-    void playNext()
   }
+
+  draining = false
 }
 
+// ── 公开 API ─────────────────────────────────────────────────────────────────
+
 /**
- * 朗读一条弹幕。静音时跳过;优先云端 CosyVoice,失败回退浏览器 TTS。
- * 串行队列;积压 >2 时丢弃旧的只保留最新。
+ * 朗读一条弹幕。静音或空文本时跳过。
+ * 立即发起合成请求(预热),推入有序队列;drain 负责串行播放。
+ * 积压 >3 时丢弃最旧只保留最新 3 条。
  */
 export function speakServer(personaId: string, text: string): void {
   if (isMuted() || !text) return
-  if (queue.length > 2) queue = [{ personaId, text }]
-  else queue.push({ personaId, text })
-  void playNext()
+
+  // 立即发起合成 fetch(得到 Promise<url>),不等结果
+  const urlPromise: Promise<string> = fetch(ttsUrl(personaId, text))
+    .then((r) => {
+      if (!r.ok) return Promise.reject(new Error(`TTS HTTP ${r.status}`))
+      return r.json() as Promise<{ url: string }>
+    })
+    .then((j) => {
+      if (!j.url) return Promise.reject(new Error('TTS 返回无 url'))
+      return j.url
+    })
+
+  const newItem: QueueItem = { personaId, text, urlPromise }
+
+  // 积压限制:超过 3 条时丢弃最旧,只保留最新 3 条 + 新增 1 条
+  if (queue.length >= 3) {
+    queue = queue.slice(queue.length - 2) // 保留最近 2 条
+  }
+  queue.push(newItem)
+
+  void drain()
 }
