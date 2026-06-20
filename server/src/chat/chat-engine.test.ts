@@ -1,12 +1,11 @@
 import { test, expect } from 'vitest'
-import { openDb } from '../store/db.js'
-import { PersonaMemoryRepo } from '../memory/persona-memory-repo.js'
+import { FakeMemoryStore } from '../memory/fake-memory-store.js'
 import { FakeLLM } from '../llm/fake.js'
 import { ChatEngine } from './chat-engine.js'
 import type { Stimulus } from '../types.js'
 
 function setup(llm: FakeLLM, now = () => 1000) {
-  const mem = new PersonaMemoryRepo(openDb(':memory:'))
+  const mem = new FakeMemoryStore(now)
   const out: any[] = []
   const engine = new ChatEngine({
     llm, mem, now,
@@ -28,13 +27,13 @@ test('高张力刺激 → 产出至少一条弹幕,落 episode 记忆,关推理'
   expect(out.length).toBeGreaterThanOrEqual(1)
   expect(out[0].text).toContain('软')
   expect(llm.calls[0].opts?.disableThinking).toBe(true)
-  expect(mem.byPersona(out[0].personaId).some(m => m.kind === 'episode')).toBe(true)
+  expect((await mem.list({ personaId: out[0].personaId })).some(m => m.kind === 'episode')).toBe(true)
 })
 
 test('节奏护栏:静默期内的刺激不产出', async () => {
   let now = 0
   const llm = new FakeLLM(() => 'x')
-  const mem = new PersonaMemoryRepo(openDb(':memory:'))
+  const mem = new FakeMemoryStore(() => now)
   const out: any[] = []
   const engine = new ChatEngine({ llm, mem, now: () => now, emit: (l) => out.push(l), rng: () => 0.9, tempo: { minSilenceMs: 5000, maxPerMin: 100 } })
   await engine.onStimulus({ kind: 'move', gameId: 1, scoreCp: 0, tension: 0.95 })
@@ -97,8 +96,8 @@ test('grounding:prompt system 含 fact/insight 内容,不含 episode', async () 
   })
   const { engine, mem } = setup(llm)
   // 预先植入一条 fact 和一条 episode
-  mem.add({ personaId: 'coach', kind: 'fact', content: '你爱走中炮', importance: 3, gameId: 1, createdAt: '2026-06-20T00:00:00Z' })
-  mem.add({ personaId: 'coach', kind: 'episode', content: '我刚才说了不该说的', importance: 1, gameId: 1, createdAt: '2026-06-20T00:00:00Z' })
+  await mem.record({ personaId: 'coach', kind: 'fact', content: '你爱走中炮', importance: 3, gameId: 1, createdAt: '2026-06-20T00:00:00Z' })
+  await mem.record({ personaId: 'coach', kind: 'episode', content: '我刚才说了不该说的', importance: 1, gameId: 1, createdAt: '2026-06-20T00:00:00Z' })
   const stim: Stimulus = {
     kind: 'move', gameId: 1, scoreCp: 100, tension: 0.95,
     moveZh: '红炮二平五', side: 'red', ply: 1, phase: 'opening',
@@ -153,7 +152,7 @@ test('AI 棋手自评:byPlayerPersona=true + rng<0.4 时 player 出现在 out �
     return '我这步稳一手'
   })
 
-  const mem = new PersonaMemoryRepo(openDb(':memory:'))
+  const mem = new FakeMemoryStore(() => 1000)
   const out: any[] = []
 
   // rng 序列:
@@ -253,7 +252,7 @@ test('跨刺激记忆:第 2 次刺激的 prompt 含上一次 recent 中的内容
   })
 
   // 使用独立的 engine(tempo=0 允许连续触发)
-  const mem = new PersonaMemoryRepo(openDb(':memory:'))
+  const mem = new FakeMemoryStore(() => 1000)
   const out: any[] = []
   const engine = new ChatEngine({
     llm, mem, now: () => 1000,
