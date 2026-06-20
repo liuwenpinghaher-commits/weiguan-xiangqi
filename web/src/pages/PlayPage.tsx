@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { connect, type ServerMsg } from '../api/ws-client.js'
 import { Board } from '../board/Board.js'
 import { ChatPanel, type ChatLine } from '../chat/ChatPanel.js'
+import { cancelSpeech } from '../voice/browser-tts.js'
 
 const START_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
@@ -81,6 +82,7 @@ export function PlayPage() {
   }
 
   function handleRestart() {
+    cancelSpeech()
     setFen(START_FEN)
     setGameId(null)
     setLastAiMove(null)

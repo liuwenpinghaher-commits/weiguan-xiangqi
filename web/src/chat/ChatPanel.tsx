@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { speak, setMuted, isMuted, isTtsSupported, cancelSpeech } from '../voice/browser-tts.js'
+import { useSpeechInput } from '../voice/use-speech-input.js'
 
 export interface ChatLine {
   personaId: string
@@ -38,7 +40,23 @@ export function ChatPanel({ lines, onSay }: Props) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  // 新消息到来时自动滚到底部
+  // ── 语音播报 ──────────────────────────────────────────
+  const spokenCount = useRef(0)
+  const [muted, setMutedState] = useState(isMuted())
+  const ttsOk = isTtsSupported()
+
+  useEffect(() => {
+    for (let i = spokenCount.current; i < lines.length; i++) {
+      const l = lines[i]
+      speak(l.personaId, l.text)
+    }
+    spokenCount.current = lines.length
+  }, [lines])
+
+  // ── 麦克风听写 ────────────────────────────────────────
+  const stt = useSpeechInput((text) => onSay(text))
+
+  // ── 新消息滚到底部 ────────────────────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [lines])
@@ -54,9 +72,32 @@ export function ChatPanel({ lines, onSay }: Props) {
     if (e.key === 'Enter') submit()
   }
 
+  function toggleMute() {
+    const n = !muted
+    setMuted(n)
+    setMutedState(n)
+  }
+
+  // cancelSpeech 在 PlayPage 重开局时使用，此处只引入不调用
+  void cancelSpeech
+
   return (
     <div style={styles.panel}>
-      <div style={styles.header}>观众席</div>
+      <div style={styles.header}>
+        <span>观众席</span>
+        <button
+          style={{
+            ...styles.muteBtn,
+            opacity: ttsOk ? 1 : 0.4,
+            cursor: ttsOk ? 'pointer' : 'not-allowed',
+          }}
+          onClick={ttsOk ? toggleMute : undefined}
+          title={ttsOk ? (muted ? '点击开启播报' : '点击静音') : '浏览器不支持语音合成'}
+          disabled={!ttsOk}
+        >
+          {muted ? '🔇' : '🔊'}
+        </button>
+      </div>
 
       <div style={styles.list}>
         {lines.length === 0 && (
@@ -90,6 +131,28 @@ export function ChatPanel({ lines, onSay }: Props) {
       </div>
 
       <div style={styles.inputRow}>
+        {/* 麦克风按钮 */}
+        {stt.supported ? (
+          <button
+            style={{
+              ...styles.micBtn,
+              background: stt.listening ? '#e67e22' : 'rgba(255,255,255,0.1)',
+              border: stt.listening ? '1px solid #e67e22' : '1px solid rgba(255,255,255,0.2)',
+            }}
+            onClick={stt.listening ? stt.stop : stt.start}
+            title={stt.listening ? '聆听中，点击停止' : '点击语音输入'}
+          >
+            {stt.listening ? '🎤聆听中' : '🎤'}
+          </button>
+        ) : (
+          <button
+            style={{ ...styles.micBtn, opacity: 0.3, cursor: 'not-allowed' }}
+            disabled
+            title="浏览器不支持语音识别"
+          >
+            🎤
+          </button>
+        )}
         <input
           style={styles.input}
           value={input}
@@ -129,6 +192,18 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid rgba(255,255,255,0.1)',
     letterSpacing: '0.1em',
     flexShrink: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  muteBtn: {
+    background: 'none',
+    border: 'none',
+    fontSize: '1.1rem',
+    lineHeight: 1,
+    padding: '2px 4px',
+    borderRadius: '4px',
+    color: '#f5c518',
   },
   list: {
     flex: 1,
@@ -198,6 +273,16 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 10px',
     borderTop: '1px solid rgba(255,255,255,0.1)',
     flexShrink: 0,
+    alignItems: 'center',
+  },
+  micBtn: {
+    flexShrink: 0,
+    padding: '6px 8px',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+    color: '#eee',
+    transition: 'background 0.2s',
   },
   input: {
     flex: 1,
