@@ -97,8 +97,13 @@ export class ChatEngine {
       qual = '黑方大优'
     }
 
+    const facts = this.deps.mem
+      .retrieve(p.id, stim.moveZh ?? stim.humanText ?? stim.kind, 3, this.deps.now, ['fact', 'insight'])
+      .map(m => '· ' + m.content).join('\n') || '(还不了解)'
+
     const sys = `你是「${p.name}」:${p.background} 口吻:${p.voice} 立场:${p.leaning}\n`
-      + `你在围观一局中国象棋,用你的水平和脾气,针对刚走的这步说一句(≤25字),可抛棋招/调侃/拉踩,允许看走眼。别空泛说"看不懂",要点到具体的子或着法。只输出这一句。`
+      + `你在围观一局中国象棋,用你的水平和脾气,针对刚走的这步说一句(≤25字),可抛棋招/调侃/拉踩,允许看走眼。别空泛说"看不懂",要点到具体的子或着法。只输出这一句。\n`
+      + `你对这位棋手的了解:\n${facts}`
 
     let user: string
     if (stim.kind === 'human_said') {

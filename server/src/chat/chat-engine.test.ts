@@ -87,6 +87,32 @@ test('prompt 含真实着法 — buildPrompt 把 moveZh 注入 user 消息', asy
   expect(captured.some(c => c.includes('红炮二平五'))).toBe(true)
 })
 
+test('grounding:prompt system 含 fact/insight 内容,不含 episode', async () => {
+  // 捕获每次 LLM 调用收到的 system 消息内容
+  const capturedSystems: string[] = []
+  const llm = new FakeLLM((msgs) => {
+    const sys = msgs.find(m => m.role === 'system')
+    if (sys) capturedSystems.push(sys.content)
+    return '说一句'
+  })
+  const { engine, mem } = setup(llm)
+  // 预先植入一条 fact 和一条 episode
+  mem.add({ personaId: 'coach', kind: 'fact', content: '你爱走中炮', importance: 3, gameId: 1, createdAt: '2026-06-20T00:00:00Z' })
+  mem.add({ personaId: 'coach', kind: 'episode', content: '我刚才说了不该说的', importance: 1, gameId: 1, createdAt: '2026-06-20T00:00:00Z' })
+  const stim: Stimulus = {
+    kind: 'move', gameId: 1, scoreCp: 100, tension: 0.95,
+    moveZh: '红炮二平五', side: 'red', ply: 1, phase: 'opening',
+  }
+  await engine.onStimulus(stim)
+  expect(llm.calls.length).toBeGreaterThanOrEqual(1)
+  // 所有 system prompt 应含 grounding 段(可能显示 "(还不了解)" 或具体内容)
+  expect(capturedSystems.every(s => s.includes('你对这位棋手的了解'))).toBe(true)
+  // coach 对应的 system prompt 应含其 fact 内容(该段出现在至少一条 system 中)
+  expect(capturedSystems.some(s => s.includes('你爱走中炮'))).toBe(true)
+  // episode 内容不应出现在任何 system prompt 中
+  expect(capturedSystems.some(s => s.includes('我刚才说了不该说的'))).toBe(false)
+})
+
 test('去重护栏:同一 speaker 连续返回相同文本时第二次不 emit 该 speaker', async () => {
   // 每次 LLM 都返回相同文本
   const llm = new FakeLLM(() => '嚯这步软了')

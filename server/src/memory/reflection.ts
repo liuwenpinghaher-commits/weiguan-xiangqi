@@ -5,15 +5,14 @@ import { getPersona } from '../personas/personas.js'
 
 export async function reflect(args: {
   repo: PersonaMemoryRepo; llm: LLMProvider; personaId: PersonaId; gameId: number; now: () => number
+  playerSummary: string
 }): Promise<void> {
-  const { repo, llm, personaId, now } = args
-  const recent = repo.byPersona(personaId).filter(m => m.kind !== 'insight').slice(0, 20)
-  if (recent.length === 0) return
+  const { repo, llm, personaId, now, playerSummary } = args
+  if (!playerSummary) return
   const persona = getPersona(personaId)
-  const bullets = recent.map(m => '- ' + m.content).join('\n')
   const insight = (await llm.chat([
-    { role: 'system', content: `你是${persona.name}。把对该玩家的零散观察,抽象成一条更高层、可复用的洞见(一句话,中文)。` },
-    { role: 'user', content: `观察:\n${bullets}\n\n请给出一条洞见:` },
+    { role: 'system', content: `你是${persona.name}。` },
+    { role: 'user', content: `这位棋手本局的走法:\n${playerSummary}\n用一句话总结你对这位棋手棋风/毛病的洞见(中文):` },
   ], { disableThinking: false, maxTokens: 120 })).trim()
   if (!insight) return
   repo.add({ personaId, kind: 'insight', content: insight, importance: 4, gameId: args.gameId,
