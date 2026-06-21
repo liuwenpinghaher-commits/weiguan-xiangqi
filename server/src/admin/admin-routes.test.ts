@@ -93,6 +93,20 @@ describe('admin memory 路由(经 MemoryStore)', () => {
     expect(del.statusCode).toBe(200)
     expect(await mem.list({ personaId: 'coach' })).toHaveLength(0)
   })
+  it('GET /admin/memory?personaId=<非法> → 400 unknown persona', async () => {
+    const { app } = makeApp()
+    const res = await app.inject({ method: 'GET', url: '/admin/memory?personaId=nobody' })
+    expect(res.statusCode).toBe(400)
+    expect(res.json<any>().error).toBe('unknown persona')
+  })
+  it('GET /admin/memory(不传 personaId)→ 不过滤,返回全部', async () => {
+    const { app, mem } = makeApp()
+    await mem.record({ personaId: 'coach', kind: 'fact', content: 'a', importance: 3, gameId: null, createdAt: new Date(0).toISOString() })
+    await mem.record({ personaId: 'netizen', kind: 'fact', content: 'b', importance: 3, gameId: null, createdAt: new Date(0).toISOString() })
+    const res = await app.inject({ method: 'GET', url: '/admin/memory' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json<any[]>()).toHaveLength(2)
+  })
   it('GET /admin/memory?kind=fact 过滤', async () => {
     const { app, mem } = makeApp()
     await mem.record({ personaId: 'coach', kind: 'episode', content: 'e', importance: 1, gameId: null, createdAt: new Date(0).toISOString() })

@@ -200,7 +200,10 @@ export async function buildServer(opts: {
 
     // 等待所有旁观者反思完成;任一失败则整体抛出 → reflectGame 不标记 reflectedGames(下次重试)。
     await Promise.all(spectators().map(p =>
-      reflect({ store: mem, llm, personaId: p.id, gameId, now: () => Date.now(), playerSummary })
+      reflect({
+        store: mem, llm, personaId: p.id, gameId, now: () => Date.now(), playerSummary,
+        getPersona: (id) => cfg.getPersona(id),
+      })
     ))
   }
 

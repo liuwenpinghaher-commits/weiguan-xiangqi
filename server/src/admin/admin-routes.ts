@@ -4,6 +4,7 @@ import type { MemoryStore, MemoryKind, MemoryListFilter } from '../memory/store.
 import type { GamesRepo } from '../store/games-repo.js'
 import type { MessagesRepo } from '../store/messages-repo.js'
 import { DEFAULTS, type ConfigSection } from '../config/defaults.js'
+import { PERSONAS } from '../personas/personas.js'
 import { maskKey } from './mask.js'
 
 export interface AdminDeps {
@@ -50,7 +51,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
   registerGamesRoutes(app, deps)
 }
 
-const PERSONA_IDS = ['player', 'laopaoer', 'coach', 'netizen']
+const PERSONA_IDS: readonly string[] = PERSONAS.map(p => p.id)
 function registerPersonaRoutes(app: FastifyInstance, { cfg }: AdminDeps): void {
   app.get('/admin/personas', async () => cfg.personaConfigs())
 
@@ -75,10 +76,13 @@ function registerPersonaRoutes(app: FastifyInstance, { cfg }: AdminDeps): void {
   })
 }
 function registerMemoryRoutes(app: FastifyInstance, { mem }: AdminDeps): void {
-  app.get('/admin/memory', async (req) => {
+  app.get('/admin/memory', async (req, reply) => {
     const q = req.query as { personaId?: string; kind?: string; includeSuperseded?: string }
     const filter: MemoryListFilter = {}
-    if (q.personaId) filter.personaId = q.personaId as any
+    if (q.personaId) {
+      if (!PERSONA_IDS.includes(q.personaId as any)) return reply.code(400).send({ error: 'unknown persona' })
+      filter.personaId = q.personaId as any
+    }
     if (q.kind) filter.kind = q.kind as MemoryKind
     if (q.includeSuperseded === 'true') filter.includeSuperseded = true
     return mem.list(filter)
