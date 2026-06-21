@@ -110,6 +110,15 @@ async function drain(): Promise<void> {
 
 // ── 公开 API ─────────────────────────────────────────────────────────────────
 
+/** 立即静音:停当前播放 + 清空预合成队列。暂停整局时调用,确保正在播/排队的语音立刻停。 */
+export function stopVoice(): void {
+  queue = []
+  if (audioEl) {
+    try { audioEl.pause() } catch { /* 忽略 */ }
+    audioEl.src = ''
+  }
+}
+
 /**
  * 朗读一条弹幕。静音或空文本时跳过。
  * 立即发起合成请求(预热),推入有序队列;drain 负责串行播放。
