@@ -58,6 +58,8 @@ export function ChatPanel({ lines, onSay }: Props) {
   useEffect(() => {
     for (let i = spokenCount.current; i < lines.length; i++) {
       const l = lines[i]
+      // 用户自己的发言(human)只显示不朗读;观棋者照常有声
+      if (l.personaId === 'human') continue
       speakServer(l.personaId, l.text)
     }
     spokenCount.current = lines.length
