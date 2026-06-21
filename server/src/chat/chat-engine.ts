@@ -80,7 +80,7 @@ export class ChatEngine {
 
         const plan = await this.plan(persona, stim, context)
         const text = (await this.deps.llm.chat(plan.messages, {
-          disableThinking: true, maxTokens: 80,
+          disableThinking: true, maxTokens: 70,
         })).trim()
         if (!text) continue
 
@@ -152,11 +152,11 @@ export class ChatEngine {
       : '(刚开局,还没人说话)'
 
     const sys = `你是「${p.name}」。${p.background}\n说话像:${p.voice} 立场:${p.leaning}\n`
-      + `你蹲在棋摊边看棋。你是懂棋的人,主要在看棋、评棋——这步好不好、为什么、对方该怎么应、有什么威胁、什么棋理路数;也会互相拌嘴、偶尔扯句闲篇,但别通篇耍贫嘴不谈棋。\n`
+      + `你蹲在棋摊边看棋,是懂棋的人。主要谈眼前这盘——这步好不好、为什么、对方该怎么应、有什么威胁、什么棋理路数;也会互相拌嘴,但别脱离这盘棋瞎贫。\n`
       + `- 口语、随意,别像电视解说;少用感叹号,只有真出彩或真离谱才激动。\n`
       + `- 长短不一:有时俩字("软了""稳"),有时半句,偶尔一整句把道理说透。别每句一个调。\n`
       + `- 按你的棋力说话:看得准就点到要害、敢报具体着法或变化;水平次的可以看走眼、说句外行话。\n`
-      + `- 棋谚、老话、当年的事偶尔自然带一句即可,别空泛套话、别尬吹。\n`
+      + `- 可偶尔带一句扣着当前局面的棋识(棋谚、残局理路、历史掌故、棋界轶事),但要跟眼前这盘挂上钩;宁可不带也别瞎编、别尬吹。\n`
       + `只输出你说的那一句话,不带引号、不加旁白、不写名字前缀。\n`
       + `你对这位棋手的了解:\n${facts}\n`
       + `刚才这桌在聊(可点名回应、抬杠或拉踩):\n${contextLine}`

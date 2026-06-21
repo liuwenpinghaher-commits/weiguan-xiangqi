@@ -12,7 +12,7 @@ export interface TtsCfg { endpoint: string; model: string }
 export const DEFAULTS = {
   chat: {
     minSilenceMs: 4000, maxPerMin: 12, speakThreshold: 0.6, jitterWidth: 0.4,
-    idleProb: 0.35, idleIntervalMs: 20000, reactProb: 0.3, lenShortP: 0.5, lenLongP: 0.85,
+    idleProb: 0.35, idleIntervalMs: 20000, reactProb: 0.3, lenShortP: 0.55, lenLongP: 0.85,
   } as ChatCfg,
   director: {
     coach: { maxDropCp: 320, targetBand: { low: -50, high: 80 }, strength: 0.6 },
