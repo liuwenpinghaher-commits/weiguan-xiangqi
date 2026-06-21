@@ -17,6 +17,8 @@ export function PlayPage() {
   const [fen, setFen] = useState(START_FEN)
   const [fenKey, setFenKey] = useState(0) // 改变 key 强制 Board 重置（非法着回弹）
   const [status, setStatus] = useState<GameStatus>('idle')
+  const statusRef = useRef<GameStatus>('idle')
+  statusRef.current = status
   const [statusMsg, setStatusMsg] = useState('点「开始」开局')
   const [statusError, setStatusError] = useState(false) // 非法着法时用红字显示
   const [gameId, setGameId] = useState<number | null>(null)
@@ -52,7 +54,9 @@ export function PlayPage() {
       setLastAiMove(msg.aiMove)
       setAwaitingAi(false) // AI 已回应，解锁棋盘
       setStatusError(false)
-      if (msg.over) {
+      if (statusRef.current === 'paused') {
+        // 暂停期间到达的 AI 落子:棋盘已更新,但保持暂停态,不抢回 playing/over
+      } else if (msg.over) {
         const result = msg.result ?? null
         setGameResult(result)
         setStatus('over')
