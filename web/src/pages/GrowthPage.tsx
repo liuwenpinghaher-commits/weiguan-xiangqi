@@ -3,42 +3,28 @@ import { getGrowth, getWeakness, getCompare, getSparring, THEME_LABEL } from '..
 import { ScoreLine } from '../charts/ScoreLine.js'
 import { WeaknessRadar } from '../charts/WeaknessRadar.js'
 import { PageShell, cardStyle, headingStyle, darkThStyle, darkTrStyle, darkTdStyle, ErrorBanner } from '../ui/PageShell.js'
+import { color, radius, fontSize, btn } from '../ui/theme.js'
 
 interface Metric { gameId: number; estElo: number; acpl: number; accuracy: number }
 interface Weak { phase: string; theme: string; count: number; avgLoss: number }
 interface Compare { summary: string; report?: string; before: { games: number }; after: { games: number } }
 
 const aAnalysisStyle: React.CSSProperties = {
-  padding: '3px 10px',
-  background: '#2980b9',
-  color: '#fff',
-  borderRadius: 4,
+  ...btn('info', { size: 'sm' }),
   textDecoration: 'none',
-  fontSize: '0.82rem',
-  fontWeight: 600,
   whiteSpace: 'nowrap',
 }
 const aTrainingStyle: React.CSSProperties = {
-  padding: '3px 10px',
-  background: '#27ae60',
-  color: '#fff',
-  borderRadius: 4,
+  ...btn('success', { size: 'sm' }),
   textDecoration: 'none',
-  fontSize: '0.82rem',
-  fontWeight: 600,
   whiteSpace: 'nowrap',
 }
 const aSparringStyle: React.CSSProperties = {
-  padding: '3px 10px',
-  background: '#8e44ad',
+  ...btn('secondary', { size: 'sm' }),
+  background: 'rgba(142,68,173,0.85)',
   color: '#fff',
-  borderRadius: 4,
-  textDecoration: 'none',
-  fontSize: '0.82rem',
-  fontWeight: 600,
+  borderColor: 'rgba(142,68,173,0.6)',
   whiteSpace: 'nowrap',
-  cursor: 'pointer',
-  border: 'none',
 }
 
 export function GrowthPage({ side = 'red' as 'red' | 'black' }) {
@@ -90,30 +76,30 @@ export function GrowthPage({ side = 'red' as 'red' | 'black' }) {
   return (
     <PageShell>
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
-        <h1 style={{ ...headingStyle, fontSize: '1.6rem', marginBottom: 16 }}>
+        <h1 style={{ ...headingStyle, fontSize: fontSize.xl, marginBottom: 16 }}>
           成长轨迹（{side === 'red' ? '红方' : '黑方'}）
         </h1>
 
         {fetchError && <ErrorBanner msg={fetchError} />}
 
         <div style={cardStyle}>
-          <h2 style={{ ...headingStyle, fontSize: '1rem', marginTop: 0, marginBottom: 12 }}>
+          <h2 style={{ ...headingStyle, fontSize: fontSize.md, marginTop: 0, marginBottom: 12 }}>
             估算棋力曲线（{metrics.length} 局）
           </h2>
           <ScoreLine points={eloPoints} />
         </div>
 
         <div style={cardStyle}>
-          <h2 style={{ ...headingStyle, fontSize: '1rem', marginTop: 0, marginBottom: 12 }}>弱点画像</h2>
+          <h2 style={{ ...headingStyle, fontSize: fontSize.md, marginTop: 0, marginBottom: 12 }}>弱点画像</h2>
           {radar.length
             ? <WeaknessRadar data={radar} />
-            : <p style={{ color: '#888', margin: 0 }}>暂无失误样本（下几局并诊断后出现）。</p>
+            : <p style={{ color: color.textFaint, margin: 0 }}>暂无失误样本（下几局并诊断后出现）。</p>
           }
         </div>
 
         <div style={cardStyle}>
-          <h2 style={{ ...headingStyle, fontSize: '1rem', marginTop: 0, marginBottom: 8 }}>成长点评</h2>
-          <p style={{ color: '#ccc', margin: 0, lineHeight: 1.7 }}>
+          <h2 style={{ ...headingStyle, fontSize: fontSize.md, marginTop: 0, marginBottom: 8 }}>成长点评</h2>
+          <p style={{ color: color.textMuted, margin: 0, lineHeight: 1.7 }}>
             {cmpLoading
               ? '加载中…'
               : reportText
@@ -124,10 +110,10 @@ export function GrowthPage({ side = 'red' as 'red' | 'black' }) {
 
         {metrics.length > 0 && (
           <div style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
-            <h2 style={{ ...headingStyle, fontSize: '1rem', margin: 0, padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+            <h2 style={{ ...headingStyle, fontSize: fontSize.md, margin: 0, padding: '14px 16px', borderBottom: `1px solid ${color.border}` }}>
               按局查看
             </h2>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: fontSize.base }}>
               <thead>
                 <tr>
                   <th style={darkThStyle}>局次</th>
