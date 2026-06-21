@@ -3,7 +3,7 @@ import { getGrowth, getWeakness, getCompare, getSparring, THEME_LABEL } from '..
 import { ScoreLine } from '../charts/ScoreLine.js'
 import { WeaknessRadar } from '../charts/WeaknessRadar.js'
 import { PageShell, cardStyle, headingStyle, darkThStyle, darkTrStyle, darkTdStyle, ErrorBanner } from '../ui/PageShell.js'
-import { color, radius, fontSize, btn } from '../ui/theme.js'
+import { color, radius, fontSize, btn, pill, space } from '../ui/theme.js'
 
 interface Metric { gameId: number; estElo: number; acpl: number; accuracy: number }
 interface Weak { phase: string; theme: string; count: number; avgLoss: number }
@@ -27,7 +27,8 @@ const aSparringStyle: React.CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-export function GrowthPage({ side = 'red' as 'red' | 'black' }) {
+export function GrowthPage({ side: initialSide = 'red' as 'red' | 'black' }) {
+  const [side, setSide] = useState<'red' | 'black'>(initialSide)
   const [metrics, setMetrics] = useState<Metric[]>([])
   const [weak, setWeak] = useState<Weak[]>([])
   const [cmp, setCmp] = useState<Compare | null>(null)
@@ -44,7 +45,11 @@ export function GrowthPage({ side = 'red' as 'red' | 'black' }) {
 
     getWeakness(side)
       .then((d) => setWeak(d.profile))
-      .catch(() => { /* 弱点数据失败时沉默，主错误已由 getGrowth 处理 */ })
+      .catch((e: Error) => {
+        // 弱点数据失败不覆盖主错误,但不再完全吞掉
+        console.warn('[GrowthPage] 加载弱点画像失败:', e)
+        setWeak([])
+      })
 
     getCompare()
       .then((d) => { setCmp(d); setCmpLoading(false) })
@@ -76,9 +81,27 @@ export function GrowthPage({ side = 'red' as 'red' | 'black' }) {
   return (
     <PageShell>
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
-        <h1 style={{ ...headingStyle, fontSize: fontSize.xl, marginBottom: 16 }}>
-          成长轨迹（{side === 'red' ? '红方' : '黑方'}）
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: space.md, flexWrap: 'wrap', marginBottom: 16 }}>
+          <h1 style={{ ...headingStyle, fontSize: fontSize.xl, margin: 0 }}>
+            成长轨迹（{side === 'red' ? '红方' : '黑方'}）
+          </h1>
+          <div style={{ display: 'flex', gap: space.sm }} role="group" aria-label="选择执棋方">
+            <button
+              style={pill(side === 'red', color.red, '#fff')}
+              onClick={() => setSide('red')}
+              aria-pressed={side === 'red'}
+            >
+              红方
+            </button>
+            <button
+              style={pill(side === 'black')}
+              onClick={() => setSide('black')}
+              aria-pressed={side === 'black'}
+            >
+              黑方
+            </button>
+          </div>
+        </div>
 
         {fetchError && <ErrorBanner msg={fetchError} />}
 

@@ -52,25 +52,36 @@ function getAudio(): HTMLAudioElement {
   return audioEl
 }
 
+/** 统一移除三个手势解锁监听(解锁成功后调用,避免泄漏)。 */
+function removeAllUnlockListeners(): void {
+  if (typeof window === 'undefined') return
+  window.removeEventListener('pointerdown', onUnlockGesture)
+  window.removeEventListener('keydown', onUnlockGesture)
+  window.removeEventListener('touchstart', onUnlockGesture)
+}
+
 /** 在用户手势内调用:播放静音以解锁音频元素,之后可程序化播放。 */
-function tryUnlock(): void {
+function onUnlockGesture(): void {
   if (unlocked) return
   const a = getAudio()
   a.src = silentWav()
   const p = a.play()
   if (p && typeof p.then === 'function') {
-    p.then(() => { unlocked = true; void drain() }).catch(() => { /* 仍未解锁,等下次手势 */ })
+    p.then(() => { unlocked = true; removeAllUnlockListeners(); void drain() })
+      .catch(() => { /* 仍未解锁,等下次手势;本次 once 已自移除,其余两个监听仍在 */ })
   } else {
     unlocked = true
+    removeAllUnlockListeners()
     void drain()
   }
 }
 
-// 任意用户手势都尝试解锁;幂等。
+// 任意用户手势都尝试解锁;幂等。{ once: true } 让首个触发的监听自动移除,
+// 解锁成功后再主动移除其余两个;解锁失败(play 被拒)时不移除,留待下次手势。
 if (typeof window !== 'undefined') {
-  window.addEventListener('pointerdown', tryUnlock)
-  window.addEventListener('keydown', tryUnlock)
-  window.addEventListener('touchstart', tryUnlock)
+  window.addEventListener('pointerdown', onUnlockGesture, { once: true })
+  window.addEventListener('keydown', onUnlockGesture, { once: true })
+  window.addEventListener('touchstart', onUnlockGesture, { once: true })
 }
 
 // ── 流水线 drain ──────────────────────────────────────────────────────────────
@@ -122,6 +133,9 @@ export function stopVoice(): void {
     try { audioEl.pause() } catch { /* 忽略 */ }
     audioEl.src = ''
   }
+  // 重置 draining,让 drain 入口可重入(配合 gen !== generation 守卫,
+  // 旧循环醒来会自行 break,不会重复播);避免残留 true 让新局静音。
+  draining = false
 }
 
 /**
