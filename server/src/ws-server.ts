@@ -191,7 +191,7 @@ export async function buildServer(opts: {
     engine: engine ?? engineStub,
     makePosition: (fen) => Position.fromFen(fen) as any,
     clock: () => new Date().toISOString(),
-    onStimulus: (s) => { void chat.onStimulus(s) },
+    onStimulus: (s) => { if (!pausedGames.has(s.gameId)) void chat.onStimulus(s) },
   })
 
   // 冷场定时器:每 20 秒(可配)以 35% 概率投一个高张力 idle 刺激,让茶馆偶尔有人闲扯,又不刷屏。
@@ -200,7 +200,7 @@ export async function buildServer(opts: {
   const scheduleIdle = () => {
     const c = cfg.getChat()
     idleTimer = setTimeout(() => {
-      if (lastGameId !== null && Math.random() < cfg.getChat().idleProb) {
+      if (lastGameId !== null && !pausedGames.has(lastGameId) && Math.random() < cfg.getChat().idleProb) {
         void chat.onStimulus({ kind: 'idle', gameId: lastGameId, scoreCp: null, tension: 0.55 })
       }
       scheduleIdle()
@@ -220,6 +220,9 @@ export async function buildServer(opts: {
 
   // 局末自动诊断幂等 set(避免同一局重复触发引擎分析)
   const diagnosedGames = new Set<number>()
+
+  // 暂停中的对局:整局总开关。暂停期间停冷场定时器、跳过 move/say/idle 刺激,不生成不广播。
+  const pausedGames = new Set<number>()
 
   const app = Fastify({ logger: true })
 
@@ -301,6 +304,7 @@ export async function buildServer(opts: {
             }
           }
         } else if (msg.type === 'move') {
+          if (typeof msg.gameId === 'number' && pausedGames.has(msg.gameId)) return
           if (!engine) {
             socket.send(JSON.stringify({ type: 'error', message: '未配置象棋引擎,无法对弈(聊天/复盘仍可用)' }))
             return
@@ -321,6 +325,7 @@ export async function buildServer(opts: {
           // 玩家发言 → human_said 刺激,高张力必有人接
           const gid = msg.gameId
           if (typeof gid !== 'number') return
+          if (pausedGames.has(gid)) return
           const text = String(msg.text ?? '')
           const ts = new Date().toISOString()
           // 玩家发言持久化
@@ -336,6 +341,12 @@ export async function buildServer(opts: {
             try { s.send(echo) } catch { /* 单连接发送失败忽略 */ }
           }
           void chat.onStimulus({ kind: 'human_said', gameId: gid, scoreCp: null, humanText: text, tension: 0.9 })
+        } else if (msg.type === 'pause') {
+          const gid = msg.gameId
+          if (typeof gid === 'number') pausedGames.add(gid)
+        } else if (msg.type === 'resume') {
+          const gid = msg.gameId
+          if (typeof gid === 'number') pausedGames.delete(gid)
         } else {
           socket.send(JSON.stringify({ type: 'error', message: `unknown message type: ${msg.type}` }))
         }

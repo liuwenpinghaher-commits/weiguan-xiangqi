@@ -24,6 +24,7 @@ let queue: QueueItem[] = []
 let draining = false
 let unlocked = false
 let audioEl: HTMLAudioElement | null = null
+let generation = 0
 
 // ── 手势解锁(原逻辑不动) ──────────────────────────────────────────────────
 
@@ -79,8 +80,10 @@ async function drain(): Promise<void> {
   if (!unlocked) return // 等待手势解锁后再播,避免回退成机械音
   draining = true
 
+  const gen = generation
   while (queue.length > 0) {
     const item = queue.shift()!
+    if (gen !== generation) break // stopVoice 在出队前后触发 → 中止本轮 drain
     let url: string | null = null
     try {
       // await 预合成的 Promise;若合成已完成则立即返回 url
@@ -90,6 +93,7 @@ async function drain(): Promise<void> {
       browserSpeak(item.personaId, item.text)
       continue
     }
+    if (gen !== generation) break // await 期间 stopVoice 触发 → 不要再 play 这条残留
 
     // 用 OSS url 直接播放(浏览器从 CDN 流式拉,起播快)
     try {
@@ -109,6 +113,16 @@ async function drain(): Promise<void> {
 }
 
 // ── 公开 API ─────────────────────────────────────────────────────────────────
+
+/** 立即静音:停当前播放 + 清空预合成队列。暂停整局时调用,确保正在播/排队的语音立刻停。 */
+export function stopVoice(): void {
+  generation++
+  queue = []
+  if (audioEl) {
+    try { audioEl.pause() } catch { /* 忽略 */ }
+    audioEl.src = ''
+  }
+}
 
 /**
  * 朗读一条弹幕。静音或空文本时跳过。
