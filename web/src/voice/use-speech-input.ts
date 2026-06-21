@@ -87,6 +87,6 @@ async function blobToWav(blob: Blob): Promise<Blob> {
     const down = downsampleMono(mono, audioBuf.sampleRate, TARGET_RATE)
     return new Blob([encodeWav(down, TARGET_RATE)], { type: 'audio/wav' })
   } finally {
-    void ctx.close()
+    await ctx.close()
   }
 }

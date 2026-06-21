@@ -18,6 +18,9 @@ export function connect(
   let ws: WebSocket
   let intentionallyClosed = false
   let retryCount = 0
+  // 连接未就绪(CONNECTING / 重连中)时排队,onopen 时一次性 flush。
+  // 用单一队列(而非旧 ws 的 once 监听):重连换 ws 后旧 once 永不触发会静默丢消息。
+  let pendingQueue: string[] = []
 
   function createWs() {
     ws = new WebSocket(`${WS_BASE}/play`)
@@ -25,6 +28,12 @@ export function connect(
     ws.onopen = () => {
       retryCount = 0
       onStatus?.('open')
+      // flush 排队消息(取出后清空,确保每条只发一次、重连后不重复)
+      if (pendingQueue.length > 0) {
+        const toSend = pendingQueue
+        pendingQueue = []
+        for (const m of toSend) ws.send(m)
+      }
     }
 
     ws.onmessage = (e) => {
@@ -68,13 +77,16 @@ export function connect(
 
   return {
     send: (m) => {
+      const data = JSON.stringify(m)
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(m))
-      } else if (ws.readyState === WebSocket.CONNECTING) {
-        ws.addEventListener('open', () => ws.send(JSON.stringify(m)), { once: true })
+        ws.send(data)
+      } else if (intentionallyClosed) {
+        // 已主动关闭：不再排队,丢弃并警告
+        console.warn('[ws-client] 连接已关闭，消息已丢弃:', m)
       } else {
-        // CLOSING、CLOSED 或重连中：丢弃并警告
-        console.warn('[ws-client] 连接未就绪，消息已丢弃:', m)
+        // CONNECTING 或重连中(CLOSING/CLOSED 等待 setTimeout 重连):
+        // 入队,待下次 onopen 一次性 flush(避免旧 ws 的 once 监听因重连换 ws 而永不触发)
+        pendingQueue.push(data)
       }
     },
     close: () => {
