@@ -212,7 +212,7 @@ export function PlayPage() {
 
   // 左栏:设置 + 状态 + 操作
   const sidebar = (
-    <aside style={styles.rail} aria-label="对局设置与控制">
+    <aside style={{ ...styles.rail, ...(isNarrow ? { width: '100%', maxWidth: 480 } : {}) }} aria-label="对局设置与控制">
       {isSparring && (
         <div style={styles.sparringBanner}>专项陪练：从你上次的失误局面开始</div>
       )}
@@ -286,7 +286,7 @@ export function PlayPage() {
 
   return (
     <div style={styles.page}>
-      <div style={{ ...styles.studio, flexDirection: isNarrow ? 'column' : 'row' }}>
+      <div style={{ ...styles.studio, flexDirection: isNarrow ? 'column' : 'row', alignItems: isNarrow ? 'center' : 'flex-start' }}>
         {sidebar}
 
         <div style={styles.centerCol}>
@@ -302,7 +302,7 @@ export function PlayPage() {
           </div>
         </div>
 
-        <div style={{ ...styles.chatCol, height: isNarrow ? 420 : boardSize }}>
+        <div style={{ ...styles.chatCol, height: isNarrow ? 420 : boardSize, ...(isNarrow ? { width: '100%', maxWidth: 480 } : {}) }}>
           <ChatPanel
             lines={lines}
             onSay={(t) => { if (status === 'playing' && gameId !== null) wsRef.current?.send({ type: 'say', gameId, text: t }) }}

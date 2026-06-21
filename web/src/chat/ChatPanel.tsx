@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { setMuted, isMuted, isTtsSupported, hasZhVoice, cancelSpeech } from '../voice/browser-tts.js'
 import { speakServer } from '../voice/server-tts.js'
 import { useSpeechInput } from '../voice/use-speech-input.js'
+import { color } from '../ui/theme.js'
 
 export interface ChatLine {
   personaId: string
@@ -171,8 +172,8 @@ export function ChatPanel({ lines, onSay }: Props) {
           <button
             style={{
               ...styles.micBtn,
-              background: stt.listening ? '#e67e22' : 'rgba(255,255,255,0.1)',
-              border: stt.listening ? '1px solid #e67e22' : '1px solid rgba(255,255,255,0.2)',
+              background: stt.listening ? color.warning : color.surfaceAlt,
+              border: stt.listening ? `1px solid ${color.warning}` : `1px solid ${color.border}`,
             }}
             onClick={stt.listening ? stt.stop : stt.start}
             title={stt.listening ? '聆听中，点击停止' : '点击语音输入'}
@@ -230,7 +231,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '10px 14px',
     fontSize: '0.9rem',
     fontWeight: 700,
-    color: '#f5c518',
+    color: color.gold,
     borderBottom: '1px solid rgba(255,255,255,0.1)',
     letterSpacing: '0.1em',
     flexShrink: 0,
@@ -245,7 +246,7 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1,
     padding: '2px 4px',
     borderRadius: '4px',
-    color: '#f5c518',
+    color: color.gold,
   },
   list: {
     flex: 1,
@@ -257,7 +258,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   empty: {
     fontSize: '0.8rem',
-    color: '#666',
+    color: color.textFaint,
     textAlign: 'center',
     marginTop: '20px',
   },
@@ -297,11 +298,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   addressee: {
     fontSize: '0.72rem',
-    color: '#aaa',
+    color: color.textMuted,
   },
   ts: {
     fontSize: '0.68rem',
-    color: '#666',
+    color: color.textFaint,
     marginLeft: 'auto',
   },
   text: {
@@ -323,7 +324,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     cursor: 'pointer',
     fontSize: '0.85rem',
-    color: '#eee',
+    color: color.text,
     transition: 'background 0.2s',
   },
   input: {
@@ -332,14 +333,14 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'rgba(255,255,255,0.08)',
     border: '1px solid rgba(255,255,255,0.15)',
     borderRadius: '6px',
-    color: '#eee',
+    color: color.text,
     fontSize: '0.85rem',
     outline: 'none',
     fontFamily: 'inherit',
   },
   sayBtn: {
     padding: '6px 14px',
-    background: '#c0392b',
+    background: color.red,
     color: '#fff',
     border: 'none',
     borderRadius: '6px',
@@ -349,13 +350,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   noVoiceHint: {
     fontSize: '0.7rem',
-    color: '#aaa',
+    color: color.textMuted,
     whiteSpace: 'nowrap' as const,
   },
   sttError: {
     padding: '4px 10px',
     fontSize: '0.75rem',
-    color: '#ff6b6b',
+    color: color.danger,
     background: 'rgba(255,107,107,0.1)',
     borderTop: '1px solid rgba(255,107,107,0.2)',
     textAlign: 'center' as const,
