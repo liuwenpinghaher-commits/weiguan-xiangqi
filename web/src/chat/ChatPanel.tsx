@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { setMuted, isMuted, isTtsSupported, hasZhVoice, cancelSpeech } from '../voice/browser-tts.js'
 import { speakServer } from '../voice/server-tts.js'
 import { useSpeechInput } from '../voice/use-speech-input.js'
-import { color } from '../ui/theme.js'
+import { color, font } from '../ui/theme.js'
 
 export interface ChatLine {
   personaId: string
@@ -220,19 +220,19 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     height: '100%',
     minHeight: 0,
-    background: 'rgba(255,255,255,0.05)',
+    background: color.surfaceAlt,
     borderRadius: '14px',
-    border: '1px solid rgba(255,255,255,0.1)',
+    border: `1px solid ${color.border}`,
     overflow: 'hidden',
-    fontFamily: '"Noto Sans SC", system-ui, sans-serif',
-    color: '#ececf2',
+    fontFamily: font.sans,
+    color: color.text,
   },
   header: {
     padding: '10px 14px',
     fontSize: '0.9rem',
     fontWeight: 700,
     color: color.gold,
-    borderBottom: '1px solid rgba(255,255,255,0.1)',
+    borderBottom: `1px solid ${color.border}`,
     letterSpacing: '0.1em',
     flexShrink: 0,
     display: 'flex',
@@ -281,7 +281,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   bubble: {
     flex: 1,
-    background: 'rgba(255,255,255,0.07)',
+    background: color.surfaceHover,
     borderRadius: '8px',
     padding: '6px 8px',
   },
@@ -314,7 +314,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     gap: '6px',
     padding: '8px 10px',
-    borderTop: '1px solid rgba(255,255,255,0.1)',
+    borderTop: `1px solid ${color.border}`,
     flexShrink: 0,
     alignItems: 'center',
   },
@@ -330,8 +330,8 @@ const styles: Record<string, React.CSSProperties> = {
   input: {
     flex: 1,
     padding: '6px 10px',
-    background: 'rgba(255,255,255,0.08)',
-    border: '1px solid rgba(255,255,255,0.15)',
+    background: color.surfaceHover,
+    border: `1px solid ${color.borderStrong}`,
     borderRadius: '6px',
     color: color.text,
     fontSize: '0.85rem',
@@ -357,8 +357,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '4px 10px',
     fontSize: '0.75rem',
     color: color.danger,
-    background: 'rgba(255,107,107,0.1)',
-    borderTop: '1px solid rgba(255,107,107,0.2)',
+    background: color.dangerSoft,
+    borderTop: `1px solid ${color.dangerSoft}`,
     textAlign: 'center' as const,
   },
 }

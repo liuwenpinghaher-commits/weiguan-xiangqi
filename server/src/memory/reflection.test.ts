@@ -2,6 +2,7 @@ import { test, expect } from 'vitest'
 import { FakeMemoryStore } from './fake-memory-store.js'
 import { FakeLLM } from '../llm/fake.js'
 import { reflect } from './reflection.js'
+import type { Persona, PersonaId } from '../types.js'
 
 // ─── 旧测试(保留并升级) ──────────────────────────────────────────────────────
 
@@ -98,6 +99,48 @@ test('LLM 返回空字符串 → 不写库', async () => {
   })
 
   expect(await store.list({ personaId: 'coach' })).toHaveLength(0)
+})
+
+test('传入 getPersona(运行时覆盖)→ 反思 prompt 使用运行时 persona 的 name', async () => {
+  const store = new FakeMemoryStore(() => 0)
+  const llm = new FakeLLM(['- 爱走马\n洞见: 灵活棋手'])
+
+  // 模拟控制台改了角色 name 的运行时 persona
+  const runtimePersona: Persona = {
+    id: 'coach', name: '改名教练', isPlayer: false, skill: 'medium',
+    background: '运行时背景', voice: '运行时口吻', leaning: '运行时倾向',
+  }
+  const getPersona = (id: PersonaId): Persona => {
+    expect(id).toBe('coach')
+    return runtimePersona
+  }
+
+  await reflect({
+    store, llm, personaId: 'coach', gameId: 6,
+    now: () => 0,
+    playerSummary: '红马八进七',
+    getPersona,
+  })
+
+  expect(llm.calls).toHaveLength(1)
+  const sys = llm.calls[0].messages.find(m => m.role === 'system')
+  expect(sys?.content).toContain('改名教练')
+  // 不应回退到静态 personas 的旧名(林教练)
+  expect(sys?.content).not.toContain('林教练')
+})
+
+test('未传 getPersona → 回退静态 personas(系统 prompt 用静态 name)', async () => {
+  const store = new FakeMemoryStore(() => 0)
+  const llm = new FakeLLM(['- 爱走马\n洞见: 灵活棋手'])
+
+  await reflect({
+    store, llm, personaId: 'coach', gameId: 7,
+    now: () => 0,
+    playerSummary: '红马八进七',
+  })
+
+  const sys = llm.calls[0].messages.find(m => m.role === 'system')
+  expect(sys?.content).toContain('林教练')
 })
 
 test('只有一次 LLM 调用(单次 chat 请求)', async () => {

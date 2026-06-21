@@ -1,7 +1,7 @@
 import type { MemoryStore } from './store.js'
 import type { LLMProvider } from '../llm/provider.js'
-import type { PersonaId } from '../types.js'
-import { getPersona } from '../personas/personas.js'
+import type { PersonaId, Persona } from '../types.js'
+import { getPersona as staticGetPersona } from '../personas/personas.js'
 
 /**
  * 解析 LLM 反思输出,提取 fact 和 insight。
@@ -58,10 +58,12 @@ function parseReflection(raw: string): Array<{ kind: 'fact' | 'insight'; content
 export async function reflect(args: {
   store: MemoryStore; llm: LLMProvider; personaId: PersonaId; gameId: number; now: () => number
   playerSummary: string
+  /** 取运行时 persona(含控制台覆盖);省略时回退静态 personas。 */
+  getPersona?: (id: PersonaId) => Persona
 }): Promise<void> {
   const { store, llm, personaId, now, playerSummary } = args
   if (!playerSummary) return
-  const persona = getPersona(personaId)
+  const persona = (args.getPersona ?? staticGetPersona)(personaId)
 
   const raw = (await llm.chat([
     { role: 'system', content: `你是${persona.name}。` },
