@@ -304,6 +304,7 @@ export function PlayPage() {
 
         <div style={{ ...styles.chatCol, height: isNarrow ? 420 : boardSize, ...(isNarrow ? { width: '100%', maxWidth: 480 } : {}) }}>
           <ChatPanel
+            key={gameId ?? 'idle'}
             lines={lines}
             onSay={(t) => { if (status === 'playing' && gameId !== null) wsRef.current?.send({ type: 'say', gameId, text: t }) }}
           />

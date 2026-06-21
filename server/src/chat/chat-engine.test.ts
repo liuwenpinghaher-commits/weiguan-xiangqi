@@ -437,3 +437,30 @@ describe('记忆检索失败不让全场哑火', () => {
     expect(emitted.length).toBeGreaterThan(0)
   })
 })
+
+describe('记忆落库失败不丢限流/上下文状态', () => {
+  it('mem.record 抛错时仍 emit,且后续 speaker 的 prompt 含前一 speaker 的发言(roundSoFar 仍被填充)', async () => {
+    const cfg = new RC2(new SR2(odb2(':memory:')), () => '2026-06-21T00:00:00.000Z')
+    const emitted: any[] = []
+    const prompts: string[] = []
+    let callIdx = 0
+    // 第 1 个 speaker 说"妙手连珠",后续 speaker 应在上下文("刚才这桌在聊")里看到这句。
+    // 上下文注入在 system 消息里(见 chat-engine plan() 的 contextLine),故两个 role 都收集。
+    const llm = new FL2((msgs: any[]) => {
+      msgs.forEach((m: any) => prompts.push(m.content))
+      return callIdx++ === 0 ? '妙手连珠' : '我看悬'
+    })
+    // 落库每次都抛错(模拟 SurrealDB 断)
+    const mem = new FM2(() => 0)
+    mem.record = async () => { throw new Error('落库失败') }
+    // rng 固定 0.9 → 高张力 0.95 选 ≥2 人
+    const eng = new CE2({ llm, mem, cfg, now: () => 0, emit: (l: any) => emitted.push(l), rng: () => 0.9 })
+    await eng.onStimulus({ kind: 'blunder', gameId: 1, scoreCp: -400, moveZh: '红炮乱走', ply: 3, tension: 0.95 } as any)
+    // ① 落库失败不应吞掉发言
+    expect(emitted.length).toBeGreaterThanOrEqual(1)
+    // ② 至少 2 人发言,且后续 speaker 的 prompt 含第 1 个 speaker 的发言文本
+    //    (roundSoFar 在 record 失败后仍被填充)
+    expect(emitted.length).toBeGreaterThanOrEqual(2)
+    expect(prompts.some(p => p.includes('妙手连珠'))).toBe(true)
+  })
+})

@@ -92,8 +92,16 @@ export class SurrealMemoryStore implements MemoryStore {
       const verdict = await judgeMemory(this.deps.llm, nn.row.content, e.content)
       if (verdict.action === 'merge') {
         const mvec = await this.embedOne(verdict.merged)
-        await this.db.query('UPDATE $id SET content=$c, importance=$imp, embedding=$emb',
-          { id: this.thing(nn.row.id), c: verdict.merged, imp: Math.min(5, nn.row.importance + 1), emb: mvec ?? undefined })
+        const imp = Math.min(5, nn.row.importance + 1)
+        // 合并文本嵌入失败(mvec==null)时,绝不写 embedding 字段——否则 undefined→NONE
+        // 会清掉被合并记录的已有向量,该记忆从此对 KNN 语义检索永久不可见。保留旧向量。
+        if (mvec) {
+          await this.db.query('UPDATE $id SET content=$c, importance=$imp, embedding=$emb',
+            { id: this.thing(nn.row.id), c: verdict.merged, imp, emb: mvec })
+        } else {
+          await this.db.query('UPDATE $id SET content=$c, importance=$imp',
+            { id: this.thing(nn.row.id), c: verdict.merged, imp })
+        }
         return nn.row.id
       }
       if (verdict.action === 'supersede') {

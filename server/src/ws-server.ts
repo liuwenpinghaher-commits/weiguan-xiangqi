@@ -152,14 +152,28 @@ export async function buildServer(opts: {
   // 记最近一条弹幕(角色或人类)时间戳,供沉默驱动的 idle 判定使用
   let lastChatAt = Date.now()
 
-  // 局末反思幂等:已完成反思的局不重复触发
+  // 局末反思幂等:仅"成功完成"反思的局进入此 Set,不再重复触发。
   const reflectedGames = new Set<number>()
+  // 防重入:正在反思中的局(避免并发重复触发);finally 后移除,成功才进 reflectedGames。
+  const reflectingGames = new Set<number>()
 
   // ---- 抽取的反思 helper:对某局的所有旁观者触发 reflect ----
+  // 仅在 reflect 全部成功后才标记 reflectedGames;任一失败则不标记 → 下次有机会重试,
+  // 避免一次失败(LLM/写库异常)导致该局记忆永久不沉淀。
   async function reflectGame(gameId: number): Promise<void> {
-    if (reflectedGames.has(gameId)) return
-    reflectedGames.add(gameId)
+    if (reflectedGames.has(gameId) || reflectingGames.has(gameId)) return
+    reflectingGames.add(gameId)
+    try {
+      await doReflectGame(gameId)
+      reflectedGames.add(gameId)
+    } catch (err) {
+      console.warn('[reflect] 局', gameId, '反思失败,未标记完成(下次可重试):', (err as Error).message)
+    } finally {
+      reflectingGames.delete(gameId)
+    }
+  }
 
+  async function doReflectGame(gameId: number): Promise<void> {
     // 拼玩家本局真实走法概述
     let playerSummary = ''
     try {
@@ -184,10 +198,10 @@ export async function buildServer(opts: {
       // 走法拼接失败,playerSummary 保持空字符串,reflect 会提前返回
     }
 
-    for (const p of spectators()) {
+    // 等待所有旁观者反思完成;任一失败则整体抛出 → reflectGame 不标记 reflectedGames(下次重试)。
+    await Promise.all(spectators().map(p =>
       reflect({ store: mem, llm, personaId: p.id, gameId, now: () => Date.now(), playerSummary })
-        .catch(() => { /* 反思失败静默忽略 */ })
-    }
+    ))
   }
 
   const session = new GameSession({

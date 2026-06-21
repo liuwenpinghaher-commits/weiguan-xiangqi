@@ -95,6 +95,37 @@ describe.skipIf(!hasBin)('SurrealMemoryStore (集成)', () => {
     await store.close()
   })
 
+  it('merge 时新嵌入失败(null)不应清掉被合并记录的已有向量(仍可 KNN 召回)', async () => {
+    // embedding 对合并后文本"残局合并稿"返回失败(抛错→null),对其余文本正常。
+    // 这样:首条 fact 带向量入库;第二条自身嵌入成功 → 命中 KNN + judge=merge;
+    // 但合并文本嵌入失败 → 旧 bug 会把 embedding 写成 NONE → 该记录从 KNN 消失。
+    const MERGED = '残局合并稿'
+    const flaky = {
+      dimension: 16,
+      embed: async (texts: string[]) => texts.map((t) => {
+        if (t === MERGED) throw new Error('boom')
+        return Array.from({ length: 16 }, () => 0.1)
+      }),
+    }
+    const store = new SurrealMemoryStore({
+      url: URL, namespace: 'test', database: 'merge_emb', username: 'root', password: 'root',
+      embedding: flaky as any, llm: new FakeLLM([`merge: ${MERGED}`]), now: () => clock, simThreshold: -1,
+    })
+    await store.connect()
+    // 首条 fact:带向量入库
+    await store.record({ personaId: 'coach', kind: 'fact', content: '残局易急躁', importance: 3, gameId: 1, createdAt: new Date(clock).toISOString() })
+    // 第二条:自身嵌入成功 → 命中 KNN(simThreshold=-1)→ judge=merge;合并文本嵌入失败
+    await store.record({ personaId: 'coach', kind: 'fact', content: '残局更急躁', importance: 3, gameId: 2, createdAt: new Date(clock).toISOString() })
+    // merge 后内容应已更新为合并稿(证明 merge 真发生)
+    const all = await store.list({ personaId: 'coach', kind: 'fact' })
+    expect(all).toHaveLength(1)
+    expect(all[0].content).toBe(MERGED)
+    // 关键断言:merge 后该记录仍有向量 → KNN 召回得到(retrieve KNN 分支要求 embedding IS NOT NONE)
+    const got = await store.retrieve('coach', '残局急躁', 5, ['fact'])
+    expect(got.map(r => r.content)).toContain(MERGED)
+    await store.close()
+  })
+
   it('嵌入失败降级:照存(embedding=NONE)、retrieve 退回 recency 不崩', async () => {
     const failing = { embed: async () => { throw new Error('boom') }, dimension: 16 }
     const store = new SurrealMemoryStore({
