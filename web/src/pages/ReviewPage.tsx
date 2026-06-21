@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Board } from '../board/Board.js'
 import { HTTP_BASE } from '../api/config.js'
 import { PageShell, cardStyle, headingStyle, ErrorBanner } from '../ui/PageShell.js'
+import { color, radius, space, fontSize, btn } from '../ui/theme.js'
 
 /** 下载单局棋谱 JSON */
 function downloadGameExport(gameId: number) {
@@ -59,8 +60,8 @@ export function ReviewPage(props: { gameId: number }) {
     <PageShell>
       <div style={{ maxWidth: 560, margin: '0 auto' }}>
         {/* 标题行 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-          <h1 style={{ ...headingStyle, fontSize: '1.5rem', margin: 0, flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: space.md, marginBottom: space.lg, flexWrap: 'wrap' }}>
+          <h1 style={{ ...headingStyle, fontSize: fontSize.xl, margin: 0, flex: 1 }}>
             复盘 · 第 {props.gameId} 局
           </h1>
           <button
@@ -74,7 +75,7 @@ export function ReviewPage(props: { gameId: number }) {
         </div>
 
         {/* 快速导航到分析/训练 */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: space.sm + 2, marginBottom: space.lg, flexWrap: 'wrap' }}>
           <a href={`#/analysis/${props.gameId}`} style={analysisBtnStyle} aria-label={`诊断第${props.gameId}局`}>
             去诊断本局
           </a>
@@ -86,14 +87,14 @@ export function ReviewPage(props: { gameId: number }) {
         {fetchError && <ErrorBanner msg={fetchError} />}
 
         {loading && !fetchError && (
-          <p style={{ color: '#aaa' }}>加载中…</p>
+          <p style={{ color: color.textMuted }}>加载中…</p>
         )}
 
         {!loading && !fetchError && startFen && (
           <>
             <div style={cardStyle}>
               <Board fen={fen} onMove={() => {}} />
-              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ marginTop: space.md, display: 'flex', alignItems: 'center', gap: space.md }}>
                 <button
                   onClick={() => setIdx(i => Math.max(0, i - 1))}
                   disabled={idx === 0}
@@ -102,7 +103,7 @@ export function ReviewPage(props: { gameId: number }) {
                 >
                   上一手
                 </button>
-                <span style={{ color: '#aaa', fontSize: '0.9rem' }}>{idx} / {moves.length}</span>
+                <span style={{ color: color.textMuted, fontSize: fontSize.base }}>{idx} / {moves.length}</span>
                 <button
                   onClick={() => setIdx(i => Math.min(moves.length, i + 1))}
                   disabled={idx === moves.length}
@@ -116,17 +117,17 @@ export function ReviewPage(props: { gameId: number }) {
 
             {msgs.length > 0 && (
               <div style={cardStyle}>
-                <h2 style={{ ...headingStyle, fontSize: '1rem', margin: '0 0 10px' }}>观众席回放</h2>
+                <h2 style={{ ...headingStyle, fontSize: fontSize.md, margin: `0 0 ${space.sm + 2}px` }}>观众席回放</h2>
                 <div style={msgListStyle}>
                   {msgs.map(m => (
-                    <div key={m.id} style={{ padding: '5px 12px', fontSize: 13, lineHeight: '1.5' }}>
-                      <span style={{ color: '#666', marginRight: 8, fontSize: 11 }}>
+                    <div key={m.id} style={{ padding: `${space.xs + 1}px ${space.md}px`, fontSize: 13, lineHeight: '1.5' }}>
+                      <span style={{ color: color.textFaint, marginRight: space.sm, fontSize: 11 }}>
                         {m.ts.replace('T', ' ').slice(0, 19)}
                       </span>
-                      <span style={{ fontWeight: 600, marginRight: 6, color: '#f5c518' }}>
+                      <span style={{ fontWeight: 600, marginRight: 6, color: color.gold }}>
                         {personaName(m.personaId)}
                       </span>
-                      <span style={{ color: '#ccc' }}>{m.text}</span>
+                      <span style={{ color: color.text }}>{m.text}</span>
                     </div>
                   ))}
                 </div>
@@ -140,50 +141,30 @@ export function ReviewPage(props: { gameId: number }) {
 }
 
 const exportBtnStyle: React.CSSProperties = {
-  fontSize: 12,
-  padding: '5px 12px',
-  cursor: 'pointer',
-  background: 'rgba(255,255,255,0.1)',
-  color: '#ccc',
-  border: '1px solid rgba(255,255,255,0.2)',
-  borderRadius: 6,
+  ...btn('secondary', { size: 'sm' }),
 }
 
 const analysisBtnStyle: React.CSSProperties = {
-  padding: '6px 16px',
-  background: '#2980b9',
-  color: '#fff',
-  borderRadius: 6,
+  ...btn('info'),
   textDecoration: 'none',
-  fontSize: '0.85rem',
-  fontWeight: 600,
+  display: 'inline-block',
 }
 
 const trainingBtnStyle: React.CSSProperties = {
-  padding: '6px 16px',
-  background: '#27ae60',
-  color: '#fff',
-  borderRadius: 6,
+  ...btn('success'),
   textDecoration: 'none',
-  fontSize: '0.85rem',
-  fontWeight: 600,
+  display: 'inline-block',
 }
 
 const navBtnStyle: React.CSSProperties = {
-  padding: '7px 18px',
-  background: 'rgba(255,255,255,0.1)',
-  color: '#ccc',
-  border: '1px solid rgba(255,255,255,0.2)',
-  borderRadius: 6,
-  cursor: 'pointer',
-  fontSize: '0.9rem',
+  ...btn('secondary'),
 }
 
 const msgListStyle: React.CSSProperties = {
-  border: '1px solid rgba(255,255,255,0.1)',
-  borderRadius: 8,
+  border: `1px solid ${color.border}`,
+  borderRadius: radius.md,
   maxHeight: 320,
   overflowY: 'auto',
-  padding: '4px 0',
-  background: 'rgba(0,0,0,0.2)',
+  padding: `${space.xs}px 0`,
+  background: color.surfaceAlt,
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { diagnoseGame, getDiagnosis, THEME_LABEL } from '../api/http-client.js'
 import { ScoreLine } from '../charts/ScoreLine.js'
 import { PageShell, cardStyle, headingStyle, darkThStyle, darkTrStyle, darkTdStyle, ErrorBanner } from '../ui/PageShell.js'
+import { color, fontSize, space, btn } from '../ui/theme.js'
 
 interface Annotation { ply: number; side: string; cpLoss: number; bestMove: string; phase: string; theme: string }
 interface MoveRow { ply: number; move: string; byAi: boolean }
@@ -40,13 +41,13 @@ export function AnalysisPage({ gameId }: { gameId: number }) {
   return (
     <PageShell>
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
-        <h1 style={{ ...headingStyle, fontSize: '1.6rem', marginBottom: 16 }}>
+        <h1 style={{ ...headingStyle, fontSize: fontSize.xl, marginBottom: space.lg }}>
           第 {gameId} 局 · 诊断
         </h1>
 
         {fetchError && <ErrorBanner msg={fetchError} />}
 
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: space.md, alignItems: 'center', marginBottom: space.md }}>
           <button
             onClick={run}
             disabled={busy}
@@ -56,7 +57,7 @@ export function AnalysisPage({ gameId }: { gameId: number }) {
             {busy ? '诊断中…' : '诊断本局'}
           </button>
           {status && (
-            <span style={{ fontSize: '0.88rem', color: '#aaa' }} aria-live="polite">
+            <span style={{ fontSize: fontSize.base, color: color.textMuted }} aria-live="polite">
               {status}
             </span>
           )}
@@ -67,7 +68,7 @@ export function AnalysisPage({ gameId }: { gameId: number }) {
         </div>
 
         <div style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: fontSize.base }}>
             <thead>
               <tr>
                 <th style={darkThStyle}>手</th>
@@ -85,7 +86,7 @@ export function AnalysisPage({ gameId }: { gameId: number }) {
                   style={{
                     ...darkTrStyle,
                     background: a.theme !== 'ok' && a.side === humanSide
-                      ? 'rgba(255,82,82,0.08)'
+                      ? color.dangerSoft
                       : undefined,
                   }}
                 >
@@ -99,7 +100,7 @@ export function AnalysisPage({ gameId }: { gameId: number }) {
               ))}
               {ann.length === 0 && !fetchError && (
                 <tr>
-                  <td colSpan={6} style={{ ...darkTdStyle, textAlign: 'center', color: '#666', padding: '20px 0' }}>
+                  <td colSpan={6} style={{ ...darkTdStyle, textAlign: 'center', color: color.textFaint, padding: `${space.xl}px 0` }}>
                     暂无数据，请先诊断本局
                   </td>
                 </tr>
@@ -113,12 +114,5 @@ export function AnalysisPage({ gameId }: { gameId: number }) {
 }
 
 const runBtnStyle: React.CSSProperties = {
-  padding: '8px 20px',
-  background: '#2980b9',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 6,
-  cursor: 'pointer',
-  fontWeight: 600,
-  fontSize: '0.9rem',
+  ...btn('info'),
 }
