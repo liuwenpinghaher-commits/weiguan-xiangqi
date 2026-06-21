@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { setMuted, isMuted, isTtsSupported, hasZhVoice, cancelSpeech } from '../voice/browser-tts.js'
 import { speakServer } from '../voice/server-tts.js'
 import { useSpeechInput } from '../voice/use-speech-input.js'
@@ -50,21 +50,48 @@ export function ChatPanel({ lines, onSay }: Props) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  // ── 语音播报 ──────────────────────────────────────────
-  const spokenCount = useRef(0)
+  // ── 语音播报 + 文字-语音同步 ──────────────────────────────
+  // 同步策略:每条弹幕的气泡"等到它那句语音开始播放的瞬间"才揭示,文字随声音一起出现。
+  // - processed:已发起朗读/排程揭示的行数(避免重复处理)
+  // - revealedCount(ref):已显示的行数,只渲染 lines[0..revealedCount)
+  // - readySet:已就绪(语音起播/无声立即就绪)的行号;按序连续推进 revealedCount,保证显示顺序
+  const processed = useRef(0)
+  const revealedCount = useRef(0)
+  const readySet = useRef<Set<number>>(new Set())
+  const [, bumpReveal] = useState(0)
   const [muted, setMutedState] = useState(isMuted())
   const ttsOk = isTtsSupported()
   const zhVoiceOk = hasZhVoice()
 
-  useEffect(() => {
-    for (let i = spokenCount.current; i < lines.length; i++) {
-      const l = lines[i]
-      // 用户自己的发言(human)只显示不朗读;观棋者照常有声
-      if (l.personaId === 'human') continue
-      speakServer(l.personaId, l.text)
+  const markReady = useCallback((i: number) => {
+    readySet.current.add(i)
+    let adv = revealedCount.current
+    while (readySet.current.has(adv)) adv++
+    if (adv !== revealedCount.current) {
+      revealedCount.current = adv
+      bumpReveal(t => t + 1) // 触发重渲染,显示新揭示的气泡
     }
-    spokenCount.current = lines.length
-  }, [lines])
+  }, [])
+
+  useEffect(() => {
+    for (let i = processed.current; i < lines.length; i++) {
+      const idx = i
+      const l = lines[idx]
+      if (l.personaId === 'human' || isMuted()) {
+        // 自己的话不朗读 / 静音无声 → 立即就绪(仍按序连续揭示,保持顺序)
+        markReady(idx)
+        continue
+      }
+      let fired = false
+      const reveal = () => { if (!fired) { fired = true; markReady(idx) } }
+      speakServer(l.personaId, l.text, reveal) // 语音起播瞬间 reveal → 同步揭示气泡
+      // 兜底:6s 内语音仍未起播(未解锁/积压/合成失败漏网)也揭示,绝不卡死后续气泡
+      window.setTimeout(reveal, 6000)
+    }
+    processed.current = lines.length
+  }, [lines, markReady])
+
+  const shownLines = lines.slice(0, revealedCount.current)
 
   // ── 麦克风听写 ────────────────────────────────────────
   const stt = useSpeechInput((text) => onSay(text))
@@ -81,10 +108,10 @@ export function ChatPanel({ lines, onSay }: Props) {
     ? '语音识别失败，请重试'
     : null
 
-  // ── 新消息滚到底部 ────────────────────────────────────
+  // ── 气泡揭示后滚到底部(随揭示节奏,而非弹幕到达) ──────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [lines])
+  }, [shownLines.length])
 
   function submit() {
     const t = input.trim()
@@ -135,10 +162,10 @@ export function ChatPanel({ lines, onSay }: Props) {
 
       {/* 消息列表：aria-live 让读屏器播报新弹幕 */}
       <div style={styles.list} aria-live="polite" aria-label="观众弹幕列表">
-        {lines.length === 0 && (
+        {shownLines.length === 0 && (
           <div style={styles.empty}>还没有消息……等一等看</div>
         )}
-        {lines.map((line, i) => {
+        {shownLines.map((line, i) => {
           const avatarBg = avatarColor(line.personaId)
           const name = personaName(line.personaId)
           const addrDisplay = addresseeName(line.addressee)
