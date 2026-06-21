@@ -298,4 +298,37 @@ describe('ws-server 集成测试', () => {
     const errMsg = await waitForMessage(ws, 'error')
     expect(errMsg.type).toBe('error')
   }, 10_000)
+
+  it('POST /asr 注入 FakeAsr → 返回转写文字', async () => {
+    const { FakeAsr } = await import('./voice/asr.js')
+    app = await buildServer({ dbPath: ':memory:', engine: fakeEngine, llm: new FakeLLM(() => 'x'), asr: new FakeAsr('当头炮') })
+    const res = await app.inject({
+      method: 'POST', url: '/asr?mime=audio/wav',
+      headers: { 'content-type': 'application/octet-stream' },
+      payload: Buffer.from('fake-wav-bytes'),
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json<{ text: string }>().text).toBe('当头炮')
+  })
+
+  it('POST /asr 无 DASHSCOPE key 且未注入 asr → 503', async () => {
+    app = await makeApp()
+    const res = await app.inject({
+      method: 'POST', url: '/asr?mime=audio/wav',
+      headers: { 'content-type': 'application/octet-stream' },
+      payload: Buffer.from('x'),
+    })
+    expect(res.statusCode).toBe(503)
+  })
+
+  it('POST /asr 非法 mime → 400', async () => {
+    const { FakeAsr } = await import('./voice/asr.js')
+    app = await buildServer({ dbPath: ':memory:', engine: fakeEngine, llm: new FakeLLM(() => 'x'), asr: new FakeAsr('当头炮') })
+    const res = await app.inject({
+      method: 'POST', url: '/asr?mime=' + encodeURIComponent('audio/wav\nevil'),
+      headers: { 'content-type': 'application/octet-stream' },
+      payload: Buffer.from('x'),
+    })
+    expect(res.statusCode).toBe(400)
+  })
 })
