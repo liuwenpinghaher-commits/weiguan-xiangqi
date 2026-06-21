@@ -45,6 +45,8 @@ export class ChatEngine {
   private lastText = new Map<string, string>()       // personaId -> 上次 emit 文本(原文)
   /** 按 gameId 维护最近聊天缓冲(含角色和玩家发言),用于给下一个说话者注入上下文 */
   private recent = new Map<number, RecentEntry[]>()
+  /** 按 gameId 缓存最近一次走子的局面上下文,供 idle 贴着局面说 */
+  private lastCtx = new Map<number, { moveZh: string; qual: string; ply: number }>()
 
   constructor(private deps: ChatEngineDeps) {
     this.guard = new TempoGuard({
@@ -55,12 +57,18 @@ export class ChatEngine {
 
   async onStimulus(stim: Stimulus): Promise<void> {
     if (!this.guard.allow()) return
+    if (stim.moveZh) {
+      this.lastCtx.set(stim.gameId, { moveZh: stim.moveZh, qual: qualWord(stim.scoreCp ?? null), ply: stim.ply ?? 0 })
+    }
     const recentSecs = this.recentMap()
     const chat = this.deps.cfg.getChat()
-    const speakers = pickSpeakers(stim, this.deps.cfg.personas().filter(p => !p.isPlayer), recentSecs, this.deps.rng, chat.speakThreshold, chat.jitterWidth)
+    const maxSpk = stim.tension >= 0.8 ? 3 : stim.tension >= 0.5 ? 2 : 1
+    const speakers = pickSpeakers(stim, this.deps.cfg.personas().filter(p => !p.isPlayer), recentSecs, this.deps.rng, chat.speakThreshold, chat.jitterWidth, maxSpk)
 
-    // 若这步是 AI 棋手走的,以 40% 概率让 player 自评(放末尾)
-    if (stim.byPlayerPersona && this.deps.rng() < 0.4) {
+    // 老黑(AI 棋手)参与:自己刚走→高概率自评;其余有看头时→中概率作为当事人插话
+    if (stim.byPlayerPersona) {
+      if (this.deps.rng() < 0.6) speakers.push('player')
+    } else if (this.deps.rng() < 0.3 && (stim.moveZh != null || stim.kind === 'human_said' || stim.kind === 'idle')) {
       speakers.push('player')
     }
 
@@ -80,7 +88,7 @@ export class ChatEngine {
 
         const plan = await this.plan(persona, stim, context)
         const text = (await this.deps.llm.chat(plan.messages, {
-          disableThinking: true, maxTokens: 80,
+          disableThinking: true, maxTokens: 70,
         })).trim()
         if (!text) continue
 
@@ -152,11 +160,11 @@ export class ChatEngine {
       : '(刚开局,还没人说话)'
 
     const sys = `你是「${p.name}」。${p.background}\n说话像:${p.voice} 立场:${p.leaning}\n`
-      + `你蹲在棋摊边看棋。你是懂棋的人,主要在看棋、评棋——这步好不好、为什么、对方该怎么应、有什么威胁、什么棋理路数;也会互相拌嘴、偶尔扯句闲篇,但别通篇耍贫嘴不谈棋。\n`
+      + `你蹲在棋摊边看棋,是懂棋的人。主要谈眼前这盘——这步好不好、为什么、对方该怎么应、有什么威胁、什么棋理路数;也会互相拌嘴,但别脱离这盘棋瞎贫。\n`
       + `- 口语、随意,别像电视解说;少用感叹号,只有真出彩或真离谱才激动。\n`
       + `- 长短不一:有时俩字("软了""稳"),有时半句,偶尔一整句把道理说透。别每句一个调。\n`
       + `- 按你的棋力说话:看得准就点到要害、敢报具体着法或变化;水平次的可以看走眼、说句外行话。\n`
-      + `- 棋谚、老话、当年的事偶尔自然带一句即可,别空泛套话、别尬吹。\n`
+      + `- 可偶尔带一句扣着当前局面的棋识(棋谚、残局理路、历史掌故、棋界轶事),但要跟眼前这盘挂上钩;宁可不带也别瞎编、别尬吹。\n`
       + `只输出你说的那一句话,不带引号、不加旁白、不写名字前缀。\n`
       + `你对这位棋手的了解:\n${facts}\n`
       + `刚才这桌在聊(可点名回应、抬杠或拉踩):\n${contextLine}`
@@ -170,15 +178,21 @@ export class ChatEngine {
 
     let user: string
     let addressee: ChatLine['addressee'] = 'all'
-    if (stim.kind === 'human_said') {
+    if (p.isPlayer && stim.byPlayerPersona) {
+      user = `你(${p.name})刚走了「${stim.moveZh ?? '一步'}」,局面${qual}。自评一句:说说你这步的算计或得失,别空吹,${len}:`
+    } else if (p.isPlayer) {
+      const pctx = this.lastCtx.get(stim.gameId)
+      const psit = pctx ? `眼下「${pctx.moveZh}」,${pctx.qual}` : `局面${qual}`
+      user = `你是正在下这盘的老黑,沉稳、闷、偶尔得意,这是你的对局、有立场。${psit}。${len},就眼前局面/对手这步/接刚才那句说一句,带你的脾气,别长篇:`
+    } else if (stim.kind === 'human_said') {
       user = `玩家刚冲你们说:"${stim.humanText}"。${len},回他一句,口语自然:`
       addressee = 'human'
-    } else if (p.isPlayer && stim.byPlayerPersona) {
-      user = `你(${p.name})刚走了「${stim.moveZh ?? '一步'}」,局面${qual}。自评一句:说说你这步的算计或得失,别空吹,${len}:`
     } else if (stim.kind === 'long_think') {
       user = `对方这步想了很久还没落子。${len},用你的脾气随口催两句/调侃/安慰,别太冲:`
     } else if (stim.kind === 'idle' || (stim.kind === 'topic_open' && !stim.moveZh)) {
-      user = `这会儿没大事。${len},随口扯点棋外的(你自己的行当/家里/最近遇上的事),或棋摊闲话、一句棋谚掌故,别评具体某步:`
+      const ictx = this.lastCtx.get(stim.gameId)
+      const sit = ictx ? `眼下走到第${ictx.ply}手「${ictx.moveZh}」,${ictx.qual}` : '这局还在走'
+      user = `这会儿没新棋步。${len},就着眼前这盘说(${sit}):僵不僵/谁占优/该走哪一步/某步还没应,或随口催两句;可带一句扣着当前局面的棋识(残局理路/棋谚/掌故),别扯场外、别瞎编:`
     } else if (target && this.deps.rng() < c.reactProb) {
       // 真互动(占比小):接某人的话,但要说到棋上,不空贫
       user = `「${target.name}」刚说:"${target.text}"。${len},接他的话——同意就补一刀、不同意就摆棋上的道理反驳他,像老熟人拌嘴但别空贫:`

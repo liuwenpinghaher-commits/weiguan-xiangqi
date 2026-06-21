@@ -306,7 +306,7 @@ test('idle 刺激:user prompt 含"棋外"或"掌故"提示,不含"这步"等着�
   await engine.onStimulus(stim)
   expect(capturedUsers.length).toBeGreaterThanOrEqual(1)
   // idle prompt 应提示闲聊/掌故内容
-  expect(capturedUsers.some(u => u.includes('棋外') || u.includes('掌故') || u.includes('棋谚'))).toBe(true)
+  expect(capturedUsers.some(u => u.includes('掌故') || u.includes('棋谚') || u.includes('局面'))).toBe(true)
 })
 
 test('long_think 刺激:user prompt 含"想了很久"或"长考"或"调侃"相关词', async () => {
@@ -355,4 +355,70 @@ test('内容质量:连发两个不同 moveZh 的刺激,各自 LLM prompt 含各�
   // 第二次刺激的 user 消息应含 stim2 着法(去重后可能因文本相同被跳过,但至少有一次新调用含该着法)
   const stim2Users = capturedUsers.slice(beforeCount)
   expect(stim2Users.some(u => u.includes('黑马2进3'))).toBe(true)
+})
+
+// ─── Task 2 新增测试:系统 prompt 贴棋局 ──────────────────────────────────────
+
+import { describe, it } from 'vitest'
+import { ChatEngine as CE2 } from './chat-engine.js'
+import { RuntimeConfig as RC2 } from '../config/runtime-config.js'
+import { SettingsRepo as SR2 } from '../store/settings-repo.js'
+import { openDb as odb2 } from '../store/db.js'
+import { FakeLLM as FL2 } from '../llm/fake.js'
+import { FakeMemoryStore as FM2 } from '../memory/fake-memory-store.js'
+
+describe('系统 prompt 贴棋局', () => {
+  it('系统 prompt 强调谈这盘+扣局面棋识+别瞎编+把道理说透,且不再让"扯句闲篇"', async () => {
+    const caps: string[] = []
+    const cfg = new RC2(new SR2(odb2(':memory:')), () => '2026-06-21T00:00:00.000Z')
+    const llm = new FL2((msgs) => { const s = msgs.find(m => m.role === 'system'); if (s) caps.push(s.content); return '稳' })
+    const eng = new CE2({ llm, mem: new FM2(() => 0), cfg, now: () => 0, emit: () => {}, rng: () => 0.1 })
+    await eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 20, moveZh: '炮二平五', ply: 3, tension: 0.95 } as any)
+    expect(caps.length).toBeGreaterThan(0)
+    expect(caps.some(s => s.includes('扣') && s.includes('别瞎编'))).toBe(true)
+    expect(caps.some(s => s.includes('把道理说透'))).toBe(true)
+    expect(caps.every(s => !s.includes('扯句闲篇'))).toBe(true)
+  })
+})
+
+describe('idle 贴局面', () => {
+  it('idle 的 user prompt 贴当前局面、含缓存的走子、不扯场外', async () => {
+    const caps: string[] = []
+    const cfg = new RC2(new SR2(odb2(':memory:')), () => '2026-06-21T00:00:00.000Z')
+    const llm = new FL2((msgs) => { const u = msgs.find(m => m.role === 'user'); if (u) caps.push(u.content); return '僵着' })
+    // now 在两次刺激间推进:跨过最近发言惩罚窗口(30s),让 idle 仍能选出说话者
+    let nowMs = 0
+    const eng = new CE2({ llm, mem: new FM2(() => nowMs), cfg, now: () => nowMs, emit: () => {}, rng: () => 0.1 })
+    await eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 20, moveZh: '炮二平五', ply: 3, tension: 0.95 } as any)
+    caps.length = 0
+    nowMs = 60_000
+    await eng.onStimulus({ kind: 'idle', gameId: 1, scoreCp: null, tension: 0.95 } as any)
+    const idleU = caps.join('\n')
+    expect(idleU.includes('眼前这盘') || idleU.includes('就着眼前')).toBe(true)
+    expect(idleU.includes('炮二平五')).toBe(true)
+    expect(idleU.includes('棋外') || idleU.includes('家里') || idleU.includes('行当')).toBe(false)
+  })
+})
+
+describe('老黑参与 + 张力分级', () => {
+  function mk(rngSeq: number[]) {
+    let i = 0
+    const cfg = new RC2(new SR2(odb2(':memory:')), () => '2026-06-21T00:00:00.000Z')
+    const caps: { user: string }[] = []
+    const emitted: string[] = []
+    const llm = new FL2((msgs: any[]) => { const u = msgs.find(m => m.role === 'user'); caps.push({ user: u?.content ?? '' }); return '行' })
+    const eng = new CE2({ llm, mem: new FM2(() => 0), cfg, now: () => 0, emit: (l: any) => emitted.push(l.personaId), rng: () => rngSeq[(i++) % rngSeq.length] })
+    return { eng, caps, emitted }
+  }
+  it('人类走子(非 byPlayerPersona)时老黑也可能参与,prompt 带其身份/立场', async () => {
+    const { eng, caps, emitted } = mk([0])
+    await eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 10, moveZh: '马八进七', ply: 4, tension: 0.95 } as any)
+    expect(emitted.includes('player')).toBe(true)
+    expect(caps.some(c => c.user.includes('老黑') && c.user.includes('立场'))).toBe(true)
+  })
+  it('高张力(0.95)比低张力(0.4)选更多 speaker', async () => {
+    const hi = mk([0.5]); await hi.eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 0, moveZh: '车一进一', ply: 5, tension: 0.95 } as any)
+    const lo = mk([0.5]); await lo.eng.onStimulus({ kind: 'move', gameId: 2, scoreCp: 0, moveZh: '兵三进一', ply: 5, tension: 0.4 } as any)
+    expect(hi.emitted.length).toBeGreaterThan(lo.emitted.length)
+  })
 })
