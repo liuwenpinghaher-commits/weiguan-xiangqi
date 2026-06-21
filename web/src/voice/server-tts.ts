@@ -18,6 +18,16 @@ type QueueItem = {
   personaId: string
   text: string
   urlPromise: Promise<string>
+  /** 这条语音"开始播放"(或被丢弃/回退)时回调一次,供 UI 同步揭示对应气泡 */
+  onStart?: () => void
+  started?: boolean
+}
+
+/** 触发 item.onStart 一次(幂等);用于文字-语音同步:气泡在声音起播的瞬间显示。 */
+function fireStart(item: QueueItem): void {
+  if (item.started) return
+  item.started = true
+  try { item.onStart?.() } catch { /* UI 回调异常不应影响播放 */ }
 }
 
 let queue: QueueItem[] = []
@@ -100,16 +110,20 @@ async function drain(): Promise<void> {
       // await 预合成的 Promise;若合成已完成则立即返回 url
       url = await item.urlPromise
     } catch {
-      // 合成失败(无 key / 网络 / 服务错误) → 回退浏览器 TTS
+      // 合成失败(无 key / 网络 / 服务错误) → 回退浏览器 TTS。
+      // 仍要 fireStart:让对应气泡照常揭示(否则同步模式下会卡住后续所有气泡)。
+      fireStart(item)
       browserSpeak(item.personaId, item.text)
       continue
     }
     if (gen !== generation) break // await 期间 stopVoice 触发 → 不要再 play 这条残留
 
-    // 用 OSS url 直接播放(浏览器从 CDN 流式拉,起播快)
+    // 用 OSS url 直接播放(浏览器从 CDN 流式拉,起播快)。
+    // 此刻起这条就是"正在播放的一句"→ fireStart 让 UI 同步揭示该气泡(文字随声音出现)。
     try {
       const a = getAudio()
       a.src = url
+      fireStart(item)
       await new Promise<void>((resolve) => {
         a.onended = () => resolve()
         a.onerror = () => resolve()
@@ -143,8 +157,9 @@ export function stopVoice(): void {
  * 立即发起合成请求(预热),推入有序队列;drain 负责串行播放。
  * 积压 >3 时丢弃最旧只保留最新 3 条。
  */
-export function speakServer(personaId: string, text: string): void {
-  if (isMuted() || !text) return
+export function speakServer(personaId: string, text: string, onStart?: () => void): void {
+  // 静音/空文本不播,但仍要回调 onStart——同步模式下气泡靠它揭示,不能卡住。
+  if (isMuted() || !text) { onStart?.(); return }
 
   // 立即发起合成 fetch(得到 Promise<url>),不等结果
   const urlPromise: Promise<string> = fetch(ttsUrl(personaId, text))
@@ -157,10 +172,13 @@ export function speakServer(personaId: string, text: string): void {
       return j.url
     })
 
-  const newItem: QueueItem = { personaId, text, urlPromise }
+  const newItem: QueueItem = { personaId, text, urlPromise, onStart }
 
-  // 积压限制:超过 3 条时丢弃最旧,只保留最新 3 条 + 新增 1 条
+  // 积压限制:超过 3 条时丢弃最旧,只保留最新 3 条 + 新增 1 条。
+  // 被丢弃的不播,但要 fireStart 揭示其气泡(否则同步模式下后续气泡永远等不到它)。
   if (queue.length >= 3) {
+    const dropped = queue.slice(0, queue.length - 2)
+    dropped.forEach(fireStart)
     queue = queue.slice(queue.length - 2) // 保留最近 2 条
   }
   queue.push(newItem)
