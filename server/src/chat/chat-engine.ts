@@ -107,14 +107,10 @@ export class ChatEngine {
         }
         this.deps.emit(line)
         this.lastText.set(id, text)
-        await this.deps.mem.record({
-          personaId: id,
-          kind: 'episode',
-          content: text,
-          importance: 1,
-          gameId: stim.gameId,
-          createdAt: line.ts,
-        })
+
+        // 先更新内存态(限流惩罚 + 上下文),再落库。落库属"尽力而为"的持久化,
+        // 不能因其失败(如 SurrealDB 断)而丢掉 lastSpokeAt/roundSoFar/recent——
+        // 否则该 speaker 最近发言惩罚失效(可能连说)、同回合后续 speaker 看不到他这句。
         this.lastSpokeAt.set(id, this.deps.now())
 
         // 推入本回合已发言数组(供后续 speaker 看到)
@@ -123,6 +119,20 @@ export class ChatEngine {
 
         // 推入全局 recent 缓冲(跨刺激记忆)
         this.pushRecent(stim.gameId, entry)
+
+        // 落库单独兜底:失败只 warn,不抛——不影响上面的内存态与后续 speaker。
+        try {
+          await this.deps.mem.record({
+            personaId: id,
+            kind: 'episode',
+            content: text,
+            importance: 1,
+            gameId: stim.gameId,
+            createdAt: line.ts,
+          })
+        } catch (err) {
+          console.warn('[chat] 记忆落库失败:', (err as Error).message)
+        }
       } catch (err) {
         // 单个 speaker 生成失败:跳过该 speaker,不影响其他人。
         // 用 warn 记录而非静默吞——否则故障(如 LLM/记忆异常)无从排查。
