@@ -26,7 +26,7 @@ test('最近刚发言的人被惩罚,不容易连续刷屏', () => {
 
 test('一次最多 2 人发言(不全员刷屏)', () => {
   const recent = new Map<string, number>()
-  const picks = pickSpeakers({ ...base, tension: 1 }, spectators(), recent, () => 0.99, 0.6, 0.4)
+  const picks = pickSpeakers({ ...base, tension: 1 }, spectators(), recent, () => 0.99, 0.6, 0.4, 2)
   expect(picks.length).toBeLessThanOrEqual(2)
 })
 
@@ -42,5 +42,21 @@ describe('pickSpeakers 参数化', () => {
   })
   it('threshold=0(低)→ 有人说话', () => {
     expect(pickSpeakers(stim, cands, new Map(), () => 0.5, 0, 0.4).length).toBeGreaterThan(0)
+  })
+})
+
+import { pickSpeakers as pick2 } from './speaker-select.js'
+describe('pickSpeakers maxSpeakers', () => {
+  const cands = [
+    { id: 'laopaoer', name: 'a', isPlayer: false, skill: 'strong', background: '', voice: '', leaning: '' },
+    { id: 'coach', name: 'b', isPlayer: false, skill: 'medium', background: '', voice: '', leaning: '' },
+    { id: 'netizen', name: 'c', isPlayer: false, skill: 'weak', background: '', voice: '', leaning: '' },
+  ] as any
+  const stim = { kind: 'move', gameId: 1, scoreCp: 0, tension: 0.95 } as any
+  it('maxSpeakers=1 → 最多 1 人', () => {
+    expect(pick2(stim, cands, new Map(), () => 0.5, 0, 0.4, 1).length).toBeLessThanOrEqual(1)
+  })
+  it('maxSpeakers=3 → 可超过 2 人', () => {
+    expect(pick2(stim, cands, new Map(), () => 0.5, 0, 0.4, 3).length).toBe(3)
   })
 })
