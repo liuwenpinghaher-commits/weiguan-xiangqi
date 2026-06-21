@@ -240,9 +240,10 @@ export async function buildServer(opts: {
 
   const app = Fastify({ logger: true })
 
-  // 跨域:前端(:3420)与后端(:3410)不同源,/tts、/games 等 HTTP fetch 需要 CORS。
-  // 本地单人工具,反射任意来源即可(含 POST JSON 预检 OPTIONS)。
-  await app.register(fastifyCors, { origin: true })
+  // 跨域:仅允许本地前端(:3420)读取响应。原先 origin:true 反射任意来源——意味着你浏览器里
+  // 打开的任何网页都能跨域 fetch 本服务,读到 /admin/.../reveal 的明文 key 或 PUT 篡改配置。
+  // 收紧到固定前端来源即可堵住(非浏览器客户端如 curl 不受 CORS 约束,正常工作)。
+  await app.register(fastifyCors, { origin: ['http://localhost:3420', 'http://127.0.0.1:3420'] })
 
   // 优雅关闭:关闭 Fastify 时同步释放引擎子进程与 SQLite WAL
   app.addHook('onClose', async () => {
@@ -340,7 +341,7 @@ export async function buildServer(opts: {
           const gid = msg.gameId
           if (typeof gid !== 'number') return
           if (pausedGames.has(gid)) return
-          const text = String(msg.text ?? '')
+          const text = String(msg.text ?? '').slice(0, 500) // 限长,防超大字符串写库
           const ts = new Date().toISOString()
           // 玩家发言持久化
           try {
@@ -600,7 +601,9 @@ export async function buildServer(opts: {
       reply.header('Content-Type', 'application/json')
       return reply.send({ url })
     } catch (e) {
-      return reply.code(500).send({ error: (e as Error).message })
+      // 不把上游(阿里云)错误体原文透传给客户端——可能含鉴权诊断信息;详情记服务端日志。
+      req.log.error(e, 'TTS 合成失败')
+      return reply.code(500).send({ error: 'TTS 服务暂时不可用' })
     }
   })
 
@@ -621,7 +624,8 @@ export async function buildServer(opts: {
       const text = await asr.transcribe(audio, mime)
       return reply.send({ text })
     } catch (e) {
-      return reply.code(500).send({ error: (e as Error).message })
+      req.log.error(e, 'ASR 识别失败')
+      return reply.code(500).send({ error: '语音识别服务暂时不可用' })
     }
   })
 

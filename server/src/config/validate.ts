@@ -6,6 +6,17 @@ type Cleaner = (v: unknown) => unknown
 const prob: Cleaner = (v) => (typeof v === 'number' && isFinite(v) ? clamp(v, 0, 1) : undefined)
 const intMin0: Cleaner = (v) => (typeof v === 'number' && isFinite(v) ? Math.max(0, Math.round(v)) : undefined)
 const str: Cleaner = (v) => (typeof v === 'string' && v.trim() !== '' ? v : undefined)
+// TTS endpoint:仅允许 https 的阿里云域。服务端会带着 DASHSCOPE_API_KEY 向该 endpoint 发请求,
+// 若放任改成任意 URL,等于给了把 key 外带到攻击者服务器的 SSRF 口子。
+const httpsAliyun: Cleaner = (v) => {
+  if (typeof v !== 'string' || v.trim() === '') return undefined
+  try {
+    const u = new URL(v)
+    if (u.protocol !== 'https:') return undefined
+    if (!(u.hostname === 'aliyuncs.com' || u.hostname.endsWith('.aliyuncs.com'))) return undefined
+    return v
+  } catch { return undefined }
+}
 const intRange = (lo: number, hi: number): Cleaner => (v) => (typeof v === 'number' && isFinite(v) ? clamp(Math.round(v), lo, hi) : undefined)
 const numRange = (lo: number, hi: number): Cleaner => (v) => (typeof v === 'number' && isFinite(v) ? clamp(v, lo, hi) : undefined)
 
@@ -32,7 +43,7 @@ const SCHEMA: Record<ConfigSection, Record<string, Cleaner>> = {
   engine: { pikafishPath: (v) => (typeof v === 'string' ? v : v === null ? null : undefined), multipv: intRange(1, 10), movetime: intRange(50, 5000) },
   diagnose: { depth: intRange(1, 30) },
   llm: { apiKey: str, model: str, baseURL: str },
-  tts: { endpoint: str, model: str },
+  tts: { endpoint: httpsAliyun, model: str },
 }
 
 export function validateSection(section: ConfigSection, patch: Record<string, unknown>): Record<string, unknown> {
