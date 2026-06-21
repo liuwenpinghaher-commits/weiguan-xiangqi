@@ -20,7 +20,7 @@ export const DEFAULTS = {
   } as DirectorCfg,
   engine: { pikafishPath: null, multipv: 5, movetime: 500 } as EngineCfg,
   diagnose: { depth: 12 } as DiagnoseCfg,
-  llm: { apiKey: null, model: 'qwen-plus', baseURL: null } as LlmCfg,
+  llm: { apiKey: null, model: 'qwen-flash', baseURL: null } as LlmCfg,
   tts: { endpoint: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation', model: 'qwen3-tts-flash' } as TtsCfg,
 }
 

@@ -3,7 +3,7 @@ import type { LLMProvider, ChatMsg, LLMOpts } from './provider.js'
 
 /**
  * 阿里百炼(DashScope) OpenAI 兼容层 LLM。
- * qwen-plus 默认不思考、直接出短答,无需 thinking:{type:'disabled'} 扩展字段。
+ * qwen 兼容端(flash/plus 等)默认不思考、直接出短答,无需 thinking:{type:'disabled'} 扩展字段。
  */
 export class DashscopeLLM implements LLMProvider {
   private client: OpenAI
@@ -25,7 +25,7 @@ export class DashscopeLLM implements LLMProvider {
       max_tokens: opts.maxTokens ?? 200,
     }
     if (opts.temperature != null) body.temperature = opts.temperature
-    // qwen-plus 兼容端默认不思考,不传 thinking 字段
+    // qwen 兼容端(flash/plus 等)默认不思考,不传 thinking 字段
     const resp: any = await this.client.chat.completions.create(body)
     return resp.choices?.[0]?.message?.content ?? ''
   }
