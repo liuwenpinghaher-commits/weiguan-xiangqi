@@ -21,6 +21,7 @@ import { SettingsRepo } from './store/settings-repo.js'
 import { MutableLLM, buildInnerLlm } from './llm/mutable-llm.js'
 import { registerAdminRoutes } from './admin/admin-routes.js'
 import { synthesizeUrl } from './voice/dashscope-tts.js'
+import { DashscopeAsr } from './voice/dashscope-asr.js'
 import { SurrealMemoryStore } from './memory/surreal-memory-store.js'
 import { FakeMemoryStore } from './memory/fake-memory-store.js'
 import { DashscopeEmbedding } from './llm/dashscope-embedding.js'
@@ -46,6 +47,8 @@ export async function buildServer(opts: {
   engine?: EngineLike | null
   /** 若传入则替换默认 LLM(FakeLLM/VolcanoLLM) */
   llm?: LLMProvider
+  /** 若传入则直接使用,跳过 DASHSCOPE key 检查与 DashscopeAsr 构造(测试注入 FakeAsr) */
+  asr?: import('./voice/asr.js').AsrProvider
 }) {
   const db = openDb(opts.dbPath)
   const repo = new GamesRepo(db)
@@ -233,6 +236,9 @@ export async function buildServer(opts: {
   })
 
   await app.register(fastifyWebsocket)
+
+  // 二进制 body parser:让 POST /asr 的 application/octet-stream 请求体成为 Buffer
+  app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_req, body, done) => done(null, body))
 
   // 控制台 admin 路由(配置/角色/记忆/对局管理)
   registerAdminRoutes(app, { cfg, mem, games: repo, messages })
@@ -567,6 +573,26 @@ export async function buildServer(opts: {
       })
       reply.header('Content-Type', 'application/json')
       return reply.send({ url })
+    } catch (e) {
+      return reply.code(500).send({ error: (e as Error).message })
+    }
+  })
+
+  // 语音识别:POST /asr?mime=audio/wav,body 为原始音频字节(application/octet-stream)
+  // 注入 opts.asr → 跳过 key 检查;否则需 DASHSCOPE 凭据,缺失则 503
+  app.post('/asr', async (req, reply) => {
+    const mime = String((req.query as { mime?: string }).mime ?? 'audio/wav')
+    const audio = req.body as Buffer
+    if (!Buffer.isBuffer(audio) || audio.length === 0) return reply.code(400).send({ error: '音频为空' })
+    let asr = opts.asr
+    if (!asr) {
+      const llm = cfg.getLlm()
+      if (!llm.apiKey || !llm.baseURL) return reply.code(503).send({ error: '未配置 DASHSCOPE,语音识别不可用' })
+      asr = new DashscopeAsr(process.env.ASR_MODEL ?? 'qwen3-asr-flash', llm.apiKey, llm.baseURL)
+    }
+    try {
+      const text = await asr.transcribe(audio, mime)
+      return reply.send({ text })
     } catch (e) {
       return reply.code(500).send({ error: (e as Error).message })
     }
