@@ -139,18 +139,18 @@ export function ChatPanel({ lines, onSay }: Props) {
           <div style={styles.empty}>还没有消息……等一等看</div>
         )}
         {lines.map((line, i) => {
-          const color = avatarColor(line.personaId)
+          const avatarBg = avatarColor(line.personaId)
           const name = personaName(line.personaId)
           const addrDisplay = addresseeName(line.addressee)
           return (
             <div key={i} style={styles.row}>
               {/* 头像色块 */}
-              <div style={{ ...styles.avatar, background: color }} aria-hidden="true">
+              <div style={{ ...styles.avatar, background: avatarBg }} aria-hidden="true">
                 {name.charAt(0)}
               </div>
               <div style={styles.bubble}>
                 <div style={styles.meta}>
-                  <span style={{ ...styles.name, color }}>{name}</span>
+                  <span style={{ ...styles.name, color: avatarBg }}>{name}</span>
                   {addrDisplay && (
                     <span style={styles.addressee}>→ {addrDisplay}</span>
                   )}

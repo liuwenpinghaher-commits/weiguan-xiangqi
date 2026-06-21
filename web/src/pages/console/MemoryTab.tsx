@@ -51,14 +51,25 @@ function MemRow({ r, onChanged }: { r: MemoryRecord; onChanged: () => void }) {
   const [content, setContent] = useState(r.content)
   const [importance, setImportance] = useState(r.importance)
   const [editing, setEditing] = useState(false)
-  const save = async () => { await updateMemory(r.id, { content, importance }); setEditing(false); onChanged() }
-  const del = async () => { if (window.confirm('删除这条记忆?')) { await deleteMemory(r.id); onChanged() } }
+  const [rowErr, setRowErr] = useState<string | null>(null)
+  const save = async () => {
+    setRowErr(null)
+    try { await updateMemory(r.id, { content, importance }); setEditing(false); onChanged() }
+    catch (e) { setRowErr('保存失败:' + (e as Error).message) }
+  }
+  const del = async () => {
+    if (!window.confirm('删除这条记忆?')) return
+    setRowErr(null)
+    try { await deleteMemory(r.id); onChanged() }
+    catch (e) { setRowErr('删除失败:' + (e as Error).message) }
+  }
   return (
     <tr>
       <td style={darkTdStyle}>{r.kind}</td>
       <td style={darkTdStyle}>{editing
         ? <input style={inp} value={content} onChange={e => setContent(e.target.value)} />
-        : <span style={{ color: r.supersededAt ? color.textFaint : color.text, textDecoration: r.supersededAt ? 'line-through' : 'none' }}>{r.content}</span>}</td>
+        : <span style={{ color: r.supersededAt ? color.textFaint : color.text, textDecoration: r.supersededAt ? 'line-through' : 'none' }}>{r.content}</span>}
+        {rowErr && <div style={{ color: color.danger, fontSize: fontSize.xs, marginTop: space.xs }} role="alert">{rowErr}</div>}</td>
       <td style={darkTdStyle}>{editing
         ? <input style={{ ...inp, width: 56 }} type="number" min={1} max={5} value={importance} onChange={e => setImportance(Number(e.target.value))} />
         : r.importance}</td>
