@@ -320,4 +320,15 @@ describe('ws-server 集成测试', () => {
     })
     expect(res.statusCode).toBe(503)
   })
+
+  it('POST /asr 非法 mime → 400', async () => {
+    const { FakeAsr } = await import('./voice/asr.js')
+    app = await buildServer({ dbPath: ':memory:', engine: fakeEngine, llm: new FakeLLM(() => 'x'), asr: new FakeAsr('当头炮') })
+    const res = await app.inject({
+      method: 'POST', url: '/asr?mime=' + encodeURIComponent('audio/wav\nevil'),
+      headers: { 'content-type': 'application/octet-stream' },
+      payload: Buffer.from('x'),
+    })
+    expect(res.statusCode).toBe(400)
+  })
 })

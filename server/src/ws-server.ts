@@ -580,8 +580,9 @@ export async function buildServer(opts: {
 
   // 语音识别:POST /asr?mime=audio/wav,body 为原始音频字节(application/octet-stream)
   // 注入 opts.asr → 跳过 key 检查;否则需 DASHSCOPE 凭据,缺失则 503
-  app.post('/asr', async (req, reply) => {
+  app.post('/asr', { bodyLimit: 4 * 1024 * 1024 }, async (req, reply) => {
     const mime = String((req.query as { mime?: string }).mime ?? 'audio/wav')
+    if (!/^[\w.+-]+\/[\w.+-]+$/.test(mime)) return reply.code(400).send({ error: 'mime 非法' })
     const audio = req.body as Buffer
     if (!Buffer.isBuffer(audio) || audio.length === 0) return reply.code(400).send({ error: '音频为空' })
     let asr = opts.asr
