@@ -18,3 +18,14 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     app.close().then(() => process.exit(0)).catch(() => process.exit(1))
   })
 }
+
+// 进程级兜底:未捕获异常/未处理 rejection 一律记日志并退出(让 supervisor 重启),
+// 避免进入"半死"状态(事件循环还在但状态已损坏)继续服务脏请求。
+process.on('unhandledRejection', (r) => {
+  console.error('[fatal] unhandledRejection', r)
+  process.exit(1)
+})
+process.on('uncaughtException', (e) => {
+  console.error('[fatal] uncaughtException', e)
+  process.exit(1)
+})

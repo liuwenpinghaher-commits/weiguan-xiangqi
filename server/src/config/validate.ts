@@ -6,6 +6,13 @@ type Cleaner = (v: unknown) => unknown
 const prob: Cleaner = (v) => (typeof v === 'number' && isFinite(v) ? clamp(v, 0, 1) : undefined)
 const intMin0: Cleaner = (v) => (typeof v === 'number' && isFinite(v) ? Math.max(0, Math.round(v)) : undefined)
 const str: Cleaner = (v) => (typeof v === 'string' && v.trim() !== '' ? v : undefined)
+// strOrNull:非空字符串透传;null 或空串(含纯空白)→ null(显式清除,存 JSON null);
+// 其它类型 → undefined(丢弃)。用于 apiKey/baseURL,使 admin 能把已存的 key 清空。
+const strOrNull: Cleaner = (v) => {
+  if (v === null) return null
+  if (typeof v === 'string') return v.trim() === '' ? null : v
+  return undefined
+}
 // TTS endpoint:仅允许 https 的阿里云域。服务端会带着 DASHSCOPE_API_KEY 向该 endpoint 发请求,
 // 若放任改成任意 URL,等于给了把 key 外带到攻击者服务器的 SSRF 口子。
 const httpsAliyun: Cleaner = (v) => {
@@ -42,7 +49,7 @@ const SCHEMA: Record<ConfigSection, Record<string, Cleaner>> = {
   director: { coach: modeCleaner, humanlike: modeCleaner },
   engine: { pikafishPath: (v) => (typeof v === 'string' ? v : v === null ? null : undefined), multipv: intRange(1, 10), movetime: intRange(50, 5000) },
   diagnose: { depth: intRange(1, 30) },
-  llm: { apiKey: str, model: str, baseURL: str },
+  llm: { apiKey: strOrNull, model: str, baseURL: strOrNull },
   tts: { endpoint: httpsAliyun, model: str },
 }
 

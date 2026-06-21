@@ -16,7 +16,8 @@ export class DashscopeAsr implements AsrProvider {
       this.client = client
     } else {
       if (!apiKey || !baseURL) throw new Error('缺少 DASHSCOPE_API_KEY / DASHSCOPE_BASE_URL(见 .env)')
-      this.client = new OpenAI({ apiKey, baseURL }) as any
+      // 30s 超时:防 ASR 请求卡住挂起 worker
+      this.client = new OpenAI({ apiKey, baseURL, timeout: 30_000 }) as any
     }
   }
 

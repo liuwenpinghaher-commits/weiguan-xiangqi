@@ -10,8 +10,15 @@ describe('validateSection', () => {
   it('chat: 丢弃未知字段', () => {
     expect(validateSection('chat', { speakThreshold: 0.7, bogus: 1 } as any)).toEqual({ speakThreshold: 0.7 })
   })
-  it('llm: 字符串字段透传,空串视为未设(转 undefined 丢弃)', () => {
-    expect(validateSection('llm', { model: 'qwen-max', apiKey: '' })).toEqual({ model: 'qwen-max' })
+  it('llm: model 字符串透传;apiKey 空串→null(显式清除,而非丢弃)', () => {
+    expect(validateSection('llm', { model: 'qwen-max', apiKey: '' })).toEqual({ model: 'qwen-max', apiKey: null })
+  })
+  it('llm: apiKey/baseURL 可显式清回 null(null/空串→null,非空串透传)', () => {
+    expect(validateSection('llm', { apiKey: null })).toEqual({ apiKey: null })
+    expect(validateSection('llm', { apiKey: '' })).toEqual({ apiKey: null })
+    expect(validateSection('llm', { apiKey: 'sk-x' })).toEqual({ apiKey: 'sk-x' })
+    expect(validateSection('llm', { baseURL: null })).toEqual({ baseURL: null })
+    expect(validateSection('llm', { baseURL: '   ' })).toEqual({ baseURL: null })
   })
   it('engine: multipv 钳到 [1,10],movetime 钳到 [50,5000]', () => {
     expect(validateSection('engine', { multipv: 99, movetime: 1 })).toEqual({ multipv: 10, movetime: 50 })

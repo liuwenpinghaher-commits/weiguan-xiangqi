@@ -13,7 +13,8 @@ export class DashscopeLLM implements LLMProvider {
     baseURL = process.env.DASHSCOPE_BASE_URL,
   ) {
     if (!apiKey || !baseURL) throw new Error('缺少 DASHSCOPE_API_KEY / DASHSCOPE_BASE_URL(见 .env)')
-    this.client = new OpenAI({ apiKey, baseURL })
+    // 30s 超时:防 DashScope 卡住时无限挂起拖垮 worker
+    this.client = new OpenAI({ apiKey, baseURL, timeout: 30_000 })
   }
 
   async chat(messages: ChatMsg[], opts: LLMOpts = {}): Promise<string> {
