@@ -199,8 +199,9 @@ export async function buildServer(opts: {
     onStimulus: (s) => { if (!pausedGames.has(s.gameId)) void chat.onStimulus(s) },
   })
 
-  // 冷场定时器:每 20 秒(可配)以 35% 概率投一个高张力 idle 刺激,让茶馆偶尔有人闲扯,又不刷屏。
-  // 用自重排的 setTimeout 取代固定 setInterval,使 idleIntervalMs/idleProb 配置变更在下个周期即时生效。
+  // 冷场补话:沉默驱动(非节拍式)。定时器每 idleIntervalMs 检查一次,仅当有进行中对局、
+  // 未暂停、距上一条弹幕沉默 ≥IDLE_SILENCE_MS、且掷骰命中 idleProb 时,才投一个贴局面的 idle 刺激。
+  // 用自重排的 setTimeout 使 idleIntervalMs/idleProb 配置变更在下个周期即时生效。
   let idleTimer: ReturnType<typeof setTimeout> | null = null
   const IDLE_SILENCE_MS = 30000
   const scheduleIdle = () => {
