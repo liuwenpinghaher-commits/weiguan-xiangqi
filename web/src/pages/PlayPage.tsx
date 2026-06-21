@@ -3,11 +3,12 @@ import { connect, type ServerMsg } from '../api/ws-client.js'
 import { Board } from '../board/Board.js'
 import { ChatPanel, type ChatLine } from '../chat/ChatPanel.js'
 import { cancelSpeech } from '../voice/browser-tts.js'
+import { stopVoice } from '../voice/server-tts.js'
 import { useIsNarrow } from '../hooks/use-viewport.js'
 
 const START_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
-type GameStatus = 'connecting' | 'waiting' | 'playing' | 'over' | 'error'
+type GameStatus = 'idle' | 'connecting' | 'waiting' | 'playing' | 'paused' | 'over' | 'error'
 type GameMode = 'coach' | 'humanlike'
 type GameResult = 'red' | 'black' | 'draw' | null
 type HumanSide = 'red' | 'black'
@@ -15,8 +16,8 @@ type HumanSide = 'red' | 'black'
 export function PlayPage() {
   const [fen, setFen] = useState(START_FEN)
   const [fenKey, setFenKey] = useState(0) // 改变 key 强制 Board 重置（非法着回弹）
-  const [status, setStatus] = useState<GameStatus>('connecting')
-  const [statusMsg, setStatusMsg] = useState('正在连接服务器...')
+  const [status, setStatus] = useState<GameStatus>('idle')
+  const [statusMsg, setStatusMsg] = useState('点「开始」开局')
   const [statusError, setStatusError] = useState(false) // 非法着法时用红字显示
   const [gameId, setGameId] = useState<number | null>(null)
   const [lastAiMove, setLastAiMove] = useState<string | null>(null)
@@ -109,8 +110,6 @@ export function PlayPage() {
   }
 
   useEffect(() => {
-    setStatusMsg('正在连接服务器...')
-
     // 检查是否有专项陪练局面（由 GrowthPage 写入 sessionStorage）
     const sparringFen = sessionStorage.getItem('weiguan_sparring_fen')
     const sparringSide = sessionStorage.getItem('weiguan_sparring_side') as HumanSide | null
@@ -124,13 +123,34 @@ export function PlayPage() {
       const ws = startNewConnection(mode, activeSide, sparringFen)
       return () => { ws.close() }
     }
-
-    const ws = startNewConnection(mode, side)
-    return () => {
-      ws.close()
-    }
+    // 非陪练：进页不自动开局，等待用户点「开始」
+    setStatus('idle')
+    setStatusMsg('点「开始」开局')
+    return () => { wsRef.current?.close() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  function handleStart() {
+    startNewConnection(mode, side)
+  }
+
+  function handlePause() {
+    if (status !== 'playing' || gameId === null) return
+    wsRef.current?.send({ type: 'pause', gameId })
+    stopVoice()
+    cancelSpeech()
+    setStatus('paused')
+    setStatusMsg('已暂停 — 点「继续」恢复')
+    setStatusError(false)
+  }
+
+  function handleResume() {
+    if (status !== 'paused' || gameId === null) return
+    wsRef.current?.send({ type: 'resume', gameId })
+    setStatus('playing')
+    setStatusMsg('已继续，请走棋')
+    setStatusError(false)
+  }
 
   function handleMove(move: string) {
     if (status !== 'playing' || gameId === null) return
@@ -158,12 +178,12 @@ export function PlayPage() {
 
   function handleModeChange(newMode: GameMode) {
     setMode(newMode)
-    handleRestart(newMode, side)
+    if (status !== 'idle') handleRestart(newMode, side)
   }
 
   function handleSideChange(newSide: HumanSide) {
     setSide(newSide)
-    handleRestart(mode, newSide)
+    if (status !== 'idle') handleRestart(mode, newSide)
   }
 
   // 窄屏下棋盘尺寸：视口宽度减边距，最大 460
@@ -193,6 +213,15 @@ export function PlayPage() {
         {lastAiMove && !awaitingAi && (
           <span style={styles.aiMove}>AI 上一手：{lastAiMove}</span>
         )}
+        {(status === 'idle' || status === 'over' || status === 'error') && (
+          <button style={styles.modeBtn} onClick={handleStart} aria-label="开始对局">开始</button>
+        )}
+        {status === 'playing' && (
+          <button style={styles.modeBtn} onClick={handlePause} aria-label="暂停对局">暂停</button>
+        )}
+        {status === 'paused' && (
+          <button style={styles.modeBtn} onClick={handleResume} aria-label="继续对局">继续</button>
+        )}
       </div>
 
       {/* 对局结束结果横幅 */}
@@ -215,7 +244,7 @@ export function PlayPage() {
         </div>
         <ChatPanel
           lines={lines}
-          onSay={(t) => wsRef.current?.send({ type: 'say', gameId, text: t })}
+          onSay={(t) => { if (status === 'playing' && gameId !== null) wsRef.current?.send({ type: 'say', gameId, text: t }) }}
         />
       </div>
 
