@@ -399,3 +399,26 @@ describe('idle 贴局面', () => {
     expect(idleU.includes('棋外') || idleU.includes('家里') || idleU.includes('行当')).toBe(false)
   })
 })
+
+describe('老黑参与 + 张力分级', () => {
+  function mk(rngSeq: number[]) {
+    let i = 0
+    const cfg = new RC2(new SR2(odb2(':memory:')), () => '2026-06-21T00:00:00.000Z')
+    const caps: { user: string }[] = []
+    const emitted: string[] = []
+    const llm = new FL2((msgs: any[]) => { const u = msgs.find(m => m.role === 'user'); caps.push({ user: u?.content ?? '' }); return '行' })
+    const eng = new CE2({ llm, mem: new FM2(() => 0), cfg, now: () => 0, emit: (l: any) => emitted.push(l.personaId), rng: () => rngSeq[(i++) % rngSeq.length] })
+    return { eng, caps, emitted }
+  }
+  it('人类走子(非 byPlayerPersona)时老黑也可能参与,prompt 带其身份/立场', async () => {
+    const { eng, caps, emitted } = mk([0])
+    await eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 10, moveZh: '马八进七', ply: 4, tension: 0.95 } as any)
+    expect(emitted.includes('player')).toBe(true)
+    expect(caps.some(c => c.user.includes('老黑') && c.user.includes('立场'))).toBe(true)
+  })
+  it('高张力(0.95)比低张力(0.4)选更多 speaker', async () => {
+    const hi = mk([0.5]); await hi.eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 0, moveZh: '车一进一', ply: 5, tension: 0.95 } as any)
+    const lo = mk([0.5]); await lo.eng.onStimulus({ kind: 'move', gameId: 2, scoreCp: 0, moveZh: '兵三进一', ply: 5, tension: 0.4 } as any)
+    expect(hi.emitted.length).toBeGreaterThan(lo.emitted.length)
+  })
+})

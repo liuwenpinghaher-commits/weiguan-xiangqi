@@ -62,10 +62,13 @@ export class ChatEngine {
     }
     const recentSecs = this.recentMap()
     const chat = this.deps.cfg.getChat()
-    const speakers = pickSpeakers(stim, this.deps.cfg.personas().filter(p => !p.isPlayer), recentSecs, this.deps.rng, chat.speakThreshold, chat.jitterWidth)
+    const maxSpk = stim.tension >= 0.8 ? 3 : stim.tension >= 0.5 ? 2 : 1
+    const speakers = pickSpeakers(stim, this.deps.cfg.personas().filter(p => !p.isPlayer), recentSecs, this.deps.rng, chat.speakThreshold, chat.jitterWidth, maxSpk)
 
-    // 若这步是 AI 棋手走的,以 40% 概率让 player 自评(放末尾)
-    if (stim.byPlayerPersona && this.deps.rng() < 0.4) {
+    // 老黑(AI 棋手)参与:自己刚走→高概率自评;其余有看头时→中概率作为当事人插话
+    if (stim.byPlayerPersona) {
+      if (this.deps.rng() < 0.6) speakers.push('player')
+    } else if (this.deps.rng() < 0.3 && (stim.moveZh != null || stim.kind === 'human_said' || stim.kind === 'idle')) {
       speakers.push('player')
     }
 
@@ -175,11 +178,15 @@ export class ChatEngine {
 
     let user: string
     let addressee: ChatLine['addressee'] = 'all'
-    if (stim.kind === 'human_said') {
+    if (p.isPlayer && stim.byPlayerPersona) {
+      user = `你(${p.name})刚走了「${stim.moveZh ?? '一步'}」,局面${qual}。自评一句:说说你这步的算计或得失,别空吹,${len}:`
+    } else if (p.isPlayer) {
+      const pctx = this.lastCtx.get(stim.gameId)
+      const psit = pctx ? `眼下「${pctx.moveZh}」,${pctx.qual}` : `局面${qual}`
+      user = `你是正在下这盘的老黑,沉稳、闷、偶尔得意,这是你的对局、有立场。${psit}。${len},就眼前局面/对手这步/接刚才那句说一句,带你的脾气,别长篇:`
+    } else if (stim.kind === 'human_said') {
       user = `玩家刚冲你们说:"${stim.humanText}"。${len},回他一句,口语自然:`
       addressee = 'human'
-    } else if (p.isPlayer && stim.byPlayerPersona) {
-      user = `你(${p.name})刚走了「${stim.moveZh ?? '一步'}」,局面${qual}。自评一句:说说你这步的算计或得失,别空吹,${len}:`
     } else if (stim.kind === 'long_think') {
       user = `对方这步想了很久还没落子。${len},用你的脾气随口催两句/调侃/安慰,别太冲:`
     } else if (stim.kind === 'idle' || (stim.kind === 'topic_open' && !stim.moveZh)) {
