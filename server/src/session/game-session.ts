@@ -487,7 +487,25 @@ export class GameSession {
     this.noCapturePlies.set(gameId, captured ? 0 : currentNoCapture + 1)
   }
 
+  /** 测试/诊断用只读探针:该 gameId 是否仍持有任一内存态条目(finish 后应全清)。 */
+  hasGameState(gameId: number): boolean {
+    return this.positions.has(gameId) || this.modes.has(gameId) || this.humanSides.has(gameId)
+      || this.lastMoveAt.has(gameId) || this.lastMoveMs.has(gameId)
+      || this.repeatHistories.has(gameId) || this.noCapturePlies.has(gameId)
+      || this.prevRedCp.has(gameId) || this.lastHumanBlunder.has(gameId)
+  }
+
   private finish(gameId: number, result: Side | 'draw') {
     this.deps.repo.finishGame(gameId, result, this.deps.clock())
+    // 局末清理所有按 gameId 累积的内存态,防渐进内存泄漏 + gameId 复用误判
+    this.positions.delete(gameId)
+    this.modes.delete(gameId)
+    this.humanSides.delete(gameId)
+    this.lastMoveAt.delete(gameId)
+    this.lastMoveMs.delete(gameId)
+    this.repeatHistories.delete(gameId)
+    this.noCapturePlies.delete(gameId)
+    this.prevRedCp.delete(gameId)
+    this.lastHumanBlunder.delete(gameId)
   }
 }

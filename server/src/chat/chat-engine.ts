@@ -55,6 +55,12 @@ export class ChatEngine {
     })
   }
 
+  /** 对局结束/清理时调用:丢弃该 gameId 的最近聊天缓冲与局面上下文,防按 gameId 累积的内存泄漏。 */
+  forgetGame(gameId: number): void {
+    this.recent.delete(gameId)
+    this.lastCtx.delete(gameId)
+  }
+
   async onStimulus(stim: Stimulus): Promise<void> {
     if (!this.guard.allow()) return
     if (stim.moveZh) {

@@ -88,6 +88,31 @@ test('轮次守卫:不是 human 一方时拒绝,不入库不改状态', async ()
   expect(repo.getMoves(gameId)).toHaveLength(0)
 })
 
+test('finish 后清理该 gameId 的全部内存态(防泄漏/复用误判)', async () => {
+  const repo = new GamesRepo(openDb(':memory:'))
+  // 人着后即终局的 fakePosition:applyMove 得到的局面 isGameOver().over=true
+  const overPosition = (fen: string): any => ({
+    fen: () => fen,
+    sideToMove: () => (fen.includes(' w ') ? 'red' : 'black'),
+    legalMoves: () => ['h2e2'],
+    applyMove: (_m: string) => ({
+      ...overPosition(fen.includes(' w ') ? fen.replace(' w ', ' b ') : fen.replace(' b ', ' w ')),
+      isGameOver: () => ({ over: true as const, result: 'red' as const }),
+    }),
+    isGameOver: () => ({ over: false as const }),
+  })
+  const session = new GameSession({
+    repo, engine: fakeEngine as any, makePosition: overPosition,
+    clock: () => 't', cfg: makeCfg(),
+  })
+  const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
+  expect(session.hasGameState(gameId)).toBe(true)
+  const res = await session.playHumanMove(gameId, 'h2e2')
+  expect(res.over).toBe(true)
+  // 局末:该 gameId 的内存态应全部清空
+  expect(session.hasGameState(gameId)).toBe(false)
+})
+
 // ── 刺激/视角覆盖测试 ──────────────────────────────────────────────────────────
 // 这组测试覆盖 playHumanMove 里 onStimulus 分支:redCp 符号、byPlayerPersona、ply。
 // 若测试 A 失败说明 redCp 翻转逻辑写反,黑方走子时弹幕评分符号错误。

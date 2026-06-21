@@ -252,6 +252,19 @@ export async function buildServer(opts: {
   // 暂停中的对局:整局总开关。暂停期间停冷场定时器、跳过 move/say/idle 刺激,不生成不广播。
   const pausedGames = new Set<number>()
 
+  // 对局结束时集中清理按 gameId 累积的容器,防渐进内存泄漏 + gameId 复用误判。
+  // pausedGames 与 chat 上下文可立即清(终局后不会再有该局刺激);
+  // reflectedGames/diagnosedGames 是异步反思/诊断的幂等闸,须等其 fire-and-forget 落定后再清,
+  // 否则会在反思/诊断在途时丢掉去重标记导致重复触发。
+  function cleanupFinishedGame(gameId: number): void {
+    pausedGames.delete(gameId)
+    chat.forgetGame(gameId)
+  }
+  function forgetGuards(gameId: number): void {
+    reflectedGames.delete(gameId)
+    diagnosedGames.delete(gameId)
+  }
+
   const app = Fastify({ logger: true })
 
   // 跨域:仅允许本地前端(:3420)读取响应。原先 origin:true 反射任意来源——意味着你浏览器里
@@ -343,12 +356,17 @@ export async function buildServer(opts: {
           // 局末:对每个旁观者触发反思(异步,失败不影响主流程)
           if (result.over) {
             const gameId = msg.gameId as number
-            reflectGame(gameId).catch(() => { /* 反思失败静默忽略 */ })
+            // 立即清理暂停态与聊天上下文(终局后不再有该局刺激)
+            cleanupFinishedGame(gameId)
+            const reflectP = reflectGame(gameId).catch(() => { /* 反思失败静默忽略 */ })
             // 局末自动后台诊断(fire-and-forget,幂等;引擎未配置则跳过)
+            let diagP: Promise<unknown> = Promise.resolve()
             if (engine && !diagnosedGames.has(gameId)) {
               diagnosedGames.add(gameId)
-              void diagnoseGame(diagDeps, gameId).catch(() => { /* 诊断失败静默忽略,不影响对局 */ })
+              diagP = diagnoseGame(diagDeps, gameId).catch(() => { /* 诊断失败静默忽略,不影响对局 */ })
             }
+            // 反思+诊断都落定后,再清掉幂等闸,避免在途时丢去重标记
+            void Promise.allSettled([reflectP, diagP]).then(() => forgetGuards(gameId))
           }
         } else if (msg.type === 'say') {
           // 玩家发言 → human_said 刺激,高张力必有人接
