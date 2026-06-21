@@ -33,32 +33,40 @@ export function useSpeechInput(onResult: (text: string) => void) {
       setError('not-allowed'); return
     }
     chunksRef.current = []
-    const rec = new MediaRecorder(stream)
-    recRef.current = rec
-    rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
-    rec.onstop = async () => {
-      stream.getTracks().forEach((t) => t.stop())
-      try {
-        const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' })
-        const wav = await blobToWav(blob)
-        const res = await fetch(`${ASR_URL}?mime=audio/wav`, {
-          method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: wav,
-        })
-        if (!res.ok) { setError(res.status === 503 ? 'asr-unconfigured' : 'asr-failed'); return }
-        const { text } = (await res.json()) as { text: string }
-        if (text && text.trim()) onResult(text.trim())
-        else setError('no-speech')
-      } catch {
-        setError('asr-failed')
-      } finally {
-        setListening(false)
+    try {
+      const rec = new MediaRecorder(stream)
+      recRef.current = rec
+      rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop())
+        try {
+          const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' })
+          const wav = await blobToWav(blob)
+          const res = await fetch(`${ASR_URL}?mime=audio/wav`, {
+            method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: wav,
+          })
+          if (!res.ok) { setError(res.status === 503 ? 'asr-unconfigured' : 'asr-failed'); return }
+          const { text } = (await res.json()) as { text: string }
+          if (text && text.trim()) onResult(text.trim())
+          else setError('no-speech')
+        } catch {
+          setError('asr-failed')
+        } finally {
+          setListening(false)
+        }
       }
+      rec.start()
+      setListening(true)
+    } catch {
+      stream.getTracks().forEach((t) => t.stop())
+      setError('asr-failed')
     }
-    rec.start()
-    setListening(true)
   }, [listening, onResult])
 
-  const stop = useCallback(() => { recRef.current?.stop() }, [])
+  const stop = useCallback(() => {
+    const rec = recRef.current
+    if (rec && rec.state === 'recording') rec.stop()
+  }, [])
 
   return { listening, start, stop, supported: isSttSupported(), error }
 }
