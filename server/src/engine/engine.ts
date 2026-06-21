@@ -29,6 +29,9 @@ interface PendingJob {
 
 const DEPTH_DEFAULT_MOVETIME = 5000
 const TIMEOUT_BUFFER_MS = 2000
+// 队列上限:防诊断(可达 200 手逐手分析)瞬间塞满队列,拖垮正在进行的对弈。
+// 超过则直接 reject,让上层降级而非无限堆积。
+const QUEUE_MAX = 64
 
 export class UciEngine {
   private latest = new Map<number, EngineLine>()
@@ -99,6 +102,9 @@ export class UciEngine {
   }
 
   analyze(fen: string, opts: AnalyzeOpts): Promise<EngineLine[]> {
+    if (this.queue.length >= QUEUE_MAX) {
+      return Promise.reject(new Error(`引擎队列过载(queue overload，已达上限 ${QUEUE_MAX})`))
+    }
     return new Promise<EngineLine[]>((resolve, reject) => {
       this.queue.push({ fen, opts, resolve, reject })
       this.dequeue()
@@ -119,16 +125,23 @@ export function spawnTransport(binPath: string): Transport {
   let closed = false
   const fireClose = (err?: Error) => { if (closed) return; closed = true; onClose(err) }
   rl.on('line', (l) => onLine(l))
+  // 监听 stderr:引擎(权重缺失/非法 UCI 等)的诊断信息此前被丢弃,排障无从下手。
+  proc.stderr?.on('data', (d) => console.warn('[engine stderr]', String(d).trim()))
   proc.on('error', (err) => fireClose(err))
   proc.on('exit', (code, signal) => {
     fireClose(code === 0 ? undefined : new Error(`engine exited code=${code} signal=${signal}`))
   })
-  proc.stdin.write('uci\n')
-  proc.stdin.write('isready\n')
+  // 进程退出后再 write 会抛 EPIPE/ERR_STREAM_DESTROYED;包 try/catch 防其逸出拖垮 worker。
+  const safeWrite = (s: string): void => {
+    if (proc.killed || closed) return
+    try { proc.stdin.write(s) } catch (err) { console.warn('[engine] stdin.write 失败(进程已退出?):', (err as Error).message) }
+  }
+  safeWrite('uci\n')
+  safeWrite('isready\n')
   return {
-    write: (cmd) => proc.stdin.write(cmd + '\n'),
+    write: (cmd) => safeWrite(cmd + '\n'),
     onData: (cb) => { onLine = cb },
     onClose: (cb) => { onClose = cb },
-    close: () => { proc.stdin.write('quit\n'); proc.kill() },
+    close: () => { safeWrite('quit\n'); proc.kill() },
   }
 }

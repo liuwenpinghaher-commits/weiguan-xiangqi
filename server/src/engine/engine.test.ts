@@ -57,6 +57,18 @@ test('transport 异常关闭时在途 analyze 被 reject(含 engine)', async () 
   await expectation
 })
 
+test('队列过载时立即 reject(防诊断洪峰挤爆拖垮对弈)', async () => {
+  const ft = new FakeTransport()
+  const eng = new UciEngine(ft)
+  // 第一个进 active,之后 64 个排队(queue.length 达到上限 64)。都不喂 bestmove。
+  const pending: Promise<unknown>[] = []
+  for (let i = 0; i < 65; i++) {
+    pending.push(eng.analyze(`fen${i}`, { multipv: 1, movetime: 100 }).catch(() => {}))
+  }
+  // 第 66 个:queue 已满 → 同步 reject
+  await expect(eng.analyze('overflow', { multipv: 1, movetime: 100 })).rejects.toThrow(/过载|overload/i)
+})
+
 test('并发 analyze 串行执行,各拿各自结果不串扰', async () => {
   const ft = new FakeTransport()
   const eng = new UciEngine(ft)

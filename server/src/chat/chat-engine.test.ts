@@ -78,6 +78,34 @@ test('单个 speaker LLM 失败不让 onStimulus reject,后续 speaker 照常', 
   expect(Array.isArray(out)).toBe(true)
 })
 
+test('forgetGame 清掉该局上下文:之后 idle prompt 不再含旧着法,降级为"这局还在走"', async () => {
+  const captured: string[] = []
+  const llm = new FakeLLM((msgs) => {
+    msgs.forEach(m => captured.push(m.content))
+    return 'ok'
+  })
+  // rng 固定 0(配 speakThreshold 拉高)保证每个 idle 刺激都有人发言,能捕获 prompt
+  const mem = new FakeMemoryStore(() => 1000)
+  const out: any[] = []
+  const cfg = makeCfg({ minSilenceMs: 0, maxPerMin: 100, speakThreshold: 1, jitterWidth: 0 })
+  const engine = new ChatEngine({ llm, mem, cfg, now: () => 1000, emit: (l) => out.push(l), rng: () => 0 })
+  // 1) 走一步,设入 lastCtx
+  await engine.onStimulus({
+    kind: 'move', gameId: 7, scoreCp: 100, tension: 0.9,
+    moveZh: '红炮二平五', side: 'red', ply: 3, phase: 'opening',
+  })
+  // 基线:idle prompt 含旧着法(lastCtx 生效)
+  captured.length = 0
+  await engine.onStimulus({ kind: 'idle', gameId: 7, scoreCp: null, tension: 0.9 })
+  expect(captured.join('\n')).toContain('红炮二平五')
+  // 2) 忘掉这局
+  engine.forgetGame(7)
+  // 3) idle:此时无 lastCtx,prompt 不应再含旧着法(已降级,不带局面上下文)
+  captured.length = 0
+  await engine.onStimulus({ kind: 'idle', gameId: 7, scoreCp: null, tension: 0.9 })
+  expect(captured.join('\n')).not.toContain('红炮二平五')
+})
+
 test('prompt 含真实着法 — buildPrompt 把 moveZh 注入 user 消息', async () => {
   // 捕获 llm.chat 收到的消息
   const captured: string[] = []

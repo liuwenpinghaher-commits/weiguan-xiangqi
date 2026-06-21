@@ -17,7 +17,8 @@ export class DashscopeEmbedding implements EmbeddingProvider {
       const apiKey = process.env.DASHSCOPE_API_KEY
       const baseURL = process.env.DASHSCOPE_BASE_URL
       if (!apiKey || !baseURL) throw new Error('缺少 DASHSCOPE_API_KEY / DASHSCOPE_BASE_URL(见 .env)')
-      this.client = new OpenAI({ apiKey, baseURL }) as any
+      // 30s 超时:防嵌入请求卡住拖垮记忆写入/检索
+      this.client = new OpenAI({ apiKey, baseURL, timeout: 30_000 }) as any
     }
   }
 
@@ -27,6 +28,7 @@ export class DashscopeEmbedding implements EmbeddingProvider {
       input: texts,
       dimensions: this.dimension,
     })
-    return resp.data.map((d: any) => d.embedding as number[])
+    // 结构异常(data 缺失)时返回空数组,由上层(embedOne 取 [0]→undefined→null)走无向量降级
+    return (resp.data ?? []).map((d: any) => d.embedding as number[])
   }
 }

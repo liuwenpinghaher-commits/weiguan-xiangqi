@@ -34,21 +34,30 @@ export async function synthesizeUrl(
   cfg: TtsCfg,
 ): Promise<string> {
   const clipped = text.slice(0, 200)
-  const resp = await fetch(cfg.endpoint, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${cfg.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: cfg.model,
-      input: {
-        text: clipped,
-        voice,
-        language_type: 'Chinese',
+  // 15s 超时:TTS 走低延迟链路,卡住超过 15s 直接放弃,避免挂死前端等待
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 15_000)
+  let resp: Response
+  try {
+    resp = await fetch(cfg.endpoint, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${cfg.apiKey}`,
+        'Content-Type': 'application/json',
       },
-    }),
-  })
+      body: JSON.stringify({
+        model: cfg.model,
+        input: {
+          text: clipped,
+          voice,
+          language_type: 'Chinese',
+        },
+      }),
+      signal: ctrl.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
 
   if (!resp.ok) {
     const body = await resp.text().catch(() => '')
