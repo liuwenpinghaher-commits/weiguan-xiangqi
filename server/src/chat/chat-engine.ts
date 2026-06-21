@@ -45,6 +45,8 @@ export class ChatEngine {
   private lastText = new Map<string, string>()       // personaId -> 上次 emit 文本(原文)
   /** 按 gameId 维护最近聊天缓冲(含角色和玩家发言),用于给下一个说话者注入上下文 */
   private recent = new Map<number, RecentEntry[]>()
+  /** 按 gameId 缓存最近一次走子的局面上下文,供 idle 贴着局面说 */
+  private lastCtx = new Map<number, { moveZh: string; qual: string; ply: number }>()
 
   constructor(private deps: ChatEngineDeps) {
     this.guard = new TempoGuard({
@@ -55,6 +57,9 @@ export class ChatEngine {
 
   async onStimulus(stim: Stimulus): Promise<void> {
     if (!this.guard.allow()) return
+    if (stim.moveZh) {
+      this.lastCtx.set(stim.gameId, { moveZh: stim.moveZh, qual: qualWord(stim.scoreCp ?? null), ply: stim.ply ?? 0 })
+    }
     const recentSecs = this.recentMap()
     const chat = this.deps.cfg.getChat()
     const speakers = pickSpeakers(stim, this.deps.cfg.personas().filter(p => !p.isPlayer), recentSecs, this.deps.rng, chat.speakThreshold, chat.jitterWidth)
@@ -178,7 +183,9 @@ export class ChatEngine {
     } else if (stim.kind === 'long_think') {
       user = `对方这步想了很久还没落子。${len},用你的脾气随口催两句/调侃/安慰,别太冲:`
     } else if (stim.kind === 'idle' || (stim.kind === 'topic_open' && !stim.moveZh)) {
-      user = `这会儿没大事。${len},随口扯点棋外的(你自己的行当/家里/最近遇上的事),或棋摊闲话、一句棋谚掌故,别评具体某步:`
+      const ictx = this.lastCtx.get(stim.gameId)
+      const sit = ictx ? `眼下走到第${ictx.ply}手「${ictx.moveZh}」,${ictx.qual}` : '这局还在走'
+      user = `这会儿没新棋步。${len},就着眼前这盘说(${sit}):僵不僵/谁占优/该走哪一步/某步还没应,或随口催两句;可带一句扣着当前局面的棋识(残局理路/棋谚/掌故),别扯场外、别瞎编:`
     } else if (target && this.deps.rng() < c.reactProb) {
       // 真互动(占比小):接某人的话,但要说到棋上,不空贫
       user = `「${target.name}」刚说:"${target.text}"。${len},接他的话——同意就补一刀、不同意就摆棋上的道理反驳他,像老熟人拌嘴但别空贫:`

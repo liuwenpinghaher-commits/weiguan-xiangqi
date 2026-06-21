@@ -306,7 +306,7 @@ test('idle 刺激:user prompt 含"棋外"或"掌故"提示,不含"这步"等着�
   await engine.onStimulus(stim)
   expect(capturedUsers.length).toBeGreaterThanOrEqual(1)
   // idle prompt 应提示闲聊/掌故内容
-  expect(capturedUsers.some(u => u.includes('棋外') || u.includes('掌故') || u.includes('棋谚'))).toBe(true)
+  expect(capturedUsers.some(u => u.includes('掌故') || u.includes('棋谚') || u.includes('局面'))).toBe(true)
 })
 
 test('long_think 刺激:user prompt 含"想了很久"或"长考"或"调侃"相关词', async () => {
@@ -378,5 +378,24 @@ describe('系统 prompt 贴棋局', () => {
     expect(caps.some(s => s.includes('扣') && s.includes('别瞎编'))).toBe(true)
     expect(caps.some(s => s.includes('把道理说透'))).toBe(true)
     expect(caps.every(s => !s.includes('扯句闲篇'))).toBe(true)
+  })
+})
+
+describe('idle 贴局面', () => {
+  it('idle 的 user prompt 贴当前局面、含缓存的走子、不扯场外', async () => {
+    const caps: string[] = []
+    const cfg = new RC2(new SR2(odb2(':memory:')), () => '2026-06-21T00:00:00.000Z')
+    const llm = new FL2((msgs) => { const u = msgs.find(m => m.role === 'user'); if (u) caps.push(u.content); return '僵着' })
+    // now 在两次刺激间推进:跨过最近发言惩罚窗口(30s),让 idle 仍能选出说话者
+    let nowMs = 0
+    const eng = new CE2({ llm, mem: new FM2(() => nowMs), cfg, now: () => nowMs, emit: () => {}, rng: () => 0.1 })
+    await eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 20, moveZh: '炮二平五', ply: 3, tension: 0.95 } as any)
+    caps.length = 0
+    nowMs = 60_000
+    await eng.onStimulus({ kind: 'idle', gameId: 1, scoreCp: null, tension: 0.95 } as any)
+    const idleU = caps.join('\n')
+    expect(idleU.includes('眼前这盘') || idleU.includes('就着眼前')).toBe(true)
+    expect(idleU.includes('炮二平五')).toBe(true)
+    expect(idleU.includes('棋外') || idleU.includes('家里') || idleU.includes('行当')).toBe(false)
   })
 })
