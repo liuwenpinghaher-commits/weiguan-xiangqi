@@ -422,3 +422,18 @@ describe('老黑参与 + 张力分级', () => {
     expect(hi.emitted.length).toBeGreaterThan(lo.emitted.length)
   })
 })
+
+describe('记忆检索失败不让全场哑火', () => {
+  it('mem.retrieve 抛错时旁观者仍能发言(降级为无背景,而非全员被跳过)', async () => {
+    const cfg = new RC2(new SR2(odb2(':memory:')), () => '2026-06-21T00:00:00.000Z')
+    const emitted: string[] = []
+    const llm = new FL2(() => '中炮稳')
+    const mem = new FM2(() => 0)
+    // 模拟 SurrealDB 连接断开:每次检索都抛错
+    mem.retrieve = async () => { throw new Error('surreal 连接断开') }
+    const eng = new CE2({ llm, mem, cfg, now: () => 0, emit: (l: any) => emitted.push(l.personaId), rng: () => 0.1 })
+    await eng.onStimulus({ kind: 'human_said', gameId: 1, scoreCp: null, humanText: '这步怎么样', tension: 0.9 } as any)
+    // 检索失败不应导致 0 弹幕——背景降级为"还不了解",人照常说话
+    expect(emitted.length).toBeGreaterThan(0)
+  })
+})

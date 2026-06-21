@@ -123,8 +123,10 @@ export class ChatEngine {
 
         // 推入全局 recent 缓冲(跨刺激记忆)
         this.pushRecent(stim.gameId, entry)
-      } catch {
-        // 单个 speaker LLM 失败:跳过该 speaker,不影响其他人
+      } catch (err) {
+        // 单个 speaker 生成失败:跳过该 speaker,不影响其他人。
+        // 用 warn 记录而非静默吞——否则故障(如 LLM/记忆异常)无从排查。
+        console.warn('[chat] speaker', id, '生成失败,跳过:', (err as Error).message)
         continue
       }
     }
@@ -151,9 +153,15 @@ export class ChatEngine {
     const seen = viewScore(stim.scoreCp, p.skill, this.deps.rng)
     const qual = qualWord(seen)
 
-    const facts = (await this.deps.mem
-      .retrieve(p.id, stim.moveZh ?? stim.humanText ?? stim.kind, 3, ['fact', 'insight']))
-      .map(m => '· ' + m.content).join('\n') || '(还不了解)'
+    // 记忆检索只是辅助背景("你对这位棋手的了解");检索失败(如 SurrealDB 连接断)
+    // 必须降级为"还不了解",绝不能抛错——否则会被外层 per-speaker catch 吞掉,导致全场哑火。
+    let facts = '(还不了解)'
+    try {
+      const mems = await this.deps.mem.retrieve(p.id, stim.moveZh ?? stim.humanText ?? stim.kind, 3, ['fact', 'insight'])
+      if (mems.length) facts = mems.map(m => '· ' + m.content).join('\n')
+    } catch (err) {
+      console.warn('[chat] 记忆检索失败,降级为无背景:', (err as Error).message)
+    }
 
     const contextLine = context.length > 0
       ? context.map(c => `- ${c.name}:${c.text}`).join('\n')
