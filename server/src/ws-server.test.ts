@@ -128,6 +128,20 @@ describe('ws-server 集成测试', () => {
     expect(res.statusCode).toBe(404)
   })
 
+  it('GET /games/:id/diagnosis 非法 id → 400', async () => {
+    app = await makeApp()
+    const res = await app.inject({ method: 'GET', url: '/games/abc/diagnosis' })
+    expect(res.statusCode).toBe(400)
+    expect(res.json<any>().error).toBe('invalid id')
+  })
+
+  it('GET /games/:id/drills 非法 id → 400', async () => {
+    app = await makeApp()
+    const res = await app.inject({ method: 'GET', url: '/games/abc/drills' })
+    expect(res.statusCode).toBe(400)
+    expect(res.json<any>().error).toBe('invalid id')
+  })
+
   it('GET /admin/config 经 buildServer 挂载可用', async () => {
     app = await makeApp()
     const res = await app.inject({ method: 'GET', url: '/admin/config' })

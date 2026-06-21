@@ -438,6 +438,7 @@ export async function buildServer(opts: {
   // 单局诊断结果(评分曲线 + 每手标注)
   app.get('/games/:id/diagnosis', async (req, reply) => {
     const id = Number((req.params as { id: string }).id)
+    if (!Number.isInteger(id)) return reply.code(400).send({ error: 'invalid id' })
     const game = repo.getGame(id)
     if (!game) return reply.code(404).send({ error: 'not found' })
     return { game, moves: repo.getMoves(id), annotations: analysis.getAnnotations(id) }
@@ -455,6 +456,7 @@ export async function buildServer(opts: {
   // 训练题(从某局人方失误生成),附带该局训练进度 stats
   app.get('/games/:id/drills', async (req, reply) => {
     const id = Number((req.params as { id: string }).id)
+    if (!Number.isInteger(id)) return reply.code(400).send({ error: 'invalid id' })
     const game = repo.getGame(id)
     if (!game) return reply.code(404).send({ error: 'not found' })
     const drills = generateDrills({
