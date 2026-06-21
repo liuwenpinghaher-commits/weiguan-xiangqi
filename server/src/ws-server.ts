@@ -213,7 +213,7 @@ export async function buildServer(opts: {
     engine: engine ?? engineStub,
     makePosition: (fen) => Position.fromFen(fen) as any,
     clock: () => new Date().toISOString(),
-    onStimulus: (s) => { if (!pausedGames.has(s.gameId)) void chat.onStimulus(s) },
+    onStimulus: (s) => { if (!pausedGames.has(s.gameId) && !spectatorsOffGames.has(s.gameId)) void chat.onStimulus(s) },
   })
 
   // 冷场补话:沉默驱动(非节拍式)。定时器每 idleIntervalMs 检查一次,仅当有进行中对局、
@@ -226,7 +226,7 @@ export async function buildServer(opts: {
     idleTimer = setTimeout(() => {
       if (idleShouldFire({
         hasGame: lastGameId !== null,
-        paused: lastGameId !== null && pausedGames.has(lastGameId),
+        paused: lastGameId !== null && (pausedGames.has(lastGameId) || spectatorsOffGames.has(lastGameId)),
         silentMs: Date.now() - lastChatAt,
         silenceThresholdMs: IDLE_SILENCE_MS,
         roll: Math.random(),
@@ -255,12 +255,17 @@ export async function buildServer(opts: {
   // 暂停中的对局:整局总开关。暂停期间停冷场定时器、跳过 move/say/idle 刺激,不生成不广播。
   const pausedGames = new Set<number>()
 
+  // 关闭观众席的对局:用户可开/关旁观者(弹幕+语音)。关闭期间不生成任何 chat 刺激,
+  // 不浪费 LLM/TTS,也不广播弹幕(与 pause 同构,但 pause 连棋也停、此处只停观众席)。
+  const spectatorsOffGames = new Set<number>()
+
   // 对局结束时集中清理按 gameId 累积的容器,防渐进内存泄漏 + gameId 复用误判。
   // pausedGames 与 chat 上下文可立即清(终局后不会再有该局刺激);
   // reflectedGames/diagnosedGames 是异步反思/诊断的幂等闸,须等其 fire-and-forget 落定后再清,
   // 否则会在反思/诊断在途时丢掉去重标记导致重复触发。
   function cleanupFinishedGame(gameId: number): void {
     pausedGames.delete(gameId)
+    spectatorsOffGames.delete(gameId)
     chat.forgetGame(gameId)
   }
   function forgetGuards(gameId: number): void {
@@ -338,6 +343,8 @@ export async function buildServer(opts: {
           })
           lastGameId = gameId
           socketGameId = gameId  // 记录该连接当前局 id,供 close 时触发中途反思
+          // 开局即带的观众席开关(默认开;前端可在 new 里传 spectators:false 表示开局就关)
+          if (msg.spectators === false) spectatorsOffGames.add(gameId)
           socket.send(JSON.stringify({ type: 'started', gameId }))
           // 若玩家执黑且引擎可用，AI（红方）先手走一步
           if (humanSide === 'black' && engine) {
@@ -375,7 +382,7 @@ export async function buildServer(opts: {
           // 玩家发言 → human_said 刺激,高张力必有人接
           const gid = msg.gameId
           if (typeof gid !== 'number') return
-          if (pausedGames.has(gid)) return
+          if (pausedGames.has(gid) || spectatorsOffGames.has(gid)) return // 观众席关了就没人接,直接忽略
           const text = String(msg.text ?? '').slice(0, 500) // 限长,防超大字符串写库
           const ts = new Date().toISOString()
           // 玩家发言持久化
@@ -398,6 +405,13 @@ export async function buildServer(opts: {
         } else if (msg.type === 'resume') {
           const gid = msg.gameId
           if (typeof gid === 'number') pausedGames.delete(gid)
+        } else if (msg.type === 'spectators') {
+          // 开/关观众席:关闭则停生成弹幕/语音(服务端不再产生 chat 刺激),开启则恢复
+          const gid = msg.gameId
+          if (typeof gid === 'number') {
+            if (msg.enabled === false) spectatorsOffGames.add(gid)
+            else spectatorsOffGames.delete(gid)
+          }
         } else {
           socket.send(JSON.stringify({ type: 'error', message: `unknown message type: ${msg.type}` }))
         }

@@ -30,6 +30,7 @@ export function PlayPage() {
   const [awaitingAi, setAwaitingAi] = useState(false) // AI 思考期间锁盘
   const [gameResult, setGameResult] = useState<GameResult>(null)
   const [isSparring, setIsSparring] = useState(false) // 是否从陪练局面起手
+  const [spectatorsOn, setSpectatorsOn] = useState(true) // 观众席(弹幕+语音)开关
 
   const wsRef = useRef<ReturnType<typeof connect> | null>(null)
   const isNarrow = useIsNarrow()
@@ -108,7 +109,7 @@ export function PlayPage() {
       }
     })
     wsRef.current = ws
-    ws.send({ type: 'new', mode: activeMode, humanSide: activeSide, startFen })
+    ws.send({ type: 'new', mode: activeMode, humanSide: activeSide, startFen, spectators: spectatorsOn })
     setStatus('waiting')
     setStatusMsg('正在创建对局...')
     return ws
@@ -191,6 +192,13 @@ export function PlayPage() {
     if (status !== 'idle') handleRestart(mode, newSide)
   }
 
+  // 观众席开关:不重开局,即时通知服务端开/关弹幕生成;关闭时立刻停掉在播/排队的语音
+  function handleSpectatorsToggle(on: boolean) {
+    setSpectatorsOn(on)
+    if (gameId !== null) wsRef.current?.send({ type: 'spectators', gameId, enabled: on })
+    if (!on) { stopVoice(); cancelSpeech() }
+  }
+
   // 窄屏下棋盘尺寸：视口宽度减边距，最大 460；宽屏 500
   const boardSize = isNarrow
     ? Math.min(typeof window !== 'undefined' ? window.innerWidth - 32 : 460, 460)
@@ -262,6 +270,17 @@ export function PlayPage() {
           </div>
         </div>
         <p style={styles.settingHint}>{side === 'red' ? '你执红先走' : 'AI 执红先走，你执黑'}</p>
+
+        <div style={styles.settingRow}>
+          <span style={styles.settingLabel}>观众席</span>
+          <div style={styles.pillGroup}>
+            <button style={pill(spectatorsOn, color.success, '#fff')} onClick={() => handleSpectatorsToggle(true)}
+              aria-label="开启观众席" aria-pressed={spectatorsOn}>开</button>
+            <button style={pill(!spectatorsOn, color.surfaceHover, color.text)} onClick={() => handleSpectatorsToggle(false)}
+              aria-label="关闭观众席" aria-pressed={!spectatorsOn}>关</button>
+          </div>
+        </div>
+        <p style={styles.settingHint}>{spectatorsOn ? '旁观者弹幕+语音照常' : '已静场:无弹幕、无语音,专心下棋'}</p>
         <p style={styles.settingHint}>切换执棋方或模式即刻重开新局</p>
       </div>
 
@@ -306,6 +325,7 @@ export function PlayPage() {
           <ChatPanel
             key={gameId ?? 'idle'}
             lines={lines}
+            enabled={spectatorsOn}
             onSay={(t) => { if (status === 'playing' && gameId !== null) wsRef.current?.send({ type: 'say', gameId, text: t }) }}
           />
         </div>

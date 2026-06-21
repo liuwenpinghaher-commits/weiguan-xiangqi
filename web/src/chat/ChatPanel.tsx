@@ -44,9 +44,11 @@ function personaName(personaId: string): string {
 interface Props {
   lines: ChatLine[]
   onSay: (text: string) => void
+  /** 观众席是否开启;关闭时只显示静场占位,不渲染弹幕/输入(服务端已同时停生成) */
+  enabled?: boolean
 }
 
-export function ChatPanel({ lines, onSay }: Props) {
+export function ChatPanel({ lines, onSay, enabled = true }: Props) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -132,6 +134,18 @@ export function ChatPanel({ lines, onSay }: Props) {
 
   // cancelSpeech 在 PlayPage 重开局时使用，此处只引入不调用
   void cancelSpeech
+
+  // 观众席关闭:只显示静场占位(服务端已停生成弹幕/语音)
+  if (!enabled) {
+    return (
+      <div style={styles.panel}>
+        <div style={styles.header}><span>观众席</span></div>
+        <div style={{ ...styles.list, alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+          <div style={styles.empty}>观众席已关闭<br />在左侧「对局设置」可重新开启</div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={styles.panel}>
