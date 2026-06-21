@@ -16,6 +16,7 @@ import { compareWindows } from './report/compare.js'
 import { growthReport } from './report/llm-report.js'
 import { prevFenForPly, worstHumanPly } from './report/sparring.js'
 import { ChatEngine } from './chat/chat-engine.js'
+import { idleShouldFire } from './chat/idle-policy.js'
 import { RuntimeConfig } from './config/runtime-config.js'
 import { SettingsRepo } from './store/settings-repo.js'
 import { MutableLLM, buildInnerLlm } from './llm/mutable-llm.js'
@@ -123,6 +124,7 @@ export async function buildServer(opts: {
     cfg,
     now: () => Date.now(),
     emit: (line) => {
+      lastChatAt = Date.now()
       const msg = JSON.stringify({ type: 'chat', ...line })
       for (const s of sockets) {
         try { s.send(msg) } catch {}
@@ -146,6 +148,9 @@ export async function buildServer(opts: {
 
   // 记最近一局 gameId,供冷场定时器使用
   let lastGameId: number | null = null
+
+  // 记最近一条弹幕(角色或人类)时间戳,供沉默驱动的 idle 判定使用
+  let lastChatAt = Date.now()
 
   // 局末反思幂等:已完成反思的局不重复触发
   const reflectedGames = new Set<number>()
@@ -197,11 +202,19 @@ export async function buildServer(opts: {
   // 冷场定时器:每 20 秒(可配)以 35% 概率投一个高张力 idle 刺激,让茶馆偶尔有人闲扯,又不刷屏。
   // 用自重排的 setTimeout 取代固定 setInterval,使 idleIntervalMs/idleProb 配置变更在下个周期即时生效。
   let idleTimer: ReturnType<typeof setTimeout> | null = null
+  const IDLE_SILENCE_MS = 30000
   const scheduleIdle = () => {
     const c = cfg.getChat()
     idleTimer = setTimeout(() => {
-      if (lastGameId !== null && !pausedGames.has(lastGameId) && Math.random() < cfg.getChat().idleProb) {
-        void chat.onStimulus({ kind: 'idle', gameId: lastGameId, scoreCp: null, tension: 0.55 })
+      if (idleShouldFire({
+        hasGame: lastGameId !== null,
+        paused: lastGameId !== null && pausedGames.has(lastGameId),
+        silentMs: Date.now() - lastChatAt,
+        silenceThresholdMs: IDLE_SILENCE_MS,
+        roll: Math.random(),
+        prob: cfg.getChat().idleProb,
+      })) {
+        void chat.onStimulus({ kind: 'idle', gameId: lastGameId!, scoreCp: null, tension: 0.55 })
       }
       scheduleIdle()
     }, c.idleIntervalMs)
@@ -340,6 +353,7 @@ export async function buildServer(opts: {
           for (const s of sockets) {
             try { s.send(echo) } catch { /* 单连接发送失败忽略 */ }
           }
+          lastChatAt = Date.now()
           void chat.onStimulus({ kind: 'human_said', gameId: gid, scoreCp: null, humanText: text, tension: 0.9 })
         } else if (msg.type === 'pause') {
           const gid = msg.gameId
