@@ -69,11 +69,13 @@ export function ChatPanel({ lines, onSay }: Props) {
   const sttErrorMsg: string | null = stt.error === 'not-allowed'
     ? '麦克风权限被拒，请在浏览器设置中允许麦克风'
     : stt.error === 'no-speech'
-    ? '未检测到语音，请再试一次'
-    : stt.error === 'network'
-    ? '语音识别网络错误，请检查网络'
+    ? '没听清，请再说一次'
+    : stt.error === 'asr-unconfigured'
+    ? '未配置语音识别（DASHSCOPE_API_KEY）'
+    : stt.error === 'unsupported'
+    ? '浏览器不支持录音'
     : stt.error
-    ? `语音识别出错：${stt.error}`
+    ? '语音识别失败，请重试'
     : null
 
   // ── 新消息滚到底部 ────────────────────────────────────

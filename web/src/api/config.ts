@@ -7,3 +7,6 @@ export const WS_BASE = `ws://${API_HOST}`
 export function ttsUrl(personaId: string, text: string): string {
   return `${HTTP_BASE}/tts?personaId=${encodeURIComponent(personaId)}&text=${encodeURIComponent(text)}`
 }
+
+/** 服务端 ASR 接口(POST 音频二进制) */
+export const ASR_URL = `${HTTP_BASE}/asr`
