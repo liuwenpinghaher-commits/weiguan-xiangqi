@@ -331,4 +331,55 @@ describe('ws-server 集成测试', () => {
     })
     expect(res.statusCode).toBe(400)
   })
+
+  it('WS /play:暂停后 say 不产生任何 chat 广播', async () => {
+    app = await makeApp()
+    await app.listen({ port: 0, host: '127.0.0.1' })
+    const addr = app.server.address()
+    if (!addr || typeof addr === 'string') throw new Error('unexpected address type')
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/play`)
+    wsClient = ws
+    await wsOpen(ws)
+    ws.send(JSON.stringify({ type: 'new', mode: 'coach', humanSide: 'red', startFen: START_FEN }))
+    const started = await waitForMessage(ws, 'started')
+    const gameId = started.gameId as number
+
+    ws.send(JSON.stringify({ type: 'pause', gameId }))
+    await new Promise((r) => setTimeout(r, 100))
+
+    const chats: Array<Record<string, unknown>> = []
+    ws.on('message', (raw: Buffer | string) => {
+      const m = JSON.parse(raw.toString()) as Record<string, unknown>
+      if (m.type === 'chat') chats.push(m)
+    })
+    ws.send(JSON.stringify({ type: 'say', gameId, text: '暂停期间说话' }))
+    await new Promise((r) => setTimeout(r, 600))
+    expect(chats).toHaveLength(0)
+  }, 10_000)
+
+  it('WS /play:resume 后 say 恢复回显', async () => {
+    app = await makeApp()
+    await app.listen({ port: 0, host: '127.0.0.1' })
+    const addr = app.server.address()
+    if (!addr || typeof addr === 'string') throw new Error('unexpected address type')
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/play`)
+    wsClient = ws
+    await wsOpen(ws)
+    ws.send(JSON.stringify({ type: 'new', mode: 'coach', humanSide: 'red', startFen: START_FEN }))
+    const started = await waitForMessage(ws, 'started')
+    const gameId = started.gameId as number
+
+    ws.send(JSON.stringify({ type: 'pause', gameId }))
+    ws.send(JSON.stringify({ type: 'resume', gameId }))
+    await new Promise((r) => setTimeout(r, 50))
+
+    const chats: Array<Record<string, unknown>> = []
+    ws.on('message', (raw: Buffer | string) => {
+      const m = JSON.parse(raw.toString()) as Record<string, unknown>
+      if (m.type === 'chat') chats.push(m)
+    })
+    ws.send(JSON.stringify({ type: 'say', gameId, text: '继续了' }))
+    await new Promise((r) => setTimeout(r, 500))
+    expect(chats.some((m) => m.personaId === 'human' && m.text === '继续了')).toBe(true)
+  }, 10_000)
 })
