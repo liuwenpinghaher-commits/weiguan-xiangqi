@@ -5,6 +5,7 @@ import { ChatPanel, type ChatLine } from '../chat/ChatPanel.js'
 import { cancelSpeech } from '../voice/browser-tts.js'
 import { stopVoice } from '../voice/server-tts.js'
 import { useIsNarrow } from '../hooks/use-viewport.js'
+import { color, space, radius, fontSize, font, shadow, pill } from '../ui/theme.js'
 
 const START_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
@@ -190,370 +191,253 @@ export function PlayPage() {
     if (status !== 'idle') handleRestart(mode, newSide)
   }
 
-  // 窄屏下棋盘尺寸：视口宽度减边距，最大 460
+  // 窄屏下棋盘尺寸：视口宽度减边距，最大 460；宽屏 500
   const boardSize = isNarrow
     ? Math.min(typeof window !== 'undefined' ? window.innerWidth - 32 : 460, 460)
-    : 480
+    : 500
 
   const resultTxt = resultText(gameResult)
+  const canStart = status === 'idle' || status === 'over' || status === 'error'
 
-  return (
-    <div style={styles.page}>
-      <h1 style={styles.title}>围观象棋</h1>
+  // 主操作按钮(开始/暂停/继续)——直播间左栏的醒目主入口
+  const primaryAction = canStart ? (
+    <button style={styles.primaryBtn} onClick={handleStart} aria-label="开始对局">▶ 开始对局</button>
+  ) : status === 'playing' ? (
+    <button style={styles.pauseBtn} onClick={handlePause} aria-label="暂停对局">⏸ 暂停</button>
+  ) : status === 'paused' ? (
+    <button style={styles.primaryBtn} onClick={handleResume} aria-label="继续对局">▶ 继续</button>
+  ) : (
+    <button style={{ ...styles.primaryBtn, opacity: 0.6 }} disabled aria-label="连接中">连接中…</button>
+  )
 
+  // 左栏:设置 + 状态 + 操作
+  const sidebar = (
+    <aside style={{ ...styles.rail, ...(isNarrow ? { width: '100%', maxWidth: 480 } : {}) }} aria-label="对局设置与控制">
       {isSparring && (
-        <div style={styles.sparringBanner}>
-          专项陪练：从你上次的失误局面开始
-        </div>
+        <div style={styles.sparringBanner}>专项陪练：从你上次的失误局面开始</div>
       )}
 
-      <div style={styles.statusBar} aria-live="polite" aria-label="对局状态">
-        <span style={statusError ? styles.statusTextError : styles.statusText}>
-          {statusMsg}
-        </span>
-        {awaitingAi && !statusError && (
-          <span style={styles.thinkingBadge}>AI 思考中…</span>
-        )}
-        {lastAiMove && !awaitingAi && (
-          <span style={styles.aiMove}>AI 上一手：{lastAiMove}</span>
-        )}
-        {(status === 'idle' || status === 'over' || status === 'error') && (
-          <button style={styles.modeBtn} onClick={handleStart} aria-label="开始对局">开始</button>
-        )}
-        {status === 'playing' && (
-          <button style={styles.modeBtn} onClick={handlePause} aria-label="暂停对局">暂停</button>
-        )}
-        {status === 'paused' && (
-          <button style={styles.modeBtn} onClick={handleResume} aria-label="继续对局">继续</button>
-        )}
+      {/* 状态卡 */}
+      <div style={styles.statusCard} aria-live="polite" aria-label="对局状态">
+        <span style={statusError ? styles.statusTextError : styles.statusText}>{statusMsg}</span>
+        <div style={styles.statusMeta}>
+          {awaitingAi && !statusError && <span style={styles.thinkingBadge}>AI 思考中…</span>}
+          {lastAiMove && !awaitingAi && <span style={styles.aiMove}>AI 上一手 {lastAiMove}</span>}
+        </div>
       </div>
 
-      {/* 对局结束结果横幅 */}
+      {primaryAction}
+
+      {/* 结果横幅 */}
       {status === 'over' && resultTxt && (
         <div style={resultTxt === '你赢了！' ? styles.resultWin : resultTxt === '和棋' ? styles.resultDraw : styles.resultLose}>
           {resultTxt}
         </div>
       )}
 
-      <div style={{ ...styles.boardArea, flexDirection: isNarrow ? 'column' : 'row' }}>
-        <div style={styles.boardWrapper}>
-          <Board
-            key={fenKey}
-            fen={fen}
-            onMove={handleMove}
-            size={boardSize}
-            lastMove={lastAiMove}
-            disabled={awaitingAi || status !== 'playing'}
+      {/* 对局设置 */}
+      <div style={styles.settingsCard}>
+        <div style={styles.settingsTitle}>对局设置</div>
+
+        <div style={styles.settingRow}>
+          <span style={styles.settingLabel}>模式</span>
+          <div style={styles.pillGroup}>
+            <button style={pill(mode === 'coach')} onClick={() => handleModeChange('coach')}
+              title="AI 会带你、动态控盘，保持局面胶着让你跳一跳够得着"
+              aria-label="切换为陪练模式" aria-pressed={mode === 'coach'}>陪练</button>
+            <button style={pill(mode === 'humanlike')} onClick={() => handleModeChange('humanlike')}
+              title="AI 像真人棋风，输赢自然，随机性中带有真实下法"
+              aria-label="切换为拟人对手模式" aria-pressed={mode === 'humanlike'}>拟人对手</button>
+          </div>
+        </div>
+        <p style={styles.settingHint}>{mode === 'coach' ? 'AI 会带你、动态控盘' : 'AI 像真人棋风，输赢自然'}</p>
+
+        <div style={styles.settingRow}>
+          <span style={styles.settingLabel}>执棋方</span>
+          <div style={styles.pillGroup}>
+            <button style={pill(side === 'red', color.red, '#fff')} onClick={() => handleSideChange('red')}
+              title="执红先手" aria-label="执红先手" aria-pressed={side === 'red'}>执红（先手）</button>
+            <button style={pill(side === 'black', color.black, '#fff')} onClick={() => handleSideChange('black')}
+              title="执黑后手，AI 红方先走" aria-label="执黑后手" aria-pressed={side === 'black'}>执黑（后手）</button>
+          </div>
+        </div>
+        <p style={styles.settingHint}>{side === 'red' ? '你执红先走' : 'AI 执红先走，你执黑'}</p>
+        <p style={styles.settingHint}>切换执棋方或模式即刻重开新局</p>
+      </div>
+
+      {/* 次级操作 */}
+      <button style={styles.restartBtn} onClick={() => handleRestart()} aria-label="重新开始新对局">重新开始</button>
+
+      {status === 'over' && gameId !== null && (
+        <>
+          <div style={styles.afterLinks}>
+            <a href={`#/review/${gameId}`} style={{ ...styles.linkBtn, ...styles.linkReview }}>查看复盘</a>
+            <a href={`#/analysis/${gameId}`} style={{ ...styles.linkBtn, ...styles.linkAnalysis }}>分析本局</a>
+            <a href={`#/training/${gameId}`} style={{ ...styles.linkBtn, ...styles.linkTraining }}>针对训练</a>
+          </div>
+          <p style={styles.diagnosedHint}>对局已自动诊断，可查看分析或进行针对训练</p>
+        </>
+      )}
+      {status === 'over' && gameId === null && <span style={styles.overTag}>对局已结束</span>}
+
+      <p style={styles.hint}>支持拖拽或点选走棋</p>
+    </aside>
+  )
+
+  return (
+    <div style={styles.page}>
+      <div style={{ ...styles.studio, flexDirection: isNarrow ? 'column' : 'row', alignItems: isNarrow ? 'center' : 'flex-start' }}>
+        {sidebar}
+
+        <div style={styles.centerCol}>
+          <div style={styles.boardWrapper}>
+            <Board
+              key={fenKey}
+              fen={fen}
+              onMove={handleMove}
+              size={boardSize}
+              lastMove={lastAiMove}
+              disabled={awaitingAi || status !== 'playing'}
+            />
+          </div>
+        </div>
+
+        <div style={{ ...styles.chatCol, height: isNarrow ? 420 : boardSize, ...(isNarrow ? { width: '100%', maxWidth: 480 } : {}) }}>
+          <ChatPanel
+            lines={lines}
+            onSay={(t) => { if (status === 'playing' && gameId !== null) wsRef.current?.send({ type: 'say', gameId, text: t }) }}
           />
         </div>
-        <ChatPanel
-          lines={lines}
-          onSay={(t) => { if (status === 'playing' && gameId !== null) wsRef.current?.send({ type: 'say', gameId, text: t }) }}
-        />
       </div>
-
-      <div style={styles.modeBar}>
-        <span style={styles.modeLabel}>对局模式：</span>
-        <button
-          style={{ ...styles.modeBtn, ...(mode === 'coach' ? styles.modeBtnActive : {}) }}
-          onClick={() => handleModeChange('coach')}
-          title="AI 会带你、动态控盘，保持局面胶着让你跳一跳够得着"
-          aria-label="切换为陪练模式"
-          aria-pressed={mode === 'coach'}
-        >
-          陪练模式
-        </button>
-        <button
-          style={{ ...styles.modeBtn, ...(mode === 'humanlike' ? styles.modeBtnActive : {}) }}
-          onClick={() => handleModeChange('humanlike')}
-          title="AI 像真人棋风，输赢自然，随机性中带有真实下法"
-          aria-label="切换为拟人对手模式"
-          aria-pressed={mode === 'humanlike'}
-        >
-          拟人对手
-        </button>
-        <span style={styles.modeHint}>
-          {mode === 'coach'
-            ? 'AI 会带你、动态控盘'
-            : 'AI 像真人棋风，输赢自然'}
-        </span>
-      </div>
-
-      <div style={styles.modeBar}>
-        <span style={styles.modeLabel}>执棋方：</span>
-        <button
-          style={{ ...styles.modeBtn, ...(side === 'red' ? styles.modeBtnRedActive : {}) }}
-          onClick={() => handleSideChange('red')}
-          title="执红先手"
-          aria-label="执红先手"
-          aria-pressed={side === 'red'}
-        >
-          执红（先手）
-        </button>
-        <button
-          style={{ ...styles.modeBtn, ...(side === 'black' ? styles.modeBtnBlackActive : {}) }}
-          onClick={() => handleSideChange('black')}
-          title="执黑后手，AI 红方先走"
-          aria-label="执黑后手"
-          aria-pressed={side === 'black'}
-        >
-          执黑（后手）
-        </button>
-        <span style={styles.modeHint}>
-          {side === 'red' ? '你执红先走' : 'AI 执红先走，你执黑'}
-        </span>
-      </div>
-
-      <div style={styles.controls}>
-        <button style={styles.btn} onClick={() => handleRestart()} aria-label="重新开始新对局">
-          重新开始
-        </button>
-        {status === 'over' && gameId !== null && (
-          <>
-            <a href={`#/review/${gameId}`} style={styles.reviewBtn}>
-              查看复盘
-            </a>
-            <a href={`#/analysis/${gameId}`} style={styles.analysisBtn}>
-              分析本局
-            </a>
-            <a href={`#/training/${gameId}`} style={styles.trainingBtn}>
-              针对训练
-            </a>
-          </>
-        )}
-        {status === 'over' && gameId === null && (
-          <span style={styles.overTag}>对局已结束</span>
-        )}
-      </div>
-      {status === 'over' && gameId !== null && (
-        <p style={styles.diagnosedHint}>对局已自动诊断，可查看分析或进行针对训练</p>
-      )}
-
-      <p style={styles.hint}>
-        支持拖拽或点选走棋 · 切换执棋方或模式即刻重开新局
-      </p>
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  sparringBanner: {
-    marginBottom: '10px',
-    padding: '8px 20px',
-    background: 'rgba(142,68,173,0.2)',
-    border: '1px solid #8e44ad',
-    borderRadius: '8px',
-    color: '#d7bde2',
-    fontSize: '0.88rem',
-    fontWeight: 600,
-    letterSpacing: '0.02em',
-  },
   page: {
-    minHeight: '100vh',
+    minHeight: 'calc(100dvh - 52px)',
+    padding: `${space.xl}px ${space.lg}px`,
+    background: color.bg,
+    color: color.text,
+    fontFamily: font.sans,
+  },
+  // 直播间三栏容器
+  studio: {
+    display: 'flex',
+    gap: space.lg,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    maxWidth: 1180,
+    margin: '0 auto',
+    width: '100%',
+  },
+  rail: {
+    width: 264,
+    flexShrink: 0,
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'center',
-    padding: '24px 16px',
-    background: '#1a1a2e',
-    color: '#eee',
-    fontFamily: '"Noto Serif SC", "Source Han Serif", serif',
+    gap: space.md,
+    alignSelf: 'stretch',
   },
-  title: {
-    fontSize: '2rem',
-    fontWeight: 700,
-    margin: '0 0 16px',
-    color: '#f5c518',
-    letterSpacing: '0.1em',
-  },
-  statusBar: {
+  centerCol: {
+    flexShrink: 0,
     display: 'flex',
-    gap: '12px',
-    alignItems: 'center',
-    marginBottom: '12px',
-    padding: '10px 20px',
-    background: 'rgba(255,255,255,0.08)',
-    borderRadius: '8px',
-    minWidth: '280px',
     justifyContent: 'center',
-    flexWrap: 'wrap',
   },
-  statusText: {
-    fontSize: '0.95rem',
-  },
-  statusTextError: {
-    fontSize: '0.95rem',
-    color: '#ff5252',
-    fontWeight: 600,
-  },
-  thinkingBadge: {
-    fontSize: '0.82rem',
-    color: '#f5c518',
-    background: 'rgba(245,197,24,0.12)',
-    padding: '2px 10px',
-    borderRadius: '12px',
-    border: '1px solid rgba(245,197,24,0.4)',
-    animation: 'none',
-  },
-  aiMove: {
-    fontSize: '0.85rem',
-    color: '#f5c518',
-    fontFamily: 'monospace',
-  },
-  // 结果横幅
-  resultWin: {
-    fontSize: '1.6rem',
-    fontWeight: 800,
-    color: '#f5c518',
-    background: 'rgba(245,197,24,0.15)',
-    border: '2px solid #f5c518',
-    borderRadius: '10px',
-    padding: '10px 40px',
-    marginBottom: '14px',
-    letterSpacing: '0.05em',
-  },
-  resultLose: {
-    fontSize: '1.6rem',
-    fontWeight: 800,
-    color: '#ff6b6b',
-    background: 'rgba(255,107,107,0.12)',
-    border: '2px solid #ff6b6b',
-    borderRadius: '10px',
-    padding: '10px 40px',
-    marginBottom: '14px',
-    letterSpacing: '0.05em',
-  },
-  resultDraw: {
-    fontSize: '1.6rem',
-    fontWeight: 800,
-    color: '#aaa',
-    background: 'rgba(170,170,170,0.1)',
-    border: '2px solid #888',
-    borderRadius: '10px',
-    padding: '10px 40px',
-    marginBottom: '14px',
-    letterSpacing: '0.05em',
-  },
-  boardArea: {
-    display: 'flex',
-    gap: '20px',
-    alignItems: 'flex-start',
+  chatCol: {
+    flex: 1,
+    minWidth: 240,
+    maxWidth: 380,
   },
   boardWrapper: {
-    borderRadius: '8px',
+    borderRadius: radius.md,
     overflow: 'hidden',
-    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+    boxShadow: shadow.raised,
   },
-  controls: {
-    marginTop: '20px',
+  // 状态卡
+  statusCard: {
+    background: color.surface,
+    border: `1px solid ${color.border}`,
+    borderRadius: radius.lg,
+    padding: `${space.md}px ${space.lg}px`,
     display: 'flex',
-    gap: '16px',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
+    flexDirection: 'column',
+    gap: space.xs,
   },
-  btn: {
-    padding: '10px 28px',
-    fontSize: '1rem',
-    background: '#c0392b',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '6px',
-    cursor: 'pointer',
-    fontWeight: 600,
+  statusText: { fontSize: fontSize.base, color: color.text },
+  statusTextError: { fontSize: fontSize.base, color: color.danger, fontWeight: 600 },
+  statusMeta: { display: 'flex', gap: space.sm, alignItems: 'center', flexWrap: 'wrap', minHeight: 18 },
+  thinkingBadge: {
+    fontSize: fontSize.xs, color: color.gold, background: color.goldSoft,
+    padding: '2px 10px', borderRadius: radius.pill, border: `1px solid ${color.goldBorder}`,
   },
-  reviewBtn: {
-    padding: '10px 28px',
-    fontSize: '1rem',
-    background: '#f5c518',
-    color: '#1a1a2e',
-    borderRadius: '6px',
-    fontWeight: 700,
-    textDecoration: 'none',
-    display: 'inline-block',
+  aiMove: { fontSize: fontSize.sm, color: color.gold, fontFamily: font.mono },
+  // 主操作按钮
+  primaryBtn: {
+    padding: '12px 20px', fontSize: fontSize.md, fontWeight: 700,
+    background: color.gold, color: color.onGold, border: 'none',
+    borderRadius: radius.md, cursor: 'pointer', width: '100%',
+    transition: 'filter .15s', letterSpacing: '0.04em',
   },
+  pauseBtn: {
+    padding: '12px 20px', fontSize: fontSize.md, fontWeight: 700,
+    background: color.surfaceAlt, color: color.text, border: `1px solid ${color.borderStrong}`,
+    borderRadius: radius.md, cursor: 'pointer', width: '100%',
+    transition: 'background .15s', letterSpacing: '0.04em',
+  },
+  restartBtn: {
+    padding: '9px 20px', fontSize: fontSize.base, fontWeight: 600,
+    background: color.surfaceAlt, color: color.textMuted, border: `1px solid ${color.border}`,
+    borderRadius: radius.md, cursor: 'pointer', width: '100%',
+  },
+  // 设置卡
+  settingsCard: {
+    background: color.surface,
+    border: `1px solid ${color.border}`,
+    borderRadius: radius.lg,
+    padding: `${space.md}px ${space.lg}px ${space.sm}px`,
+  },
+  settingsTitle: {
+    fontSize: fontSize.sm, color: color.gold, fontWeight: 700,
+    letterSpacing: '0.08em', marginBottom: space.sm,
+  },
+  settingRow: { display: 'flex', flexDirection: 'column', gap: space.xs, marginTop: space.sm },
+  settingLabel: { fontSize: fontSize.sm, color: color.textMuted },
+  pillGroup: { display: 'flex', gap: space.sm, flexWrap: 'wrap' },
+  settingHint: { fontSize: fontSize.xs, color: color.textFaint, margin: '4px 0 0', fontStyle: 'italic' },
+  // 结果横幅
+  resultWin: {
+    fontSize: fontSize.lg, fontWeight: 800, textAlign: 'center',
+    color: color.gold, background: color.goldSoft, border: `2px solid ${color.gold}`,
+    borderRadius: radius.md, padding: '10px', letterSpacing: '0.05em',
+  },
+  resultLose: {
+    fontSize: fontSize.lg, fontWeight: 800, textAlign: 'center',
+    color: color.danger, background: color.dangerSoft, border: `2px solid ${color.danger}`,
+    borderRadius: radius.md, padding: '10px', letterSpacing: '0.05em',
+  },
+  resultDraw: {
+    fontSize: fontSize.lg, fontWeight: 800, textAlign: 'center',
+    color: color.textMuted, background: color.surfaceAlt, border: `2px solid ${color.borderStrong}`,
+    borderRadius: radius.md, padding: '10px', letterSpacing: '0.05em',
+  },
+  // 结束后链接
+  afterLinks: { display: 'flex', flexDirection: 'column', gap: space.sm },
+  linkBtn: {
+    padding: '9px 16px', fontSize: fontSize.base, fontWeight: 700,
+    borderRadius: radius.md, textDecoration: 'none', textAlign: 'center', display: 'block',
+  },
+  linkReview: { background: color.gold, color: color.onGold },
+  linkAnalysis: { background: color.info, color: '#fff' },
+  linkTraining: { background: color.success, color: '#fff' },
   overTag: {
-    padding: '8px 16px',
-    background: '#f5c518',
-    color: '#1a1a2e',
-    borderRadius: '6px',
-    fontWeight: 700,
+    padding: '8px 16px', background: color.goldSoft, color: color.gold,
+    borderRadius: radius.md, fontWeight: 700, textAlign: 'center',
   },
-  analysisBtn: {
-    padding: '10px 28px',
-    fontSize: '1rem',
-    background: '#2980b9',
-    color: '#fff',
-    borderRadius: '6px',
-    fontWeight: 700,
-    textDecoration: 'none',
-    display: 'inline-block',
-  },
-  trainingBtn: {
-    padding: '10px 28px',
-    fontSize: '1rem',
-    background: '#27ae60',
-    color: '#fff',
-    borderRadius: '6px',
-    fontWeight: 700,
-    textDecoration: 'none',
-    display: 'inline-block',
-  },
-  diagnosedHint: {
-    marginTop: '8px',
-    fontSize: '0.82rem',
-    color: '#8bc34a',
-    fontStyle: 'italic' as const,
-  },
-  hint: {
-    marginTop: '16px',
-    fontSize: '0.8rem',
-    color: '#888',
-  },
-  modeBar: {
-    display: 'flex',
-    gap: '10px',
-    alignItems: 'center',
-    marginBottom: '12px',
-    marginTop: '16px',
-    flexWrap: 'wrap' as const,
-    justifyContent: 'center',
-  },
-  modeLabel: {
-    fontSize: '0.9rem',
-    color: '#aaa',
-  },
-  modeBtn: {
-    padding: '6px 18px',
-    fontSize: '0.9rem',
-    background: 'rgba(255,255,255,0.1)',
-    color: '#ccc',
-    border: '1px solid rgba(255,255,255,0.2)',
-    borderRadius: '20px',
-    cursor: 'pointer',
-    fontWeight: 500,
-    transition: 'all 0.15s',
-  },
-  modeBtnActive: {
-    background: '#f5c518',
-    color: '#1a1a2e',
-    border: '1px solid #f5c518',
-    fontWeight: 700,
-  },
-  modeHint: {
-    fontSize: '0.8rem',
-    color: '#888',
-    fontStyle: 'italic' as const,
-  },
-  modeBtnRedActive: {
-    background: '#c0392b',
-    color: '#fff',
-    border: '1px solid #c0392b',
-    fontWeight: 700,
-  },
-  modeBtnBlackActive: {
-    background: '#333',
-    color: '#fff',
-    border: '1px solid #888',
-    fontWeight: 700,
+  diagnosedHint: { marginTop: space.sm, fontSize: fontSize.xs, color: color.success, fontStyle: 'italic' },
+  hint: { marginTop: space.sm, fontSize: fontSize.xs, color: color.textFaint, textAlign: 'center' },
+  sparringBanner: {
+    padding: '8px 14px', background: 'rgba(142,68,173,0.18)', border: '1px solid #8e44ad',
+    borderRadius: radius.md, color: '#d7bde2', fontSize: fontSize.sm, fontWeight: 600,
   },
 }

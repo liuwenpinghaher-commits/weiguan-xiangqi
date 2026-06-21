@@ -1,73 +1,53 @@
 import type { ReactNode } from 'react'
+import { color, space, radius, font, fontSize, shadow, card, heading, th, tr, td } from './theme.js'
 
-/** 与 PlayPage 一致的暗色背景页面容器。分析/成长/训练/复盘页共用。 */
+/** 暗色页面容器。分析/成长/训练/复盘页共用,内容居中限宽。 */
 export function PageShell({ children }: { children: ReactNode }) {
   return (
     <div style={shellStyle}>
-      {children}
+      <div style={contentStyle}>{children}</div>
     </div>
   )
 }
 
 const shellStyle: React.CSSProperties = {
-  minHeight: '100vh',
-  background: '#1a1a2e',
-  color: '#eee',
-  fontFamily: '"Noto Serif SC", "Source Han Serif", serif',
-  padding: '24px 16px',
+  minHeight: 'calc(100dvh - 52px)',
+  background: color.bg,
+  color: color.text,
+  fontFamily: font.sans,
+  padding: `${space.xl}px ${space.lg}px`,
 }
 
-/** 暗色页面内的卡片容器 */
-export const cardStyle: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid rgba(255,255,255,0.1)',
-  borderRadius: 10,
-  padding: '16px 20px',
-  marginBottom: 16,
+const contentStyle: React.CSSProperties = {
+  maxWidth: 1080,
+  margin: '0 auto',
 }
 
-/** 暗色页面内的标题色 */
-export const headingStyle: React.CSSProperties = {
-  color: '#f5c518',
-  fontWeight: 700,
-  letterSpacing: '0.05em',
-}
+/** 卡片容器(token 派生) */
+export const cardStyle: React.CSSProperties = card
 
-/** 暗色表格 th */
-export const darkThStyle: React.CSSProperties = {
-  textAlign: 'left',
-  padding: '6px 10px',
-  borderBottom: '1px solid #444',
-  color: '#aaa',
-  fontWeight: 600,
-}
+/** 区块标题色 */
+export const headingStyle: React.CSSProperties = heading
 
-/** 暗色表格 tr 分隔 */
-export const darkTrStyle: React.CSSProperties = {
-  borderBottom: '1px solid #2a2a3e',
-}
-
-/** 暗色表格 td */
-export const darkTdStyle: React.CSSProperties = {
-  padding: '7px 10px',
-  color: '#ddd',
-}
+/** 暗色表格 th / tr / td */
+export const darkThStyle: React.CSSProperties = th
+export const darkTrStyle: React.CSSProperties = tr
+export const darkTdStyle: React.CSSProperties = td
 
 /** 通用错误提示块 */
 export function ErrorBanner({ msg }: { msg: string }) {
   return (
-    <div style={errorBannerStyle} role="alert">
-      ⚠️ {msg}
-    </div>
+    <div style={errorBannerStyle} role="alert">⚠ {msg}</div>
   )
 }
 
 const errorBannerStyle: React.CSSProperties = {
-  background: 'rgba(255,82,82,0.12)',
-  border: '1px solid rgba(255,82,82,0.4)',
-  borderRadius: 8,
+  background: color.dangerSoft,
+  border: `1px solid ${color.danger}`,
+  borderRadius: radius.md,
   padding: '12px 16px',
-  color: '#ff6b6b',
-  fontSize: '0.9rem',
-  marginBottom: 16,
+  color: color.danger,
+  fontSize: fontSize.base,
+  marginBottom: space.lg,
+  boxShadow: shadow.card,
 }

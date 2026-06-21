@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getDrills, postDrillAttempt, THEME_LABEL } from '../api/http-client.js'
 import { Board } from '../board/Board.js'
 import { PageShell, cardStyle, headingStyle, ErrorBanner } from '../ui/PageShell.js'
+import { color, space, radius, fontSize, btn } from '../ui/theme.js'
 
 interface Drill { ply: number; fen: string; bestMove: string; playedMove: string; cpLoss: number; theme: string }
 interface Stats { total: number; correct: number }
@@ -61,18 +62,18 @@ export function TrainingPage({ gameId }: { gameId: number }) {
   return (
     <PageShell>
       <div style={{ maxWidth: 560, margin: '0 auto' }}>
-        <h1 style={{ ...headingStyle, fontSize: '1.6rem', marginBottom: 16 }}>
+        <h1 style={{ ...headingStyle, fontSize: fontSize.xl, marginBottom: space.lg }}>
           训练 · 第 {gameId} 局失误复盘
         </h1>
 
         {fetchError && <ErrorBanner msg={fetchError} />}
 
         {loading && !fetchError && (
-          <p style={{ color: '#aaa' }}>加载中…</p>
+          <p style={{ color: color.textFaint }}>加载中…</p>
         )}
 
         {!loading && !fetchError && drills.length === 0 && (
-          <div style={{ ...cardStyle, color: '#aaa' }}>
+          <div style={{ ...cardStyle, color: color.textFaint }}>
             本局暂无可练的失误题（需先诊断）。
           </div>
         )}
@@ -87,7 +88,7 @@ export function TrainingPage({ gameId }: { gameId: number }) {
             )}
 
             <div style={cardStyle}>
-              <p style={{ margin: '0 0 12px', color: '#ccc' }}>
+              <p style={{ margin: `0 0 ${space.md}px`, color: color.textMuted }}>
                 第 {i + 1}/{drills.length} 题 · 原判定：{THEME_LABEL[d.theme] ?? d.theme}（丢 {d.cpLoss} 分）。
                 轮到你，走出最佳着：
               </p>
@@ -96,9 +97,9 @@ export function TrainingPage({ gameId }: { gameId: number }) {
 
               <p style={{
                 minHeight: 24,
-                marginTop: 12,
+                marginTop: space.md,
                 marginBottom: 0,
-                color: feedback.startsWith('✓') ? '#8bc34a' : feedback.startsWith('✗') ? '#e74c3c' : '#aaa',
+                color: feedback.startsWith('✓') ? color.success : feedback.startsWith('✗') ? color.danger : color.textFaint,
               }}
                 aria-live="polite"
               >
@@ -106,7 +107,7 @@ export function TrainingPage({ gameId }: { gameId: number }) {
               </p>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: space.md, marginTop: space.xs }}>
               <button
                 onClick={() => { setI((x) => Math.max(0, x - 1)); setFeedback('') }}
                 disabled={i === 0}
@@ -115,7 +116,7 @@ export function TrainingPage({ gameId }: { gameId: number }) {
               >
                 上一题
               </button>
-              <span style={{ color: '#aaa', fontSize: '0.9rem' }}>{i + 1} / {drills.length}</span>
+              <span style={{ color: color.textFaint, fontSize: fontSize.base }}>{i + 1} / {drills.length}</span>
               <button
                 onClick={() => { setI((x) => Math.min(drills.length - 1, x + 1)); setFeedback('') }}
                 disabled={i === drills.length - 1}
@@ -133,22 +134,16 @@ export function TrainingPage({ gameId }: { gameId: number }) {
 }
 
 const statsBannerStyle: React.CSSProperties = {
-  background: 'rgba(245,197,24,0.12)',
-  border: '1px solid rgba(245,197,24,0.35)',
-  borderRadius: 6,
-  padding: '8px 14px',
-  marginBottom: 12,
-  fontSize: '0.9rem',
-  color: '#f5c518',
+  background: color.goldSoft,
+  border: `1px solid ${color.goldBorder}`,
+  borderRadius: radius.sm,
+  padding: `${space.sm}px ${space.lg}px`,
+  marginBottom: space.md,
+  fontSize: fontSize.base,
+  color: color.gold,
   fontWeight: 600,
 }
 
 const navBtnStyle: React.CSSProperties = {
-  padding: '7px 18px',
-  background: 'rgba(255,255,255,0.1)',
-  color: '#ccc',
-  border: '1px solid rgba(255,255,255,0.2)',
-  borderRadius: 6,
-  cursor: 'pointer',
-  fontSize: '0.9rem',
+  ...btn('secondary', { size: 'sm' }),
 }

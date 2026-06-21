@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { useEffect, useState } from 'react'
+import './index.css'
 import { PlayPage } from './pages/PlayPage.js'
 import { ReviewPage } from './pages/ReviewPage.js'
 import { AnalysisPage } from './pages/AnalysisPage.js'
@@ -7,6 +8,7 @@ import { GrowthPage } from './pages/GrowthPage.js'
 import { TrainingPage } from './pages/TrainingPage.js'
 import { ConsolePage } from './pages/console/ConsolePage.js'
 import { HTTP_BASE } from './api/config.js'
+import { color, space, radius, fontSize, font, z } from './ui/theme.js'
 
 // 极简 hash 路由 hook: 解析 window.location.hash
 type Route =
@@ -41,33 +43,59 @@ function useHashRoute(): Route {
   return { page: 'play' }
 }
 
-const NAV_STYLE: React.CSSProperties = {
-  display: 'flex',
-  gap: '16px',
-  alignItems: 'center',
-  padding: '6px 16px',
-  background: '#1a1a2e',
-  borderBottom: '1px solid #333',
-  fontSize: '13px',
+/** 极简内联图标(stroke 风格,统一 1.8 线宽;不使用 emoji 作结构图标) */
+function Icon({ name }: { name: 'board' | 'growth' | 'console' | 'export' }) {
+  const common = {
+    width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none',
+    stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const,
+  }
+  if (name === 'board') return (
+    <svg {...common}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M3 15h18M9 3v18M15 3v18" /></svg>
+  )
+  if (name === 'growth') return (
+    <svg {...common}><path d="M3 17l6-6 4 4 8-8" /><path d="M21 7v5h-5" /></svg>
+  )
+  if (name === 'console') return (
+    <svg {...common}><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" /></svg>
+  )
+  return ( // export
+    <svg {...common}><path d="M12 3v12M7 10l5 5 5-5M5 21h14" /></svg>
+  )
 }
 
-const LINK_STYLE: React.CSSProperties = {
-  color: '#ccc',
-  textDecoration: 'none',
-}
+const NAV_LINKS = [
+  { page: 'play', href: '#/', label: '对局', icon: 'board' as const },
+  { page: 'growth', href: '#/growth', label: '成长', icon: 'growth' as const },
+  { page: 'console', href: '#/console', label: '控制台', icon: 'console' as const },
+]
 
-function Nav() {
+function Nav({ active }: { active: Route['page'] }) {
+  // 复盘/分析/训练是按局上下文页,归到「对局」高亮
+  const activeTop = active === 'review' || active === 'analysis' || active === 'training' ? 'play' : active
   return (
-    <nav style={NAV_STYLE}>
-      <a href="#/" style={LINK_STYLE}>对局</a>
-      <span style={{ color: '#555' }}>|</span>
-      <a href="#/growth" style={LINK_STYLE}>成长</a>
-      <span style={{ color: '#555' }}>|</span>
-      <a href="#/console" style={LINK_STYLE}>控制台</a>
-      <span style={{ color: '#555' }}>|</span>
-      <a href={`${HTTP_BASE}/export`} style={LINK_STYLE} download="xiangqi-export.json" title="导出全部棋谱数据">
-        导出全部
+    <nav style={navStyle} aria-label="主导航">
+      <a href="#/" style={brandStyle} aria-label="围观象棋首页">
+        <span style={brandMark} aria-hidden="true">♟</span>
+        <span>围观象棋</span>
       </a>
+      <div style={{ display: 'flex', gap: space.xs, alignItems: 'center' }}>
+        {NAV_LINKS.map(l => {
+          const on = activeTop === l.page
+          return (
+            <a key={l.page} href={l.href}
+              style={{ ...navLink, ...(on ? navLinkActive : {}) }}
+              aria-current={on ? 'page' : undefined}>
+              <Icon name={l.icon} /><span>{l.label}</span>
+            </a>
+          )
+        })}
+      </div>
+      <div style={{ marginLeft: 'auto' }}>
+        <a href={`${HTTP_BASE}/export`} download="xiangqi-export.json" title="导出全部棋谱数据"
+          style={{ ...navLink, color: color.textFaint }}>
+          <Icon name="export" /><span>导出</span>
+        </a>
+      </div>
     </nav>
   )
 }
@@ -92,10 +120,43 @@ function App() {
 
   return (
     <>
-      <Nav />
+      <Nav active={route.page} />
       {page}
     </>
   )
+}
+
+const navStyle: React.CSSProperties = {
+  position: 'sticky', top: 0, zIndex: z.sticky,
+  display: 'flex', gap: space.lg, alignItems: 'center',
+  padding: `0 ${space.xl}px`, height: 52,
+  background: 'rgba(21,21,42,0.85)',
+  backdropFilter: 'blur(8px)',
+  borderBottom: `1px solid ${color.border}`,
+}
+
+const brandStyle: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: space.sm,
+  fontSize: fontSize.md, fontWeight: 700, color: color.gold,
+  textDecoration: 'none', letterSpacing: '0.06em',
+}
+
+const brandMark: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  width: 26, height: 26, borderRadius: radius.sm,
+  background: color.goldSoft, color: color.gold, fontSize: '1rem',
+}
+
+const navLink: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', gap: 6,
+  padding: '6px 12px', borderRadius: radius.md,
+  color: color.textMuted, textDecoration: 'none',
+  fontSize: fontSize.base, fontFamily: font.sans, fontWeight: 500,
+  transition: 'background .15s, color .15s',
+}
+
+const navLinkActive: React.CSSProperties = {
+  background: color.goldSoft, color: color.gold, fontWeight: 700,
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
