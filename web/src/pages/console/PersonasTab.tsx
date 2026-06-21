@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { cardStyle } from '../../ui/PageShell.js'
+import { color, space, radius, fontSize, btn } from '../../ui/theme.js'
 import { putPersona, resetPersona, type PersonaConfig } from '../../api/admin.js'
 import { VOICES } from './console-data.js'
 
@@ -32,10 +33,10 @@ function PersonaCard({ p, onChanged }: { p: PersonaConfig; onChanged: () => void
   }
 
   return (
-    <div style={{ ...cardStyle, marginBottom: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <h3 style={{ color: '#f5c518', margin: 0, fontSize: '1rem' }}>{p.id}{p.isPlayer ? '(棋手)' : '(观棋)'}</h3>
-        <label style={{ color: '#ccc', fontSize: '0.82rem' }}>
+    <div style={{ ...cardStyle, marginBottom: space.lg }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: space.md }}>
+        <h3 style={{ color: color.gold, margin: 0, fontSize: fontSize.md }}>{p.id}{p.isPlayer ? '(棋手)' : '(观棋)'}</h3>
+        <label style={{ color: color.textMuted, fontSize: fontSize.sm }}>
           <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} /> 启用
         </label>
       </div>
@@ -48,16 +49,14 @@ function PersonaCard({ p, onChanged }: { p: PersonaConfig; onChanged: () => void
           {VOICES.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
         </select>
       </label>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button style={btn} onClick={save}>保存</button>
-        <button style={btnGhost} onClick={reset}>恢复默认</button>
-        {msg && <span style={{ color: msg.includes('失败') ? '#ff6b6b' : '#8bc34a', fontSize: '0.82rem' }}>{msg}</span>}
+      <div style={{ display: 'flex', gap: space.sm, alignItems: 'center' }}>
+        <button style={btn('primary')} onClick={save}>保存</button>
+        <button style={btn('secondary')} onClick={reset}>恢复默认</button>
+        {msg && <span style={{ color: msg.includes('失败') ? color.danger : color.success, fontSize: fontSize.sm }}>{msg}</span>}
       </div>
     </div>
   )
 }
 
-const lbl: React.CSSProperties = { display: 'block', color: '#ccc', fontSize: '0.85rem', marginBottom: 10 }
-const inp: React.CSSProperties = { display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', background: '#0f0f1e', color: '#eee', border: '1px solid #333', borderRadius: 4, fontFamily: 'inherit', boxSizing: 'border-box' }
-const btn: React.CSSProperties = { background: '#f5c518', color: '#1a1a2e', border: 'none', borderRadius: 6, padding: '7px 18px', cursor: 'pointer', fontWeight: 700 }
-const btnGhost: React.CSSProperties = { background: 'transparent', color: '#bbb', border: '1px solid #333', borderRadius: 4, padding: '6px 12px', cursor: 'pointer' }
+const lbl: React.CSSProperties = { display: 'block', color: color.textMuted, fontSize: fontSize.sm, marginBottom: space.md }
+const inp: React.CSSProperties = { display: 'block', width: '100%', marginTop: space.xs, padding: '6px 8px', background: color.surfaceAlt, color: color.text, border: `1px solid ${color.border}`, borderRadius: radius.md, fontFamily: 'inherit', boxSizing: 'border-box' }

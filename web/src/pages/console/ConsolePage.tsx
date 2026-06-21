@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { PageShell, ErrorBanner, headingStyle } from '../../ui/PageShell.js'
+import { color, space, radius, fontSize, font } from '../../ui/theme.js'
 import { getConfig, type ConfigPayload } from '../../api/admin.js'
 import { KeysModelsTab } from './KeysModelsTab.js'
 import { PersonasTab } from './PersonasTab.js'
@@ -36,7 +37,7 @@ export function ConsolePage() {
   return (
     <PageShell>
       <div style={{ maxWidth: 860, margin: '0 auto' }}>
-        <h1 style={{ ...headingStyle, fontSize: '1.6rem', marginBottom: 16 }}>控制台</h1>
+        <h1 style={{ ...headingStyle, fontSize: fontSize.xl, marginBottom: space.lg }}>控制台</h1>
         <div style={tabBar}>
           {TABS.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
@@ -45,10 +46,10 @@ export function ConsolePage() {
         </div>
 
         {err && <ErrorBanner msg={err} />}
-        {loading && !err && <p style={{ color: '#aaa' }}>加载中…</p>}
+        {loading && !err && <p style={{ color: color.textMuted }}>加载中…</p>}
 
         {!loading && !err && cfg && (
-          <div style={{ marginTop: 16 }}>
+          <div style={{ marginTop: space.lg }}>
             {tab === 'personas' && <PersonasTab key={version} personas={cfg.personas} onChanged={reload} />}
             {tab === 'keys' && <KeysModelsTab key={version} llm={cfg.llm} tts={cfg.tts} onChanged={reload} />}
             {tab === 'params' && <ParamsTab key={version} chat={cfg.chat} director={cfg.director} engine={cfg.engine} diagnose={cfg.diagnose} onChanged={reload} />}
@@ -61,9 +62,15 @@ export function ConsolePage() {
   )
 }
 
-const tabBar: React.CSSProperties = { display: 'flex', gap: 8, flexWrap: 'wrap', borderBottom: '1px solid #333', paddingBottom: 8 }
-const tabBtn: React.CSSProperties = {
-  background: 'transparent', color: '#bbb', border: '1px solid #333', borderRadius: 6,
-  padding: '6px 14px', cursor: 'pointer', fontSize: '0.9rem', fontFamily: 'inherit',
+const tabBar: React.CSSProperties = {
+  display: 'flex', gap: space.sm, flexWrap: 'wrap',
+  borderBottom: `1px solid ${color.border}`, paddingBottom: space.sm,
 }
-const tabActive: React.CSSProperties = { color: '#1a1a2e', background: '#f5c518', borderColor: '#f5c518', fontWeight: 700 }
+const tabBtn: React.CSSProperties = {
+  background: 'transparent', color: color.textMuted, border: `1px solid ${color.border}`,
+  borderRadius: radius.md, padding: `${space.sm}px ${space.lg}px`, cursor: 'pointer',
+  fontSize: fontSize.base, fontFamily: font.sans, fontWeight: 500, transition: 'all .15s',
+}
+const tabActive: React.CSSProperties = {
+  color: color.onGold, background: color.gold, borderColor: color.gold, fontWeight: 700,
+}

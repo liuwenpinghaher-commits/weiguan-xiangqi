@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { cardStyle, ErrorBanner, darkThStyle, darkTdStyle } from '../../ui/PageShell.js'
+import { color, space, fontSize, btn } from '../../ui/theme.js'
 import { listGames, getGame, deleteGame, type GameRow, type GameDetail } from '../../api/admin.js'
 
 export function GamesTab() {
@@ -23,8 +24,8 @@ export function GamesTab() {
     <div>
       {err && <ErrorBanner msg={err} />}
       <div style={cardStyle}>
-        {rows.length === 0 ? <p style={{ color: '#888' }}>(无对局)</p> : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        {rows.length === 0 ? <p style={{ color: color.textFaint }}>(无对局)</p> : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: fontSize.sm }}>
             <thead><tr><th style={darkThStyle}>#</th><th style={darkThStyle}>开始</th><th style={darkThStyle}>模式</th><th style={darkThStyle}>结果</th><th style={darkThStyle}>操作</th></tr></thead>
             <tbody>{rows.map(g => (
               <tr key={g.id}>
@@ -33,8 +34,8 @@ export function GamesTab() {
                 <td style={darkTdStyle}>{g.mode}</td>
                 <td style={darkTdStyle}>{g.result ?? '进行中'}</td>
                 <td style={darkTdStyle}>
-                  <button style={btnGhostSm} onClick={() => open(g.id)}>查看</button>
-                  <button style={btnDel} onClick={() => del(g.id)}>删</button>
+                  <button style={{ ...btn('secondary', { size: 'sm' }), marginRight: space.sm }} onClick={() => open(g.id)}>查看</button>
+                  <button style={btn('danger', { size: 'sm' })} onClick={() => del(g.id)}>删</button>
                 </td>
               </tr>
             ))}</tbody>
@@ -43,20 +44,17 @@ export function GamesTab() {
       </div>
 
       {detail && (
-        <div style={{ ...cardStyle, marginTop: 16 }}>
+        <div style={{ ...cardStyle, marginTop: space.lg }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ color: '#f5c518', margin: 0, fontSize: '1rem' }}>对局 #{detail.game.id}</h3>
-            <button style={btnGhostSm} onClick={() => setDetail(null)}>关闭</button>
+            <h3 style={{ color: color.gold, margin: 0, fontSize: fontSize.md }}>对局 #{detail.game.id}</h3>
+            <button style={btn('secondary', { size: 'sm' })} onClick={() => setDetail(null)}>关闭</button>
           </div>
-          <p style={{ color: '#aaa', fontSize: '0.82rem' }}>走法 {detail.moves.length} 步,消息 {detail.messages.length} 条</p>
-          <div style={{ maxHeight: 240, overflow: 'auto', fontSize: '0.82rem', color: '#ccc' }}>
-            {detail.messages.map((m: any, i: number) => <div key={i}><b style={{ color: '#f5c518' }}>{m.personaId}</b>: {m.text}</div>)}
+          <p style={{ color: color.textMuted, fontSize: fontSize.sm }}>走法 {detail.moves.length} 步,消息 {detail.messages.length} 条</p>
+          <div style={{ maxHeight: 240, overflow: 'auto', fontSize: fontSize.sm, color: color.text }}>
+            {detail.messages.map((m: any, i: number) => <div key={i}><b style={{ color: color.gold }}>{m.personaId}</b>: {m.text}</div>)}
           </div>
         </div>
       )}
     </div>
   )
 }
-
-const btnGhostSm: React.CSSProperties = { background: 'transparent', color: '#bbb', border: '1px solid #333', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', marginRight: 6 }
-const btnDel: React.CSSProperties = { background: 'transparent', color: '#ff6b6b', border: '1px solid rgba(255,82,82,0.4)', borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }

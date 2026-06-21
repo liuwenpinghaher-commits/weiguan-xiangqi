@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { cardStyle } from '../../ui/PageShell.js'
+import { color, space, radius, fontSize, btn as btnStyle } from '../../ui/theme.js'
 import { putSection, revealLlmKey, type LlmCfg, type TtsCfg } from '../../api/admin.js'
 import { displayMaskedKey } from './console-data.js'
 
@@ -33,32 +34,30 @@ export function KeysModelsTab({ llm, tts, onChanged }: { llm: LlmCfg; tts: TtsCf
       <div style={cardStyle}>
         <h3 style={h3}>LLM(百炼)</h3>
         <label style={lbl}>API Key
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: space.sm, alignItems: 'center' }}>
             <input style={inp} type="text" placeholder={`当前 ${displayMaskedKey(llm.apiKey)},留空则不改`} value={apiKey} onChange={e => setApiKey(e.target.value)} />
-            <button style={btnGhost} onClick={doReveal}>显示当前</button>
+            <button style={btnStyle('secondary', { size: 'sm' })} onClick={doReveal}>显示当前</button>
           </div>
         </label>
-        {revealed != null && <p style={{ color: '#8bc34a', fontSize: '0.8rem', wordBreak: 'break-all' }}>{revealed}</p>}
+        {revealed != null && <p style={{ color: color.success, fontSize: fontSize.sm, wordBreak: 'break-all' }}>{revealed}</p>}
         <label style={lbl}>模型<input style={inp} value={model} onChange={e => setModel(e.target.value)} /></label>
         <label style={lbl}>Base URL<input style={inp} value={baseURL} onChange={e => setBaseURL(e.target.value)} /></label>
-        <button style={btn} onClick={saveLlm}>保存 LLM</button>
+        <button style={btnStyle('primary')} onClick={saveLlm}>保存 LLM</button>
       </div>
 
-      <div style={{ ...cardStyle, marginTop: 16 }}>
+      <div style={{ ...cardStyle, marginTop: space.lg }}>
         <h3 style={h3}>TTS(qwen3-tts-flash)</h3>
         <label style={lbl}>端点<input style={inp} value={ttsEndpoint} onChange={e => setTtsEndpoint(e.target.value)} /></label>
         <label style={lbl}>模型<input style={inp} value={ttsModel} onChange={e => setTtsModel(e.target.value)} /></label>
-        <button style={btn} onClick={saveTts}>保存 TTS</button>
+        <button style={btnStyle('primary')} onClick={saveTts}>保存 TTS</button>
       </div>
 
-      {msg && <p style={{ color: msg.includes('失败') ? '#ff6b6b' : '#8bc34a', marginTop: 12 }}>{msg}</p>}
-      <p style={{ color: '#888', fontSize: '0.78rem', marginTop: 8 }}>改 LLM key/模型/Base URL 即时热重载,无需重启。</p>
+      {msg && <p style={{ color: msg.includes('失败') ? color.danger : color.success, marginTop: space.md }}>{msg}</p>}
+      <p style={{ color: color.textFaint, fontSize: fontSize.xs, marginTop: space.sm }}>改 LLM key/模型/Base URL 即时热重载,无需重启。</p>
     </div>
   )
 }
 
-const h3: React.CSSProperties = { color: '#f5c518', margin: '0 0 12px', fontSize: '1rem' }
-const lbl: React.CSSProperties = { display: 'block', color: '#ccc', fontSize: '0.85rem', marginBottom: 12 }
-const inp: React.CSSProperties = { display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', background: '#0f0f1e', color: '#eee', border: '1px solid #333', borderRadius: 4, fontFamily: 'inherit', boxSizing: 'border-box' }
-const btn: React.CSSProperties = { background: '#f5c518', color: '#1a1a2e', border: 'none', borderRadius: 6, padding: '7px 18px', cursor: 'pointer', fontWeight: 700 }
-const btnGhost: React.CSSProperties = { background: 'transparent', color: '#bbb', border: '1px solid #333', borderRadius: 4, padding: '6px 10px', cursor: 'pointer', whiteSpace: 'nowrap' }
+const h3: React.CSSProperties = { color: color.gold, margin: `0 0 ${space.md}px`, fontSize: fontSize.md }
+const lbl: React.CSSProperties = { display: 'block', color: color.textMuted, fontSize: fontSize.sm, marginBottom: space.md }
+const inp: React.CSSProperties = { display: 'block', width: '100%', marginTop: space.xs, padding: '6px 8px', background: color.surfaceAlt, color: color.text, border: `1px solid ${color.border}`, borderRadius: radius.md, fontFamily: 'inherit', boxSizing: 'border-box' }
