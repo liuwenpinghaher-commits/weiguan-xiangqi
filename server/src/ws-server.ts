@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { mkdirSync, existsSync } from 'node:fs'
 import Fastify from 'fastify'
 import fastifyWebsocket from '@fastify/websocket'
 import fastifyCors from '@fastify/cors'
@@ -21,7 +21,10 @@ import { RuntimeConfig } from './config/runtime-config.js'
 import { SettingsRepo } from './store/settings-repo.js'
 import { MutableLLM, buildInnerLlm } from './llm/mutable-llm.js'
 import { registerAdminRoutes } from './admin/admin-routes.js'
-import { synthesizeUrl } from './voice/dashscope-tts.js'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { join } from 'node:path'
+import fastifyStatic from '@fastify/static'
+import { synthesizeAudio } from './voice/moss-tts.js'
 import { DashscopeAsr } from './voice/dashscope-asr.js'
 import { SurrealMemoryStore } from './memory/surreal-memory-store.js'
 import { FakeMemoryStore } from './memory/fake-memory-store.js'
@@ -275,14 +278,54 @@ export async function buildServer(opts: {
 
   const app = Fastify({ logger: true })
 
+  // ── moss-tts-nano 进程管理 ──────────────────────────────────────────────────
+  let mossProcess: ChildProcess | null = null
+
+  function startMossTts(): void {
+    if (mossProcess && !mossProcess.killed) return
+    const ttsCfg = cfg.getTts()
+    const url = new URL(ttsCfg.mossNanoUrl)
+    const port = url.port || '18083'
+    mossProcess = spawn('moss-tts-nano', ['serve', '--device', 'cpu', '--port', port], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false,
+    })
+    mossProcess.stdout?.on('data', (d: Buffer) => { app.log.info(`[moss-tts-nano] ${d.toString().trim()}`) })
+    mossProcess.stderr?.on('data', (d: Buffer) => { app.log.warn(`[moss-tts-nano] ${d.toString().trim()}`) })
+    mossProcess.on('exit', (code) => {
+      app.log.warn(`moss-tts-nano 退出(code=${code}),5s 后自动重启`)
+      mossProcess = null
+      setTimeout(() => startMossTts(), 5000).unref()
+    })
+  }
+
+  function stopMossTts(): void {
+    if (!mossProcess) return
+    try { mossProcess.kill('SIGTERM') } catch { /* already dead */ }
+    setTimeout(() => {
+      try { mossProcess?.kill('SIGKILL') } catch { /* ignore */ }
+    }, 5000).unref()
+  }
+
+  startMossTts()
+
   // 跨域:仅允许本地前端(:3420)读取响应。原先 origin:true 反射任意来源——意味着你浏览器里
   // 打开的任何网页都能跨域 fetch 本服务,读到 /admin/.../reveal 的明文 key 或 PUT 篡改配置。
   // 收紧到固定前端来源即可堵住(非浏览器客户端如 curl 不受 CORS 约束,正常工作)。
   await app.register(fastifyCors, { origin: ['http://localhost:3420', 'http://127.0.0.1:3420'] })
 
+  // 静态文件服务:暴露生成的 TTS WAV 文件给前端播放
+  const staticDir = join(import.meta.dirname, '..', 'static')
+  if (!existsSync(staticDir)) mkdirSync(staticDir, { recursive: true })
+  await app.register(fastifyStatic, {
+    root: staticDir,
+    prefix: '/static/',
+  })
+
   // 优雅关闭:关闭 Fastify 时同步释放引擎子进程与 SQLite WAL
   app.addHook('onClose', async () => {
     if (idleTimer) clearTimeout(idleTimer)
+    stopMossTts()
     try { engine?.close?.() } catch {}
     try { db.close() } catch {}
     try { if (mem instanceof SurrealMemoryStore) await mem.close() } catch {}
@@ -627,10 +670,10 @@ export async function buildServer(opts: {
     return { gameId }
   })
 
-  // ── 云端 TTS 合成 ─────────────────────────────────────────────────────────────
+  // ── 本地 TTS 合成(moss-tts-nano) ────────────────────────────────────────────
   // GET /tts?personaId=xxx&text=xxx
-  // 无 DASHSCOPE_API_KEY → 503(前端回退浏览器 TTS)
-  // 成功 → JSON { url } (OSS 公网音频 URL,24h 有效);出错 → 500
+  // moss-tts-nano 不可用 → 503(前端回退浏览器 TTS)
+  // 成功 → JSON { url } (本地静态 WAV 文件路径)
   app.get('/tts', async (req, reply) => {
     const query = req.query as { personaId?: string; text?: string }
     const personaId = String(query.personaId ?? '')
@@ -638,23 +681,19 @@ export async function buildServer(opts: {
     if (!rawText) {
       return reply.code(400).send({ error: 'text 参数不能为空' })
     }
-    const text = rawText.slice(0, 200)
-    const voice = cfg.voiceForPersona(personaId)
-    const tts = cfg.getTts()
-    const apiKey = cfg.getLlm().apiKey
-    if (!apiKey) return reply.code(503).send({ error: '未配置 DASHSCOPE_API_KEY,TTS 不可用' })
+    const text = rawText.slice(0, 500)
+    const profile = cfg.voiceProfileForPersona(personaId)
+
     try {
-      const url = await synthesizeUrl(text, voice, {
-        endpoint: tts.endpoint,
-        apiKey,
-        model: tts.model,
-      })
-      reply.header('Content-Type', 'application/json')
-      return reply.send({ url })
+      const fileUrl = await synthesizeAudio(text, profile, cfg.getTts())
+      return reply.header('Content-Type', 'application/json').send({ url: fileUrl })
     } catch (e) {
-      // 不把上游(阿里云)错误体原文透传给客户端——可能含鉴权诊断信息;详情记服务端日志。
       req.log.error(e, 'TTS 合成失败')
-      return reply.code(500).send({ error: 'TTS 服务暂时不可用' })
+      // moss-tts-nano 进程可能已退出;检查并尝试重启
+      if (!mossProcess || mossProcess.killed) {
+        startMossTts()
+      }
+      return reply.code(503).send({ error: 'TTS 服务暂时不可用' })
     }
   })
 

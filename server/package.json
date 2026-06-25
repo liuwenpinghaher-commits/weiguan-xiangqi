@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
+    "@fastify/static": "^9.1.3",
     "@fastify/websocket": "^11.2.0",
     "better-sqlite3": "^11.3.0",
     "elephantops": "^0.1.1",
