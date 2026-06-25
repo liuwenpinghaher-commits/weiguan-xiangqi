@@ -101,6 +101,7 @@ export class GameSession {
    * key=gameId, value=true/false。
    */
   private lastHumanBlunder = new Map<number, boolean>()
+  private clockStates = new Map<number, { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null; startedAt: number | null }>()
 
   constructor(private deps: GameSessionDeps) {}
 
@@ -189,11 +190,29 @@ export class GameSession {
       this.repeatHistories.set(id, [])
     }
     this.noCapturePlies.set(id, 0)
+    const engineCfg = this.deps.cfg.getEngineParams()
+    this.clockStates.set(id, {
+      redRemaining: engineCfg.clockInitialSeconds * 1000,
+      blackRemaining: engineCfg.clockInitialSeconds * 1000,
+      activeSide: null,
+      startedAt: null,
+    })
 
     return id
   }
 
   async playHumanMove(gameId: number, move: string): Promise<{ aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw' }> {
+    const clock = this.clockStates.get(gameId)
+    if (clock && clock.activeSide !== null && clock.startedAt !== null) {
+      const elapsed = Date.now() - clock.startedAt
+      if (clock.activeSide === 'red') clock.redRemaining = Math.max(0, clock.redRemaining - elapsed)
+      else clock.blackRemaining = Math.max(0, clock.blackRemaining - elapsed)
+      const inc = this.deps.cfg.getEngineParams().clockIncrementSeconds * 1000
+      if (clock.activeSide === 'red') clock.redRemaining += inc
+      else clock.blackRemaining += inc
+      clock.activeSide = null
+      clock.startedAt = null
+    }
     this.ensureLoaded(gameId)
     const pos = this.positions.get(gameId)
     if (!pos) throw new Error('game not found')
@@ -333,6 +352,11 @@ export class GameSession {
       const result = aiOver.over ? aiOver.result! : aiRepeat!.result
       this.finish(gameId, result)
       return { aiMove: decision.move, fen: afterAI.fen(), over: true, result }
+    }
+    if (clock) {
+      const humanSide = this.humanSides.get(gameId)!
+      clock.activeSide = humanSide
+      clock.startedAt = Date.now()
     }
     return { aiMove: decision.move, fen: afterAI.fen(), over: false }
   }
@@ -493,6 +517,30 @@ export class GameSession {
       || this.lastMoveAt.has(gameId) || this.lastMoveMs.has(gameId)
       || this.repeatHistories.has(gameId) || this.noCapturePlies.has(gameId)
       || this.prevRedCp.has(gameId) || this.lastHumanBlunder.has(gameId)
+      || this.clockStates.has(gameId)
+  }
+
+  getClockState(gameId: number) {
+    const clock = this.clockStates.get(gameId)
+    if (!clock) return null
+    let red = clock.redRemaining
+    let black = clock.blackRemaining
+    if (clock.activeSide === 'red' && clock.startedAt !== null) {
+      red = Math.max(0, red - (Date.now() - clock.startedAt))
+    } else if (clock.activeSide === 'black' && clock.startedAt !== null) {
+      black = Math.max(0, black - (Date.now() - clock.startedAt))
+    }
+    return { redRemaining: red, blackRemaining: black, activeSide: clock.activeSide }
+  }
+
+  pauseClock(gameId: number): void {
+    const clock = this.clockStates.get(gameId)
+    if (!clock || clock.activeSide === null || clock.startedAt === null) return
+    const elapsed = Date.now() - clock.startedAt
+    if (clock.activeSide === 'red') clock.redRemaining -= elapsed
+    else clock.blackRemaining -= elapsed
+    clock.activeSide = null
+    clock.startedAt = null
   }
 
   private finish(gameId: number, result: Side | 'draw') {
@@ -507,5 +555,6 @@ export class GameSession {
     this.noCapturePlies.delete(gameId)
     this.prevRedCp.delete(gameId)
     this.lastHumanBlunder.delete(gameId)
+    this.clockStates.delete(gameId)
   }
 }
