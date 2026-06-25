@@ -403,7 +403,8 @@ export async function buildServer(opts: {
           if (humanSide === 'black' && engine) {
             try {
               const aiResult = await session.aiFirstMove(gameId)
-              socket.send(JSON.stringify({ type: 'update', ...aiResult }))
+              const clockState = session.getClockState(gameId)
+              socket.send(JSON.stringify({ type: 'update', ...aiResult, clockState }))
             } catch (e) {
               socket.send(JSON.stringify({ type: 'error', message: `AI先手失败: ${(e as Error).message}` }))
             }
@@ -415,7 +416,8 @@ export async function buildServer(opts: {
             return
           }
           const result = await session.playHumanMove(msg.gameId as number, msg.move as string)
-          socket.send(JSON.stringify({ type: 'update', ...result }))
+          const clockState = session.getClockState(msg.gameId as number)
+          socket.send(JSON.stringify({ type: 'update', ...result, clockState }))
           // 局末:对每个旁观者触发反思(异步,失败不影响主流程)
           if (result.over) {
             const gameId = msg.gameId as number
@@ -464,6 +466,36 @@ export async function buildServer(opts: {
           if (typeof gid === 'number') {
             if (msg.enabled === false) spectatorsOffGames.add(gid)
             else spectatorsOffGames.delete(gid)
+          }
+        } else if (msg.type === 'resign') {
+          const gid = msg.gameId as number
+          const { result } = session.resign(gid)
+          const clockState = session.getClockState(gid)
+          const pos = (session as any).positions?.get(gid)
+          const fen = pos ? pos.fen() : ''
+          socket.send(JSON.stringify({ type: 'update', aiMove: null, fen, over: true, result, clockState }))
+          cleanupFinishedGame(gid)
+          void reflectGame(gid).catch(() => {})
+        } else if (msg.type === 'draw_offer') {
+          const gid = msg.gameId as number
+          const { accepted } = session.offerDraw(gid)
+          socket.send(JSON.stringify({ type: 'draw_response', gameId: gid, accepted }))
+          if (accepted) {
+            const clockState = session.getClockState(gid)
+            const pos = (session as any).positions?.get(gid)
+            const fen = pos ? pos.fen() : ''
+            socket.send(JSON.stringify({ type: 'update', aiMove: null, fen, over: true, result: 'draw', clockState }))
+            cleanupFinishedGame(gid)
+            void reflectGame(gid).catch(() => {})
+          }
+        } else if (msg.type === 'undo') {
+          const gid = msg.gameId as number
+          const result = session.undoLastMoves(gid)
+          if (result.success) {
+            const clockState = session.getClockState(gid)
+            socket.send(JSON.stringify({ type: 'undo_result', gameId: gid, success: true, fen: result.fen, clockState }))
+          } else {
+            socket.send(JSON.stringify({ type: 'undo_result', gameId: gid, success: false }))
           }
         } else {
           socket.send(JSON.stringify({ type: 'error', message: `unknown message type: ${msg.type}` }))

@@ -43,6 +43,10 @@ export class GamesRepo {
       move: r.move, fenAfter: r.fen_after, scoreCp: r.score_cp, byAi: !!r.by_ai }))
   }
 
+  deleteLastMove(gameId: number): void {
+    this.db.prepare('DELETE FROM moves WHERE game_id = ? AND ply = (SELECT MAX(ply) FROM moves WHERE game_id = ?)').run(gameId, gameId)
+  }
+
   finishGame(id: number, result: Side | 'draw', endedAt: string): void {
     this.db.prepare('UPDATE games SET result=?, ended_at=? WHERE id=?').run(result, endedAt, id)
   }

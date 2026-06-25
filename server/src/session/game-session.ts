@@ -543,6 +543,53 @@ export class GameSession {
     clock.startedAt = null
   }
 
+  resign(gameId: number): { success: boolean; result: string } {
+    this.ensureLoaded(gameId)
+    const humanSide = this.humanSides.get(gameId)
+    if (!humanSide) return { success: false, result: '' }
+    const result = humanSide === 'red' ? 'black' : 'red'
+    this.deps.repo.finishGame(gameId, result as 'red' | 'black' | 'draw', this.deps.clock())
+    return { success: true, result }
+  }
+
+  offerDraw(gameId: number): { accepted: boolean } {
+    this.ensureLoaded(gameId)
+    const mode = this.modes.get(gameId)
+    const prob = mode === 'coach' ? 0.8 : 0.6
+    const accepted = Math.random() < prob
+    if (accepted) {
+      this.deps.repo.finishGame(gameId, 'draw', this.deps.clock())
+    }
+    return { accepted }
+  }
+
+  undoLastMoves(gameId: number): { success: boolean; fen: string } {
+    this.ensureLoaded(gameId)
+    const pos = this.positions.get(gameId)
+    if (!pos) return { success: false, fen: '' }
+    const mode = this.modes.get(gameId)
+    if (mode !== 'coach') return { success: false, fen: '' }
+
+    const moves = this.deps.repo.getMoves(gameId)
+    if (moves.length < 2) return { success: false, fen: '' }
+
+    this.deps.repo.deleteLastMove(gameId)
+    this.deps.repo.deleteLastMove(gameId)
+
+    const g = this.deps.repo.getGame(gameId)!
+    let newPos = this.deps.makePosition(g.startFen)
+    const remaining = this.deps.repo.getMoves(gameId)
+    for (const m of remaining) {
+      newPos = newPos.applyMove(m.move)
+    }
+    this.positions.set(gameId, newPos)
+
+    const lastAi = remaining.filter(m => m.byAi).pop()
+    this.prevRedCp.set(gameId, lastAi?.scoreCp ?? null)
+
+    return { success: true, fen: newPos.fen() }
+  }
+
   private finish(gameId: number, result: Side | 'draw') {
     this.deps.repo.finishGame(gameId, result, this.deps.clock())
     // 局末清理所有按 gameId 累积的内存态,防渐进内存泄漏 + gameId 复用误判
