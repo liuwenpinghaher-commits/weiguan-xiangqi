@@ -2,9 +2,11 @@ import { WS_BASE } from './config.js'
 
 export type ServerMsg =
   | { type: 'started'; gameId: number }
-  | { type: 'update'; aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw' }
+  | { type: 'update'; aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; clockState?: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null } }
   | { type: 'error'; message: string }
   | { type: 'chat'; gameId: number; personaId: string; text: string; addressee: string; ts: string }
+  | { type: 'draw_response'; gameId: number; accepted: boolean }
+  | { type: 'undo_result'; gameId: number; success: boolean; fen?: string; clockState?: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null } }
 
 export type ConnStatus = 'open' | 'closed' | 'error' | 'reconnecting'
 
