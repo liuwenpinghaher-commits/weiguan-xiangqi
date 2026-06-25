@@ -4,7 +4,7 @@ export interface ChatCfg {
 }
 export interface DirectorModeCfg { maxDropCp: number; targetBand: { low: number; high: number }; strength: number }
 export interface DirectorCfg { coach: DirectorModeCfg; humanlike: DirectorModeCfg }
-export interface EngineCfg { pikafishPath: string | null; multipv: number; movetime: number }
+export interface EngineCfg { pikafishPath: string | null; multipv: number; movetime: number; clockInitialSeconds: number; clockIncrementSeconds: number }
 export interface DiagnoseCfg { depth: number }
 export interface LlmCfg { apiKey: string | null; model: string; baseURL: string | null }
 export interface TtsCfg {
@@ -25,7 +25,7 @@ export const DEFAULTS = {
     coach: { maxDropCp: 320, targetBand: { low: -50, high: 80 }, strength: 0.6 },
     humanlike: { maxDropCp: 320, targetBand: { low: -50, high: 80 }, strength: 0.5 },
   } as DirectorCfg,
-  engine: { pikafishPath: null, multipv: 5, movetime: 500 } as EngineCfg,
+  engine: { pikafishPath: null, multipv: 5, movetime: 500, clockInitialSeconds: 600, clockIncrementSeconds: 5 } as EngineCfg,
   diagnose: { depth: 12 } as DiagnoseCfg,
   llm: { apiKey: null, model: 'qwen-plus-latest', baseURL: null } as LlmCfg,
   tts: { mossNanoUrl: 'http://127.0.0.1:18083', referenceAudio: 'assets/tts/reference.wav', streaming: true } as TtsCfg,

@@ -46,7 +46,7 @@ const SCHEMA: Record<ConfigSection, Record<string, Cleaner>> = {
     idleProb: prob, idleIntervalMs: intMin0, reactProb: prob, lenShortP: prob, lenLongP: prob,
   },
   director: { coach: modeCleaner, humanlike: modeCleaner },
-  engine: { pikafishPath: (v) => (typeof v === 'string' ? v : v === null ? null : undefined), multipv: intRange(1, 10), movetime: intRange(50, 5000) },
+  engine: { pikafishPath: (v) => (typeof v === 'string' ? v : v === null ? null : undefined), multipv: intRange(1, 10), movetime: intRange(50, 5000), clockInitialSeconds: intRange(30, 3600), clockIncrementSeconds: intRange(0, 60) },
   diagnose: { depth: intRange(1, 30) },
   llm: { apiKey: strOrNull, model: str, baseURL: strOrNull },
   tts: { mossNanoUrl: localHttpUrl, referenceAudio: str, streaming: (v) => (typeof v === 'boolean' ? v : undefined) },
