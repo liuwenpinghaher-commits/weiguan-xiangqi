@@ -3,7 +3,7 @@ import { DEFAULTS, type ChatCfg, type DirectorCfg, type EngineCfg, type Diagnose
 import { validateSection } from './validate.js'
 import type { Persona, PersonaId } from '../types.js'
 import { PERSONAS } from '../personas/personas.js'
-import { voiceForPersona as defaultVoiceFor } from '../voice/dashscope-tts.js'
+import { DEFAULT_VOICE_PROFILES, DEFAULT_REFERENCE_AUDIO, defaultVoiceProfile, type VoiceProfile } from '../voice/voice-profiles.js'
 import type { PersonaConfig } from '../store/settings-repo.js'
 
 /** 代码默认值 ⊕ 数据库覆盖 的唯一读取入口。每次读都合并,保证即时生效。 */
@@ -55,7 +55,7 @@ export class RuntimeConfig {
     const seed: PersonaConfig[] = PERSONAS.map(p => ({
       id: p.id, name: p.name, isPlayer: p.isPlayer, skill: p.skill,
       background: p.background, voiceStyle: p.voice, leaning: p.leaning,
-      ttsVoice: defaultVoiceFor(p.id), enabled: true,
+      ttsVoice: DEFAULT_REFERENCE_AUDIO, enabled: true,
     }))
     this.repo.seedPersonas(seed, this.now())
   }
@@ -75,11 +75,10 @@ export class RuntimeConfig {
     return p
   }
 
-  /** 逐角色 tts 音色;无配置回退默认映射 */
-  voiceForPersona(id: string): string {
+  /** 逐角色 tts VoiceProfile;无配置回退默认 */
+  voiceProfileForPersona(id: string): VoiceProfile {
     this.ensureSeeded()
-    const row = this.repo.getAllPersonas().find(p => p.id === id)
-    return row?.ttsVoice || defaultVoiceFor(id)
+    return DEFAULT_VOICE_PROFILES[id] ?? defaultVoiceProfile()
   }
 
   updatePersona(id: PersonaId, patch: Partial<Omit<PersonaConfig, 'id'>>): void {
@@ -94,7 +93,7 @@ export class RuntimeConfig {
     if (p) this.repo.seedPersonas([{
       id: p.id, name: p.name, isPlayer: p.isPlayer, skill: p.skill,
       background: p.background, voiceStyle: p.voice, leaning: p.leaning,
-      ttsVoice: defaultVoiceFor(p.id), enabled: true,
+      ttsVoice: DEFAULT_REFERENCE_AUDIO, enabled: true,
     }], this.now())
   }
 

@@ -4,7 +4,7 @@ import { SettingsRepo } from '../store/settings-repo.js'
 import { RuntimeConfig } from './runtime-config.js'
 import { DEFAULTS } from './defaults.js'
 import { PERSONAS } from '../personas/personas.js'
-import { voiceForPersona } from '../voice/dashscope-tts.js'
+import { DEFAULT_VOICE_PROFILES } from '../voice/voice-profiles.js'
 
 function cfg() { return new RuntimeConfig(new SettingsRepo(openDb(':memory:')), () => '2026-06-20T00:00:00.000Z') }
 
@@ -39,7 +39,7 @@ describe('RuntimeConfig 段配置', () => {
     const c = cfg(); const hook = vi.fn(); c.onLlmChange = hook
     c.updateSection('chat', { reactProb: 0.5 }); expect(hook).not.toHaveBeenCalled()
     c.updateSection('llm', { model: 'qwen-max' }); expect(hook).toHaveBeenCalledTimes(1)
-    c.updateSection('tts', { model: 'x' }); expect(hook).toHaveBeenCalledTimes(2)
+    c.updateSection('tts', { referenceAudio: 'custom.wav' }); expect(hook).toHaveBeenCalledTimes(2)
   })
   it('director 段按 mode 深合并', () => {
     const c = cfg()
@@ -59,15 +59,20 @@ describe('RuntimeConfig personas', () => {
     expect(coach.name).toBe('林教练')
     expect(coach.isPlayer).toBe(false)
   })
-  it('voiceForPersona 默认取自播种映射', () => {
+  it('voiceProfileForPersona 默认取自 DEFAULT_VOICE_PROFILES', () => {
     const c = cfg()
-    expect(c.voiceForPersona('laopaoer')).toBe(voiceForPersona('laopaoer'))
+    expect(c.voiceProfileForPersona('laopaoer')).toEqual(DEFAULT_VOICE_PROFILES.laopaoer)
+  })
+  it('未知 persona 回退 defaultVoiceProfile', () => {
+    const c = cfg()
+    const p = c.voiceProfileForPersona('unknown')
+    expect(p.audioTemperature).toBe(0.8)
   })
   it('updatePersona 改名/音色后即时反映', () => {
     const c = cfg(); c.personas()
-    c.updatePersona('coach', { name: '林老师', ttsVoice: 'Cherry' })
+    c.updatePersona('coach', { name: '林老师', ttsVoice: 'custom_ref.wav' })
     expect(c.personas().find(p => p.id === 'coach')!.name).toBe('林老师')
-    expect(c.voiceForPersona('coach')).toBe('Cherry')
+    expect(c.voiceProfileForPersona('coach')).toEqual(DEFAULT_VOICE_PROFILES.coach)
   })
   it('resetPersona 恢复默认(重新播种该行)', () => {
     const c = cfg(); c.personas()
