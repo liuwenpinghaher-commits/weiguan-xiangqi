@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { connect, type ServerMsg } from '../api/ws-client.js'
 import { Board } from '../board/Board.js'
+import { MoveList } from '../board/MoveList.js'
 import { ChatPanel, type ChatLine } from '../chat/ChatPanel.js'
 import { cancelSpeech } from '../voice/browser-tts.js'
 import { stopVoice } from '../voice/server-tts.js'
@@ -31,8 +32,20 @@ export function PlayPage() {
   const [gameResult, setGameResult] = useState<GameResult>(null)
   const [isSparring, setIsSparring] = useState(false) // 是否从陪练局面起手
   const [spectatorsOn, setSpectatorsOn] = useState(true) // 观众席(弹幕+语音)开关
+  const [moveHistory, setMoveHistory] = useState<{ply:number;move:string;side:'red'|'black'}[]>([])
+  const [fenHistory, setFenHistory] = useState<string[]>([START_FEN])
+  const [plyIndex, setPlyIndex] = useState(0)
+  const [undoRemaining, setUndoRemaining] = useState(3)
+  const [clockState, setClockState] = useState<{redRemaining:number;blackRemaining:number;activeSide:'red'|'black'|null}|null>(null)
+  const [preMove, setPreMove] = useState<{from:string;to:string}|null>(null)
+  const [legalSquares, setLegalSquares] = useState<string[]>([])
+  const [flipped, setFlipped] = useState(false)
 
   const wsRef = useRef<ReturnType<typeof connect> | null>(null)
+  const gameIdRef = useRef<number | null>(null)
+  gameIdRef.current = gameId
+  const preMoveRef = useRef<{from:string;to:string}|null>(null)
+  preMoveRef.current = preMove
   const isNarrow = useIsNarrow()
 
   // 据 result 推导胜负文本（依据当前 side 状态）
@@ -56,6 +69,20 @@ export function PlayPage() {
       setLastAiMove(msg.aiMove)
       setAwaitingAi(false) // AI 已回应，解锁棋盘
       setStatusError(false)
+      if (msg.clockState) setClockState(msg.clockState)
+      if (msg.aiMove) {
+        const aiSide = side === 'red' ? 'black' : 'red'
+        setMoveHistory(prev => [...prev, { ply: prev.length + 1, move: msg.aiMove!, side: aiSide }])
+        setPlyIndex(prev => prev + 1)
+      }
+      if (msg.fen) {
+        setFenHistory(prev => { const next = [...prev, msg.fen]; if (next.length > 200) next.shift(); return next })
+      }
+      const pm = preMoveRef.current
+      if (pm && msg.fen && !msg.over) {
+        setPreMove(null)
+        setTimeout(() => { const gid = gameIdRef.current; if (gid) wsRef.current?.send({ type: 'move', gameId: gid, move: pm.from + pm.to }) }, 100)
+      }
       if (statusRef.current === 'paused') {
         // 暂停期间到达的 AI 落子:棋盘已更新,但保持暂停态,不抢回 playing/over
       } else if (msg.over) {
@@ -82,6 +109,19 @@ export function PlayPage() {
         addressee: msg.addressee,
         ts: msg.ts,
       }])
+    } else if (msg.type === 'draw_response') {
+      alert(msg.accepted ? 'AI 接受和棋！' : 'AI 拒绝和棋')
+    } else if (msg.type === 'undo_result') {
+      if (msg.success && msg.fen) {
+        setFen(msg.fen)
+        setFenKey(k => k + 1)
+        setUndoRemaining(u => u - 1)
+        setMoveHistory(prev => prev.slice(0, -2))
+        setPlyIndex(p => Math.max(0, p - 2))
+        if (msg.clockState) setClockState(msg.clockState)
+      } else {
+        alert('无法悔棋（走法太少或非陪练模式）')
+      }
     }
   }
 
@@ -137,6 +177,14 @@ export function PlayPage() {
   }, [])
 
   function handleStart() {
+    setMoveHistory([])
+    setFenHistory([START_FEN])
+    setPlyIndex(0)
+    setUndoRemaining(3)
+    setClockState(null)
+    setPreMove(null)
+    setLegalSquares([])
+    setFlipped(false)
     startNewConnection(mode, side)
   }
 
@@ -159,7 +207,15 @@ export function PlayPage() {
   }
 
   function handleMove(move: string) {
-    if (status !== 'playing' || gameId === null) return
+    if (status !== 'playing' || gameId === null) {
+      if (awaitingAi && mode === 'humanlike') {
+        setPreMove({ from: move.slice(0,2), to: move.slice(2,4) })
+      }
+      return
+    }
+    setPreMove(null)
+    setLegalSquares([])
+    setMoveHistory(prev => [...prev, { ply: prev.length + 1, move, side }])
     wsRef.current?.send({ type: 'move', gameId, move })
     setAwaitingAi(true) // 等待 AI 响应，锁盘
     setStatusError(false)
@@ -179,6 +235,14 @@ export function PlayPage() {
     setGameResult(null)
     setStatusError(false)
     setIsSparring(false) // 手动重开时取消陪练提示
+    setMoveHistory([])
+    setFenHistory([START_FEN])
+    setPlyIndex(0)
+    setUndoRemaining(3)
+    setClockState(null)
+    setPreMove(null)
+    setLegalSquares([])
+    setFlipped(false)
     startNewConnection(activeMode ?? mode, activeSide ?? side)
   }
 
@@ -203,6 +267,42 @@ export function PlayPage() {
   const boardSize = isNarrow
     ? Math.min(typeof window !== 'undefined' ? window.innerWidth - 32 : 460, 460)
     : 500
+
+  const boardOrientation = (side === 'black' && !flipped) || (side === 'red' && flipped) ? 'black' : 'red'
+
+  function renderClock() {
+    if (!clockState) return null
+    const fmt = (ms: number) => {
+      const s = Math.max(0, Math.floor(ms / 1000))
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+    }
+    const active = clockState.activeSide
+    return (
+      <div style={styles.clockRow}>
+        <div style={{...styles.clockBox, ...(active==='red'?styles.clockActive:{}), ...(clockState.redRemaining<30000?styles.clockLow:{})}}>
+          <span style={styles.clockLabel}>红方</span>
+          <span style={styles.clockTime}>{fmt(clockState.redRemaining)}</span>
+        </div>
+        <div style={{...styles.clockBox, ...(active==='black'?styles.clockActive:{}), ...(clockState.blackRemaining<30000?styles.clockLow:{})}}>
+          <span style={styles.clockLabel}>黑方</span>
+          <span style={styles.clockTime}>{fmt(clockState.blackRemaining)}</span>
+        </div>
+      </div>
+    )
+  }
+
+  useEffect(() => {
+    if (!clockState || clockState.activeSide === null) return
+    const iv = setInterval(() => {
+      setClockState(prev => {
+        if (!prev || prev.activeSide === null) return prev
+        const d = 200
+        if (prev.activeSide === 'red') return {...prev, redRemaining: prev.redRemaining - d}
+        return {...prev, blackRemaining: prev.blackRemaining - d}
+      })
+    }, 200)
+    return () => clearInterval(iv)
+  }, [clockState?.activeSide])
 
   const resultTxt = resultText(gameResult)
   const canStart = status === 'idle' || status === 'over' || status === 'error'
@@ -234,7 +334,20 @@ export function PlayPage() {
         </div>
       </div>
 
+      {renderClock()}
+
       {primaryAction}
+
+      {status === 'playing' && gameId !== null && (
+        <div style={styles.actionRow}>
+          <button style={styles.actionBtn} onClick={() => { if (confirm('确定认输？')) wsRef.current?.send({ type: 'resign', gameId }) }}>认输</button>
+          <button style={styles.actionBtn} onClick={() => wsRef.current?.send({ type: 'draw_offer', gameId })}>提和</button>
+          {mode === 'coach' && (
+            <button style={{...styles.actionBtn, ...(undoRemaining<=0?{opacity:.4}:{})}} disabled={undoRemaining<=0}
+              onClick={() => wsRef.current?.send({ type: 'undo', gameId })}>悔棋({undoRemaining})</button>
+          )}
+        </div>
+      )}
 
       {/* 结果横幅 */}
       {status === 'over' && resultTxt && (
@@ -309,6 +422,7 @@ export function PlayPage() {
         {sidebar}
 
         <div style={styles.centerCol}>
+          <button style={styles.flipBtn} onClick={() => setFlipped(f => !f)} aria-label="翻转棋盘">↻ 翻转棋盘</button>
           <div style={styles.boardWrapper}>
             <Board
               key={fenKey}
@@ -316,9 +430,23 @@ export function PlayPage() {
               onMove={handleMove}
               size={boardSize}
               lastMove={lastAiMove}
-              disabled={awaitingAi || status !== 'playing'}
+              disabled={awaitingAi || status !== 'playing' || plyIndex < moveHistory.length}
+              orientation={boardOrientation}
+              legalSquares={legalSquares}
+              preMove={preMove}
+              onSquareSelect={(sq) => {
+                fetch(`http://localhost:3410/legal-moves?fen=${encodeURIComponent(fen)}&square=${sq}`)
+                  .then(r => r.json()).then(d => setLegalSquares(d.squares)).catch(() => setLegalSquares([]))
+              }}
             />
           </div>
+          <MoveList moves={moveHistory} currentPly={plyIndex} onNavigate={(ply) => {
+            setPlyIndex(ply)
+            if (ply < moveHistory.length && fenHistory[ply]) {
+              setFen(fenHistory[ply])
+              setFenKey(k => k + 1)
+            }
+          }} />
         </div>
 
         <div style={{ ...styles.chatCol, height: isNarrow ? 420 : boardSize, ...(isNarrow ? { width: '100%', maxWidth: 480 } : {}) }}>
@@ -363,7 +491,8 @@ const styles: Record<string, React.CSSProperties> = {
   centerCol: {
     flexShrink: 0,
     display: 'flex',
-    justifyContent: 'center',
+    flexDirection: 'column',
+    alignItems: 'center',
   },
   chatCol: {
     flex: 1,
@@ -461,4 +590,13 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 14px', background: 'rgba(142,68,173,0.18)', border: '1px solid #8e44ad',
     borderRadius: radius.md, color: '#d7bde2', fontSize: fontSize.sm, fontWeight: 600,
   },
+  clockRow: { display: 'flex', gap: 8, marginTop: 8 },
+  clockBox: { flex: 1, padding: '6px 10px', borderRadius: 6, background: color.surface, border: `1px solid ${color.border}`, textAlign: 'center' as const },
+  clockActive: { borderColor: color.gold, boxShadow: `0 0 8px ${color.gold}44` },
+  clockLow: { borderColor: color.danger, color: color.danger },
+  clockLabel: { display: 'block', fontSize: 11, color: color.textMuted, marginBottom: 2 },
+  clockTime: { fontSize: 22, fontFamily: 'monospace', fontWeight: 700 },
+  actionRow: { display: 'flex', gap: 6, marginTop: 8 },
+  actionBtn: { flex: 1, padding: '6px 0', borderRadius: 6, border: `1px solid ${color.border}`, background: color.surface, color: color.text, fontSize: fontSize.sm, cursor: 'pointer', textAlign: 'center' as const },
+  flipBtn: { display: 'block', margin: '0 auto 6px', padding: '2px 10px', borderRadius: 4, border: `1px solid ${color.border}`, background: color.surface, color: color.textMuted, fontSize: fontSize.xs, cursor: 'pointer' },
 }
