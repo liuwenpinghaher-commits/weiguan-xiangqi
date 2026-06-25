@@ -286,16 +286,26 @@ export async function buildServer(opts: {
     const ttsCfg = cfg.getTts()
     const url = new URL(ttsCfg.mossNanoUrl)
     const port = url.port || '18083'
-    mossProcess = spawn('moss-tts-nano', ['serve', '--device', 'cpu', '--port', port], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false,
+    try {
+      mossProcess = spawn('moss-tts-nano', ['serve', '--device', 'cpu', '--port', port], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: false,
+      })
+    } catch {
+      app.log.warn('moss-tts-nano 未安装或不在 PATH 中,TTS 功能不可用')
+      mossProcess = null
+      return
+    }
+    mossProcess.on('error', () => {
+      app.log.warn('moss-tts-nano 启动失败,TTS 功能不可用')
+      mossProcess = null
     })
     mossProcess.stdout?.on('data', (d: Buffer) => { app.log.info(`[moss-tts-nano] ${d.toString().trim()}`) })
     mossProcess.stderr?.on('data', (d: Buffer) => { app.log.warn(`[moss-tts-nano] ${d.toString().trim()}`) })
     mossProcess.on('exit', (code) => {
       app.log.warn(`moss-tts-nano 退出(code=${code}),5s 后自动重启`)
       mossProcess = null
-      setTimeout(() => startMossTts(), 5000).unref()
+      if (code !== 0) setTimeout(() => startMossTts(), 5000).unref()
     })
   }
 
