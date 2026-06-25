@@ -108,15 +108,13 @@ const customPieces: Record<string, (args: PieceRenderArgs) => ReactElement> = Ob
 export interface BoardProps {
   fen: string
   onMove: (move: string) => void
-  /** 棋盘像素宽度，默认 480 */
   size?: number
-  /**
-   * 上一步着法的 Pikafish 坐标字符串（如 "b9c7"），长度 4。
-   * Board 会高亮 from/to 两格。
-   */
   lastMove?: string | null
-  /** true 时禁止拖拽（AI 思考期间锁盘） */
   disabled?: boolean
+  orientation?: 'red' | 'black'
+  legalSquares?: string[]
+  preMove?: { from: string; to: string } | null
+  onSquareSelect?: (square: string) => void
 }
 
 /** 将库的 Square（e.g. "e1"）转为 Pikafish 坐标（e.g. "e0"） */
@@ -133,7 +131,7 @@ export function pikafishToSquare(pika: string): Square {
   return col + String(row + 1)
 }
 
-export function Board({ fen, onMove, size = 480, lastMove, disabled = false }: BoardProps) {
+export function Board({ fen, onMove, size = 480, lastMove, disabled = false, orientation = 'red', legalSquares, preMove, onSquareSelect }: BoardProps) {
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null)
 
   // 落子回调：用户拖拽落子
@@ -150,6 +148,7 @@ export function Board({ fen, onMove, size = 480, lastMove, disabled = false }: B
     if (disabled) return
     if (selectedSquare === null) {
       setSelectedSquare(square)
+      onSquareSelect?.(squareToPikafish(square))
     } else {
       if (selectedSquare !== square) {
         const from = squareToPikafish(selectedSquare)
@@ -187,6 +186,25 @@ export function Board({ fen, onMove, size = 480, lastMove, disabled = false }: B
     squareStyles[selectedSquare] = selectedStyle
   }
 
+  if (legalSquares && legalSquares.length > 0) {
+    for (const pikaSq of legalSquares) {
+      const sq = pikafishToSquare(pikaSq)
+      if (!squareStyles[sq]) {
+        squareStyles[sq] = {
+          background: 'radial-gradient(rgba(0,180,80,0.5) 18%, transparent 22%)',
+          borderRadius: '50%',
+        }
+      }
+    }
+  }
+
+  if (preMove) {
+    const fromSq = pikafishToSquare(preMove.from)
+    const toSq = pikafishToSquare(preMove.to)
+    squareStyles[fromSq] = { background: 'rgba(255,200,0,0.25)', outline: '3px dashed rgba(255,180,0,0.6)' }
+    squareStyles[toSq] = { background: 'rgba(255,200,0,0.15)', outline: '3px dashed rgba(255,180,0,0.4)' }
+  }
+
   // react-xiangqiboard 只识别棋盘段:其 isValidFen 要求 FEN 第 3 段是数字,
   // 标准象棋 FEN 的 "... w - - 0 1" 会因 "-" 段被判 Invalid FEN 并抛错(白屏)。
   // 故只取棋盘部分传入(渲染不需要走子方/回合信息)。
@@ -197,11 +215,12 @@ export function Board({ fen, onMove, size = 480, lastMove, disabled = false }: B
       position={boardFen}
       onPieceDrop={handlePieceDrop}
       onSquareClick={handleSquareClick}
-      boardOrientation="white"
+      boardOrientation={orientation === 'black' ? 'black' : 'white'}
       customSquareStyles={squareStyles as any}
       boardWidth={size}
       arePiecesDraggable={!disabled}
       customPieces={customPieces as any}
+      animationDuration={300}
     />
   )
 }
