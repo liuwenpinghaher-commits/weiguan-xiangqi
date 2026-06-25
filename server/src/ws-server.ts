@@ -660,6 +660,26 @@ export async function buildServer(opts: {
     return { games }
   })
 
+  // 合法走法查询：GET /legal-moves?fen=...&square=...
+  app.get('/legal-moves', async (req, reply) => {
+    const query = req.query as { fen?: string; square?: string }
+    const fen = String(query.fen ?? '')
+    const square = String(query.square ?? '')
+    if (!fen || !square || square.length !== 2) {
+      return reply.code(400).send({ error: 'fen 和 square 参数必填, square 为 2 字符坐标' })
+    }
+    try {
+      const pos = Position.fromFen(fen) as any
+      const allMoves = pos.legalMoves() as string[]
+      const squares = allMoves
+        .filter((m: string) => m.startsWith(square))
+        .map((m: string) => m.slice(2, 4))
+      return { squares }
+    } catch (e) {
+      return reply.code(400).send({ error: 'FEN 解析失败' })
+    }
+  })
+
   // 棋谱导入：POST /games/import
   // body: { startFen?, moves: string[], mode?, result? }
   // 校验失败 → 400；成功 → { gameId }
