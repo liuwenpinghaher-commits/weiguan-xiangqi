@@ -7,7 +7,14 @@ export interface DirectorCfg { coach: DirectorModeCfg; humanlike: DirectorModeCf
 export interface EngineCfg { pikafishPath: string | null; multipv: number; movetime: number }
 export interface DiagnoseCfg { depth: number }
 export interface LlmCfg { apiKey: string | null; model: string; baseURL: string | null }
-export interface TtsCfg { endpoint: string; model: string }
+export interface TtsCfg {
+  /** moss-tts-nano serve HTTP 地址 */
+  mossNanoUrl: string
+  /** 默认参考音频文件路径 */
+  referenceAudio: string
+  /** 是否使用流式生成(默认 true);false 则回退 /api/generate */
+  streaming: boolean
+}
 
 export const DEFAULTS = {
   chat: {
@@ -21,7 +28,7 @@ export const DEFAULTS = {
   engine: { pikafishPath: null, multipv: 5, movetime: 500 } as EngineCfg,
   diagnose: { depth: 12 } as DiagnoseCfg,
   llm: { apiKey: null, model: 'qwen-plus-latest', baseURL: null } as LlmCfg,
-  tts: { endpoint: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation', model: 'qwen3-tts-flash' } as TtsCfg,
+  tts: { mossNanoUrl: 'http://127.0.0.1:18083', referenceAudio: 'assets/tts/reference.wav', streaming: true } as TtsCfg,
 }
 
 export type ConfigSection = keyof typeof DEFAULTS
