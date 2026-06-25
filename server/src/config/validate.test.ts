@@ -35,17 +35,16 @@ describe('validateSection', () => {
   it('engine: pikafishPath=null 透传(用于清空路径)', () => {
     expect(validateSection('engine', { pikafishPath: null })).toEqual({ pikafishPath: null })
   })
-  it('tts: endpoint 仅接受 https 的 aliyuncs.com 域(防 SSRF 外带 key)', () => {
-    // 合法:阿里云 https
-    expect(validateSection('tts', { endpoint: 'https://dashscope.aliyuncs.com/api/v1/x' }))
-      .toEqual({ endpoint: 'https://dashscope.aliyuncs.com/api/v1/x' })
-    // 非法:攻击者域 → 丢弃(不写入)
-    expect(validateSection('tts', { endpoint: 'http://evil.example.com/steal' })).toEqual({})
-    // 非法:https 但非 aliyuncs → 丢弃
-    expect(validateSection('tts', { endpoint: 'https://evil.example.com/steal' })).toEqual({})
-    // 非法:非 url 字符串 → 丢弃
-    expect(validateSection('tts', { endpoint: 'not-a-url' })).toEqual({})
-    // model 仍按普通字符串处理
-    expect(validateSection('tts', { model: 'qwen3-tts-flash' })).toEqual({ model: 'qwen3-tts-flash' })
+  it('tts: mossNanoUrl 仅接受本地 http URL(127.0.0.1 或 localhost)', () => {
+    expect(validateSection('tts', { mossNanoUrl: 'http://127.0.0.1:18083' }))
+      .toEqual({ mossNanoUrl: 'http://127.0.0.1:18083' })
+    expect(validateSection('tts', { mossNanoUrl: 'http://localhost:18083' }))
+      .toEqual({ mossNanoUrl: 'http://localhost:18083' })
+    expect(validateSection('tts', { mossNanoUrl: 'http://evil.example.com/steal' })).toEqual({})
+    expect(validateSection('tts', { mossNanoUrl: 'https://127.0.0.1:443' })).toEqual({})
+    expect(validateSection('tts', { mossNanoUrl: 'not-a-url' })).toEqual({})
+    expect(validateSection('tts', { referenceAudio: 'assets/tts/ref.wav' }))
+      .toEqual({ referenceAudio: 'assets/tts/ref.wav' })
+    expect(validateSection('tts', { streaming: false })).toEqual({ streaming: false })
   })
 })

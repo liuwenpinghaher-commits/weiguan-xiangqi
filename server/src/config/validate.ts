@@ -13,14 +13,13 @@ const strOrNull: Cleaner = (v) => {
   if (typeof v === 'string') return v.trim() === '' ? null : v
   return undefined
 }
-// TTS endpoint:仅允许 https 的阿里云域。服务端会带着 DASHSCOPE_API_KEY 向该 endpoint 发请求,
-// 若放任改成任意 URL,等于给了把 key 外带到攻击者服务器的 SSRF 口子。
-const httpsAliyun: Cleaner = (v) => {
+// TTS endpoint:仅允许本地 moss-tts-nano URL(http://127.0.0.1 或 http://localhost,任意端口)
+const localHttpUrl: Cleaner = (v) => {
   if (typeof v !== 'string' || v.trim() === '') return undefined
   try {
     const u = new URL(v)
-    if (u.protocol !== 'https:') return undefined
-    if (!(u.hostname === 'aliyuncs.com' || u.hostname.endsWith('.aliyuncs.com'))) return undefined
+    if (u.protocol !== 'http:') return undefined
+    if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') return undefined
     return v
   } catch { return undefined }
 }
@@ -50,7 +49,7 @@ const SCHEMA: Record<ConfigSection, Record<string, Cleaner>> = {
   engine: { pikafishPath: (v) => (typeof v === 'string' ? v : v === null ? null : undefined), multipv: intRange(1, 10), movetime: intRange(50, 5000) },
   diagnose: { depth: intRange(1, 30) },
   llm: { apiKey: strOrNull, model: str, baseURL: strOrNull },
-  tts: { endpoint: httpsAliyun, model: str },
+  tts: { mossNanoUrl: localHttpUrl, referenceAudio: str, streaming: (v) => (typeof v === 'boolean' ? v : undefined) },
 }
 
 export function validateSection(section: ConfigSection, patch: Record<string, unknown>): Record<string, unknown> {
