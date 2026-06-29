@@ -230,6 +230,9 @@ export function Board({ fen, onMove, size = 480, lastMove, disabled = false, ori
       arePiecesDraggable={!disabled}
       customPieces={customPieces as any}
       animationDuration={300}
+      // 棋盘底图本地化:库默认从 raw.githubusercontent.com 拉取,离线/受限网络下棋盘无格线。
+      // 改用自托管 /xiangqiboard.svg（见 web/public/），杜绝外链依赖。
+      {...({ customBoardBackground: '/xiangqiboard.svg' } as any)}
     />
   )
 }
