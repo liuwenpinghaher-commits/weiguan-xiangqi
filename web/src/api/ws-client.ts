@@ -19,6 +19,8 @@ export function connect(
 ): { send: (m: object) => void; close: () => void } {
   let ws: WebSocket
   let intentionallyClosed = false
+  // 重连彻底失败后置 true:此后 send 直接丢弃,不再入队(防 pendingQueue 无界增长泄漏)。
+  let dead = false
   let retryCount = 0
   // 连接未就绪(CONNECTING / 重连中)时排队,onopen 时一次性 flush。
   // 用单一队列(而非旧 ws 的 once 监听):重连换 ws 后旧 once 永不触发会静默丢消息。
@@ -69,7 +71,9 @@ export function connect(
           }
         }, delay)
       } else {
-        // 重连次数耗尽，彻底失败
+        // 重连次数耗尽，彻底失败:标记 dead,清空积压队列,此后 send 直接丢弃。
+        dead = true
+        pendingQueue = []
         onStatus?.('closed')
       }
     }
@@ -82,8 +86,8 @@ export function connect(
       const data = JSON.stringify(m)
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(data)
-      } else if (intentionallyClosed) {
-        // 已主动关闭：不再排队,丢弃并警告
+      } else if (intentionallyClosed || dead) {
+        // 已主动关闭 或 重连彻底失败：不再排队,丢弃并警告(防队列无界增长)
         console.warn('[ws-client] 连接已关闭，消息已丢弃:', m)
       } else {
         // CONNECTING 或重连中(CLOSING/CLOSED 等待 setTimeout 重连):

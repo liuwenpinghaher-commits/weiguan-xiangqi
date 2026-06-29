@@ -543,24 +543,37 @@ export class GameSession {
     clock.startedAt = null
   }
 
-  resign(gameId: number): { success: boolean; result: string } {
+  /** 公开只读取 fen，避免调用方穿透私有 positions（不存在时返回空串）。 */
+  getFen(gameId: number): string {
     this.ensureLoaded(gameId)
-    const humanSide = this.humanSides.get(gameId)
-    if (!humanSide) return { success: false, result: '' }
-    const result = humanSide === 'red' ? 'black' : 'red'
-    this.deps.repo.finishGame(gameId, result as 'red' | 'black' | 'draw', this.deps.clock())
-    return { success: true, result }
+    const pos = this.positions.get(gameId)
+    return pos ? pos.fen() : ''
   }
 
-  offerDraw(gameId: number): { accepted: boolean } {
+  resign(gameId: number): { success: boolean; result: string; fen: string } {
+    this.ensureLoaded(gameId)
+    const humanSide = this.humanSides.get(gameId)
+    if (!humanSide) return { success: false, result: '', fen: '' }
+    const result = humanSide === 'red' ? 'black' : 'red'
+    const pos = this.positions.get(gameId)
+    const fen = pos ? pos.fen() : ''
+    // 走 finish 统一收尾：写库 + 清理本局全部内存态（resign 此前漏清，属内存泄漏）
+    this.finish(gameId, result as Side | 'draw')
+    return { success: true, result, fen }
+  }
+
+  offerDraw(gameId: number): { accepted: boolean; fen: string } {
     this.ensureLoaded(gameId)
     const mode = this.modes.get(gameId)
     const prob = mode === 'coach' ? 0.8 : 0.6
     const accepted = Math.random() < prob
+    let fen = ''
     if (accepted) {
-      this.deps.repo.finishGame(gameId, 'draw', this.deps.clock())
+      const pos = this.positions.get(gameId)
+      fen = pos ? pos.fen() : ''
+      this.finish(gameId, 'draw')
     }
-    return { accepted }
+    return { accepted, fen }
   }
 
   undoLastMoves(gameId: number): { success: boolean; fen: string } {

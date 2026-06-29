@@ -21,11 +21,21 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
 
 // 进程级兜底:未捕获异常/未处理 rejection 一律记日志并退出(让 supervisor 重启),
 // 避免进入"半死"状态(事件循环还在但状态已损坏)继续服务脏请求。
+// 退出前尽力优雅关闭(触发 onClose:停 moss-tts 子进程、关引擎/DB),避免子进程变孤儿;
+// 用 1.5s 超时兜底,确保即便 close 卡住也能退出。
+let fatalExiting = false
+function fatalShutdown(): void {
+  if (fatalExiting) return // 防重入:第一个 fatal 已在收尾
+  fatalExiting = true
+  const force = setTimeout(() => process.exit(1), 1500)
+  force.unref?.()
+  app.close().then(() => process.exit(1)).catch(() => process.exit(1))
+}
 process.on('unhandledRejection', (r) => {
   console.error('[fatal] unhandledRejection', r)
-  process.exit(1)
+  fatalShutdown()
 })
 process.on('uncaughtException', (e) => {
   console.error('[fatal] uncaughtException', e)
-  process.exit(1)
+  fatalShutdown()
 })

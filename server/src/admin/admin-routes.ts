@@ -19,6 +19,15 @@ const SECTIONS = Object.keys(DEFAULTS) as ConfigSection[]
 export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void {
   const { cfg } = deps
 
+  // 安全加固:/admin/* 仅限本机(loopback)访问。控制台与服务端同机,正常使用不受影响;
+  // 但当服务被绑到非 loopback 接口时,可挡住远程读取明文 key(/reveal)与篡改配置。
+  const isLoopback = (ip: string | undefined): boolean =>
+    ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1'
+  app.addHook('onRequest', async (req, reply) => {
+    if (!req.url.startsWith('/admin')) return
+    if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'admin 接口仅限本机访问' })
+  })
+
   app.get('/admin/config', async () => {
     const llm = cfg.getLlm()
     return {

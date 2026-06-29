@@ -280,6 +280,9 @@ export async function buildServer(opts: {
 
   // ── moss-tts-nano 进程管理 ──────────────────────────────────────────────────
   let mossProcess: ChildProcess | null = null
+  // 重启定时器句柄与关闭标志:防止关闭后 exit handler 仍调度重启,泄漏定时器/复活子进程
+  let mossRestartTimer: ReturnType<typeof setTimeout> | null = null
+  let mossShuttingDown = false
 
   function startMossTts(): void {
     if (mossProcess && !mossProcess.killed) return
@@ -303,13 +306,22 @@ export async function buildServer(opts: {
     mossProcess.stdout?.on('data', (d: Buffer) => { app.log.info(`[moss-tts-nano] ${d.toString().trim()}`) })
     mossProcess.stderr?.on('data', (d: Buffer) => { app.log.warn(`[moss-tts-nano] ${d.toString().trim()}`) })
     mossProcess.on('exit', (code) => {
-      app.log.warn(`moss-tts-nano 退出(code=${code}),5s 后自动重启`)
       mossProcess = null
-      if (code !== 0) setTimeout(() => startMossTts(), 5000).unref()
+      // 关闭中:不重启,避免泄漏定时器并复活子进程
+      if (mossShuttingDown) return
+      if (code !== 0) {
+        app.log.warn(`moss-tts-nano 退出(code=${code}),5s 后自动重启`)
+        mossRestartTimer = setTimeout(() => { mossRestartTimer = null; startMossTts() }, 5000)
+        mossRestartTimer.unref?.()
+      } else {
+        app.log.warn(`moss-tts-nano 退出(code=${code})`)
+      }
     })
   }
 
   function stopMossTts(): void {
+    mossShuttingDown = true
+    if (mossRestartTimer) { clearTimeout(mossRestartTimer); mossRestartTimer = null }
     if (!mossProcess) return
     try { mossProcess.kill('SIGTERM') } catch { /* already dead */ }
     setTimeout(() => {
@@ -410,17 +422,20 @@ export async function buildServer(opts: {
             }
           }
         } else if (msg.type === 'move') {
-          if (typeof msg.gameId === 'number' && pausedGames.has(msg.gameId)) return
+          const gid = msg.gameId
+          if (typeof gid !== 'number') { socket.send(JSON.stringify({ type: 'error', message: '非法 gameId' })); return }
+          if (typeof msg.move !== 'string') { socket.send(JSON.stringify({ type: 'error', message: '非法 move' })); return }
+          if (pausedGames.has(gid)) return
           if (!engine) {
             socket.send(JSON.stringify({ type: 'error', message: '未配置象棋引擎,无法对弈(聊天/复盘仍可用)' }))
             return
           }
-          const result = await session.playHumanMove(msg.gameId as number, msg.move as string)
-          const clockState = session.getClockState(msg.gameId as number)
+          const result = await session.playHumanMove(gid, msg.move)
+          const clockState = session.getClockState(gid)
           socket.send(JSON.stringify({ type: 'update', ...result, clockState }))
           // 局末:对每个旁观者触发反思(异步,失败不影响主流程)
           if (result.over) {
-            const gameId = msg.gameId as number
+            const gameId = gid
             // 立即清理暂停态与聊天上下文(终局后不再有该局刺激)
             cleanupFinishedGame(gameId)
             const reflectP = reflectGame(gameId).catch(() => { /* 反思失败静默忽略 */ })
@@ -439,6 +454,7 @@ export async function buildServer(opts: {
           if (typeof gid !== 'number') return
           if (pausedGames.has(gid) || spectatorsOffGames.has(gid)) return // 观众席关了就没人接,直接忽略
           const text = String(msg.text ?? '').slice(0, 500) // 限长,防超大字符串写库
+          if (text.trim() === '') return // 空白发言:不落库、不广播、不触发刺激
           const ts = new Date().toISOString()
           // 玩家发言持久化
           try {
@@ -468,28 +484,27 @@ export async function buildServer(opts: {
             else spectatorsOffGames.delete(gid)
           }
         } else if (msg.type === 'resign') {
-          const gid = msg.gameId as number
-          const { result } = session.resign(gid)
-          const clockState = session.getClockState(gid)
-          const pos = (session as any).positions?.get(gid)
-          const fen = pos ? pos.fen() : ''
+          const gid = msg.gameId
+          if (typeof gid !== 'number') { socket.send(JSON.stringify({ type: 'error', message: '非法 gameId' })); return }
+          const clockState = session.getClockState(gid) // 在 resign 清内存态前取时钟快照
+          const { result, fen } = session.resign(gid)
           socket.send(JSON.stringify({ type: 'update', aiMove: null, fen, over: true, result, clockState }))
           cleanupFinishedGame(gid)
           void reflectGame(gid).catch(() => {})
         } else if (msg.type === 'draw_offer') {
-          const gid = msg.gameId as number
-          const { accepted } = session.offerDraw(gid)
+          const gid = msg.gameId
+          if (typeof gid !== 'number') { socket.send(JSON.stringify({ type: 'error', message: '非法 gameId' })); return }
+          const clockState = session.getClockState(gid) // 在 offerDraw 可能清内存态前取时钟快照
+          const { accepted, fen } = session.offerDraw(gid)
           socket.send(JSON.stringify({ type: 'draw_response', gameId: gid, accepted }))
           if (accepted) {
-            const clockState = session.getClockState(gid)
-            const pos = (session as any).positions?.get(gid)
-            const fen = pos ? pos.fen() : ''
             socket.send(JSON.stringify({ type: 'update', aiMove: null, fen, over: true, result: 'draw', clockState }))
             cleanupFinishedGame(gid)
             void reflectGame(gid).catch(() => {})
           }
         } else if (msg.type === 'undo') {
-          const gid = msg.gameId as number
+          const gid = msg.gameId
+          if (typeof gid !== 'number') { socket.send(JSON.stringify({ type: 'error', message: '非法 gameId' })); return }
           const result = session.undoLastMoves(gid)
           if (result.success) {
             const clockState = session.getClockState(gid)

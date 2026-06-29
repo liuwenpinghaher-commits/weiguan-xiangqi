@@ -43,6 +43,25 @@ test('标注双方每手并聚合人方成长指标', async () => {
   db.close()
 })
 
+test('引擎某局面返回空数组 → 抛清晰错误,不崩在下游 scoreCp', async () => {
+  const db = openDb(':memory:')
+  const games = new GamesRepo(db)
+  const analysis = new AnalysisRepo(db)
+  const gameId = games.createGame({ mode: 'coach', humanSide: 'red', startFen: `${F}/s0 w`, startedAt: 't' })
+  games.addMove({ gameId, side: 'red', move: 'm1', fenAfter: `${F}/s1 b`, scoreCp: null, byAi: false })
+  games.finishGame(gameId, 'black', 't2')
+
+  const evals: Record<string, EngineLine[]> = {
+    [`${F}/s0 w`]: line('b0c2', 50),
+    [`${F}/s1 b`]: [], // 引擎对此局面返回空主变
+  }
+  const engine = { analyze: vi.fn(async (fen: string) => evals[fen]) }
+  await expect(
+    diagnoseGame({ games, analysis, engine, clock: () => 't' }, gameId),
+  ).rejects.toThrow(/引擎分析返回空/)
+  db.close()
+})
+
 test('无着法的局抛错', async () => {
   const db = openDb(':memory:')
   const games = new GamesRepo(db)

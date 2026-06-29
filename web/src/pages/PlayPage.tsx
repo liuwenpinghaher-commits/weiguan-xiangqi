@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { connect, type ServerMsg } from '../api/ws-client.js'
+import { HTTP_BASE } from '../api/config.js'
 import { Board } from '../board/Board.js'
 import { MoveList } from '../board/MoveList.js'
 import { ChatPanel, type ChatLine } from '../chat/ChatPanel.js'
@@ -40,13 +41,23 @@ export function PlayPage() {
   const [preMove, setPreMove] = useState<{from:string;to:string}|null>(null)
   const [legalSquares, setLegalSquares] = useState<string[]>([])
   const [flipped, setFlipped] = useState(false)
+  const [viewingHistory, setViewingHistory] = useState(false) // 是否正在回看历史(回看时锁盘)
 
   const wsRef = useRef<ReturnType<typeof connect> | null>(null)
   const gameIdRef = useRef<number | null>(null)
   gameIdRef.current = gameId
   const preMoveRef = useRef<{from:string;to:string}|null>(null)
   preMoveRef.current = preMove
+  const preMoveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null) // preMove 延时发送句柄,换局/卸载时清理
   const isNarrow = useIsNarrow()
+
+  // fenHistory 每个 server update 一帧(START + 每完整回合 1 帧),moveHistory 逐手。
+  // 把"手号 ply"映射到最近可用的 fen 帧:人执红时人先手(floor),执黑时 AI 先手(ceil)。
+  // 受限于服务端一回合只下发一帧,人类手的中间局面无独立快照,回看为回合级近似(回看时锁盘故不影响走子正确性)。
+  function plyToFrame(ply: number): number {
+    const f = side === 'red' ? Math.floor(ply / 2) : Math.ceil(ply / 2)
+    return Math.max(0, Math.min(f, fenHistory.length - 1))
+  }
 
   // 据 result 推导胜负文本（依据当前 side 状态）
   function resultText(result: GameResult): string {
@@ -66,6 +77,7 @@ export function PlayPage() {
     } else if (msg.type === 'update') {
       setFen(msg.fen)
       setFenKey(k => k + 1) // 刷新 key，确保 Board 与最新 fen 同步
+      setViewingHistory(false) // 有新进展,回到最新局面
       setLastAiMove(msg.aiMove)
       setAwaitingAi(false) // AI 已回应，解锁棋盘
       setStatusError(false)
@@ -73,7 +85,6 @@ export function PlayPage() {
       if (msg.aiMove) {
         const aiSide = side === 'red' ? 'black' : 'red'
         setMoveHistory(prev => [...prev, { ply: prev.length + 1, move: msg.aiMove!, side: aiSide }])
-        setPlyIndex(prev => prev + 1)
       }
       if (msg.fen) {
         setFenHistory(prev => { const next = [...prev, msg.fen]; if (next.length > 200) next.shift(); return next })
@@ -81,7 +92,13 @@ export function PlayPage() {
       const pm = preMoveRef.current
       if (pm && msg.fen && !msg.over) {
         setPreMove(null)
-        setTimeout(() => { const gid = gameIdRef.current; if (gid) wsRef.current?.send({ type: 'move', gameId: gid, move: pm.from + pm.to }) }, 100)
+        if (preMoveTimerRef.current) clearTimeout(preMoveTimerRef.current)
+        preMoveTimerRef.current = setTimeout(() => {
+          preMoveTimerRef.current = null
+          const gid = gameIdRef.current
+          // 仅当对局仍在进行(未认输/未结束/未换局)时才发出预走子,避免落到旧局或已结束局面
+          if (gid && statusRef.current === 'playing') wsRef.current?.send({ type: 'move', gameId: gid, move: pm.from + pm.to })
+        }, 100)
       }
       if (statusRef.current === 'paused') {
         // 暂停期间到达的 AI 落子:棋盘已更新,但保持暂停态,不抢回 playing/over
@@ -115,9 +132,11 @@ export function PlayPage() {
       if (msg.success && msg.fen) {
         setFen(msg.fen)
         setFenKey(k => k + 1)
+        setViewingHistory(false)
         setUndoRemaining(u => u - 1)
         setMoveHistory(prev => prev.slice(0, -2))
-        setPlyIndex(p => Math.max(0, p - 2))
+        // 撤回 2 手 = 回退 1 个 server 帧;保留开局帧
+        setFenHistory(prev => prev.length > 1 ? prev.slice(0, -1) : prev)
         if (msg.clockState) setClockState(msg.clockState)
       } else {
         alert('无法悔棋（走法太少或非陪练模式）')
@@ -177,9 +196,11 @@ export function PlayPage() {
   }, [])
 
   function handleStart() {
+    if (preMoveTimerRef.current) { clearTimeout(preMoveTimerRef.current); preMoveTimerRef.current = null }
     setMoveHistory([])
     setFenHistory([START_FEN])
     setPlyIndex(0)
+    setViewingHistory(false)
     setUndoRemaining(3)
     setClockState(null)
     setPreMove(null)
@@ -223,7 +244,9 @@ export function PlayPage() {
   }
 
   function handleRestart(activeMode?: GameMode, activeSide?: HumanSide) {
+    stopVoice()   // 停掉上一局在播/排队的云端语音,避免串台到新局
     cancelSpeech()
+    if (preMoveTimerRef.current) { clearTimeout(preMoveTimerRef.current); preMoveTimerRef.current = null }
     setFen(START_FEN)
     setFenKey(k => k + 1)
     setGameId(null)
@@ -238,6 +261,7 @@ export function PlayPage() {
     setMoveHistory([])
     setFenHistory([START_FEN])
     setPlyIndex(0)
+    setViewingHistory(false)
     setUndoRemaining(3)
     setClockState(null)
     setPreMove(null)
@@ -291,17 +315,33 @@ export function PlayPage() {
     )
   }
 
+  // 非回看态下,当前查看手号始终跟随最新走法(供 MoveList 高亮);回看时由 onNavigate 控制
+  useEffect(() => {
+    if (!viewingHistory) setPlyIndex(moveHistory.length)
+  }, [moveHistory.length, viewingHistory])
+
+  // 卸载时清理可能在途的 preMove 定时器,避免向已关闭连接发送
+  useEffect(() => () => { if (preMoveTimerRef.current) clearTimeout(preMoveTimerRef.current) }, [])
+
+  // 本地计时仅作视觉补间:捕获本轮基准(剩余值 + 起始时刻),按真实时间差递减,
+  // 避免 setInterval 间隔不精确导致的累积漂移。server 每手切换 activeSide 时本 effect
+  // 重启并重新捕获权威基准,故以服务端值为准。
   useEffect(() => {
     if (!clockState || clockState.activeSide === null) return
+    const active = clockState.activeSide
+    const startTime = Date.now()
+    const startRed = clockState.redRemaining
+    const startBlack = clockState.blackRemaining
     const iv = setInterval(() => {
+      const elapsed = Date.now() - startTime
       setClockState(prev => {
-        if (!prev || prev.activeSide === null) return prev
-        const d = 200
-        if (prev.activeSide === 'red') return {...prev, redRemaining: prev.redRemaining - d}
-        return {...prev, blackRemaining: prev.blackRemaining - d}
+        if (!prev || prev.activeSide !== active) return prev
+        if (active === 'red') return { ...prev, redRemaining: Math.max(0, startRed - elapsed) }
+        return { ...prev, blackRemaining: Math.max(0, startBlack - elapsed) }
       })
     }, 200)
     return () => clearInterval(iv)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clockState?.activeSide])
 
   const resultTxt = resultText(gameResult)
@@ -430,21 +470,32 @@ export function PlayPage() {
               onMove={handleMove}
               size={boardSize}
               lastMove={lastAiMove}
-              disabled={awaitingAi || status !== 'playing' || plyIndex < moveHistory.length}
+              disabled={awaitingAi || status !== 'playing' || viewingHistory}
               orientation={boardOrientation}
               legalSquares={legalSquares}
               preMove={preMove}
               onSquareSelect={(sq) => {
-                fetch(`http://localhost:3410/legal-moves?fen=${encodeURIComponent(fen)}&square=${sq}`)
+                fetch(`${HTTP_BASE}/legal-moves?fen=${encodeURIComponent(fen)}&square=${sq}`)
                   .then(r => r.json()).then(d => setLegalSquares(d.squares)).catch(() => setLegalSquares([]))
               }}
             />
           </div>
           <MoveList moves={moveHistory} currentPly={plyIndex} onNavigate={(ply) => {
-            setPlyIndex(ply)
-            if (ply < moveHistory.length && fenHistory[ply]) {
-              setFen(fenHistory[ply])
+            // 点到最新手(或更后)→ 退出回看,回到最新局面
+            if (ply >= moveHistory.length) {
+              setViewingHistory(false)
+              setPlyIndex(moveHistory.length)
+              const latest = fenHistory[fenHistory.length - 1]
+              if (latest) { setFen(latest); setFenKey(k => k + 1) }
+              return
+            }
+            // 回看历史:映射到最近可用的 server 帧并锁盘
+            const f = fenHistory[plyToFrame(ply)]
+            if (f) {
+              setFen(f)
               setFenKey(k => k + 1)
+              setPlyIndex(ply)
+              setViewingHistory(true)
             }
           }} />
         </div>

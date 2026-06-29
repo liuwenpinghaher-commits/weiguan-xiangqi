@@ -75,10 +75,16 @@ export class RuntimeConfig {
     return p
   }
 
-  /** 逐角色 tts VoiceProfile;无配置回退默认 */
+  /** 逐角色 tts VoiceProfile;以默认档为底,叠加控制台改过的 ttsVoice(覆盖 referenceAudio) */
   voiceProfileForPersona(id: string): VoiceProfile {
     this.ensureSeeded()
-    return DEFAULT_VOICE_PROFILES[id] ?? defaultVoiceProfile()
+    const base = DEFAULT_VOICE_PROFILES[id] ?? defaultVoiceProfile()
+    // 读取该 persona 在 repo 里的 ttsVoice(控制台可改);非空时覆盖 referenceAudio。
+    const cfg = this.repo.getAllPersonas().find(p => p.id === id)
+    if (cfg && typeof cfg.ttsVoice === 'string' && cfg.ttsVoice.trim() !== '') {
+      return { ...base, referenceAudio: cfg.ttsVoice }
+    }
+    return base
   }
 
   updatePersona(id: PersonaId, patch: Partial<Omit<PersonaConfig, 'id'>>): void {

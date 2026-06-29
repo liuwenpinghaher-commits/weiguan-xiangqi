@@ -32,6 +32,14 @@ describe('validateSection', () => {
   it('director: modeCleaner 丢弃 NaN', () => {
     expect(validateSection('director', { coach: { maxDropCp: NaN, strength: 0.5 } })).toEqual({ coach: { strength: 0.5 } })
   })
+  it('director: targetBand low>high 时交换,保证 low≤high', () => {
+    expect(validateSection('director', { humanlike: { targetBand: { low: 300, high: -100 } } }))
+      .toEqual({ humanlike: { targetBand: { low: -100, high: 300 } } })
+  })
+  it('director: targetBand low≤high 时原样保留', () => {
+    expect(validateSection('director', { coach: { targetBand: { low: -100, high: 300 } } }))
+      .toEqual({ coach: { targetBand: { low: -100, high: 300 } } })
+  })
   it('engine: pikafishPath=null 透传(用于清空路径)', () => {
     expect(validateSection('engine', { pikafishPath: null })).toEqual({ pikafishPath: null })
   })

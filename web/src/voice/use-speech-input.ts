@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback, useEffect } from 'react'
 import { ASR_URL } from '../api/config.js'
 import { encodeWav, downsampleMono } from './wav.js'
 
@@ -21,6 +21,13 @@ export function useSpeechInput(onResult: (text: string) => void) {
   const [error, setError] = useState<string | null>(null)
   const recRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  const streamRef = useRef<MediaStream | null>(null)
+
+  // 卸载清理:录音中卸载时停止 MediaRecorder 并释放所有 track,避免麦克风常亮。
+  useEffect(() => () => {
+    try { if (recRef.current?.state === 'recording') recRef.current.stop() } catch { /* 已停/无效 state */ }
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+  }, [])
 
   const start = useCallback(async () => {
     if (listening) return
@@ -32,6 +39,7 @@ export function useSpeechInput(onResult: (text: string) => void) {
     } catch {
       setError('not-allowed'); return
     }
+    streamRef.current = stream
     chunksRef.current = []
     try {
       const rec = new MediaRecorder(stream)
@@ -39,6 +47,7 @@ export function useSpeechInput(onResult: (text: string) => void) {
       rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       rec.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop())
+        streamRef.current = null
         try {
           const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' })
           const wav = await blobToWav(blob)
@@ -59,6 +68,7 @@ export function useSpeechInput(onResult: (text: string) => void) {
       setListening(true)
     } catch {
       stream.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
       setError('asr-failed')
     }
   }, [listening, onResult])

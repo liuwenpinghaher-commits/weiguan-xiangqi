@@ -179,6 +179,44 @@ test('去重护栏:同一 speaker 连续返回相同文本时第二次不 emit �
   expect(duplicates.length).toBe(0)
 })
 
+// ─── 新增测试:onStimulus 并发串行化 ─────────────────────────────────────────
+
+test('并发重入串行化:两个重叠刺激不让同角色重复说同一句(第二个看到已更新的 lastText)', async () => {
+  // FakeLLM 的 fn 是同步签名;改用一个带异步延迟的 LLM 包装,制造两次 onStimulus 重叠
+  const slowLLM = {
+    calls: [] as any[],
+    async chat(messages: any, opts: any) {
+      this.calls.push({ messages, opts })
+      await new Promise((r) => setTimeout(r, 5))
+      return '嚯这步软了'
+    },
+  }
+  const mem = new FakeMemoryStore(() => 1000)
+  const out: any[] = []
+  const cfg = makeCfg({ minSilenceMs: 0, maxPerMin: 100 })
+  const engine = new ChatEngine({
+    llm: slowLLM as any, mem, cfg, now: () => 1000,
+    emit: (line) => out.push(line), rng: () => 0.9,
+  })
+  const stim: Stimulus = {
+    kind: 'blunder', gameId: 1, scoreCp: -300, tension: 0.95,
+    moveZh: '黑车1进1', side: 'black', ply: 4, phase: 'opening',
+  }
+  // 不 await 第一个就发第二个 → 重叠;串行化后第二个在第一个完成后处理
+  const p1 = engine.onStimulus(stim)
+  const p2 = engine.onStimulus(stim)
+  await Promise.all([p1, p2])
+
+  // 每个 personaId 的相同文本至多出现一次(去重护栏在串行下生效:第二轮看到 lastText 已更新)
+  const byPersona = new Map<string, number>()
+  for (const l of out) {
+    if (l.text === '嚯这步软了') byPersona.set(l.personaId, (byPersona.get(l.personaId) ?? 0) + 1)
+  }
+  for (const [, count] of byPersona) {
+    expect(count).toBe(1)
+  }
+})
+
 // ─── 新增测试(Fix Task 5) ────────────────────────────────────────────────────
 
 test('AI 棋手自评:byPlayerPersona=true + rng<0.4 时 player 出现在 out 且 prompt 含"自评"', async () => {

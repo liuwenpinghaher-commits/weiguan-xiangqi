@@ -80,15 +80,20 @@ export async function reflect(args: {
   const entries = parseReflection(raw)
   const createdAt = new Date(now()).toISOString()
 
+  // 逐条隔离:任一 entry 写入失败不应中断整循环、丢掉后续 entry。失败记 warn 后继续。
   for (const entry of entries) {
-    await store.record({
-      personaId,
-      kind: entry.kind,
-      content: entry.content,
-      importance: entry.importance,
-      gameId: args.gameId,
-      createdAt,
-    })
+    try {
+      await store.record({
+        personaId,
+        kind: entry.kind,
+        content: entry.content,
+        importance: entry.importance,
+        gameId: args.gameId,
+        createdAt,
+      })
+    } catch (err) {
+      console.warn(`[reflection] 写入记忆失败(persona=${personaId}, kind=${entry.kind}),跳过该条:`, (err as Error).message)
+    }
   }
 }
 

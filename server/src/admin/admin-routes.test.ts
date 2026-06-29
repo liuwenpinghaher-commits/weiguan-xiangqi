@@ -7,7 +7,6 @@ import { GamesRepo } from '../store/games-repo.js'
 import { MessagesRepo } from '../store/messages-repo.js'
 import { FakeMemoryStore } from '../memory/fake-memory-store.js'
 import { registerAdminRoutes } from './admin-routes.js'
-import { DEFAULT_REFERENCE_AUDIO } from '../voice/voice-profiles.js'
 
 function makeApp(): { app: FastifyInstance; cfg: RuntimeConfig; mem: FakeMemoryStore } {
   const db = openDb(':memory:')
@@ -62,7 +61,7 @@ describe('admin personas 路由', () => {
     const { app, cfg } = makeApp()
     const put = await app.inject({ method: 'PUT', url: '/admin/personas/coach', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ name: '林老师', ttsVoice: 'Cherry' }) })
     expect(put.statusCode).toBe(200)
-    expect(cfg.voiceProfileForPersona('coach').referenceAudio).toBe(DEFAULT_REFERENCE_AUDIO)
+    expect(cfg.voiceProfileForPersona('coach').referenceAudio).toBe('Cherry')
     expect(cfg.personas().find(p => p.id === 'coach')!.name).toBe('林老师')
   })
   it('POST /admin/personas/:id/reset 恢复默认', async () => {

@@ -34,6 +34,8 @@ function modeCleaner(v: unknown): unknown {
     const tb: any = {}
     if (typeof m.targetBand.low === 'number' && isFinite(m.targetBand.low)) tb.low = clamp(Math.round(m.targetBand.low), -2000, 2000)
     if (typeof m.targetBand.high === 'number' && isFinite(m.targetBand.high)) tb.high = clamp(Math.round(m.targetBand.high), -2000, 2000)
+    // 保证 low ≤ high:两者都给且 low>high 时交换(更稳,不丢用户意图)。
+    if ('low' in tb && 'high' in tb && tb.low > tb.high) { const t = tb.low; tb.low = tb.high; tb.high = t }
     if ('low' in tb || 'high' in tb) out.targetBand = tb
   }
   if (typeof m.strength === 'number' && isFinite(m.strength)) out.strength = clamp(m.strength, 0, 1)
@@ -46,7 +48,7 @@ const SCHEMA: Record<ConfigSection, Record<string, Cleaner>> = {
     idleProb: prob, idleIntervalMs: intMin0, reactProb: prob, lenShortP: prob, lenLongP: prob,
   },
   director: { coach: modeCleaner, humanlike: modeCleaner },
-  engine: { pikafishPath: (v) => (typeof v === 'string' ? v : v === null ? null : undefined), multipv: intRange(1, 10), movetime: intRange(50, 5000), clockInitialSeconds: intRange(30, 3600), clockIncrementSeconds: intRange(0, 60) },
+  engine: { pikafishPath: (v) => (typeof v === 'string' ? (v.trim() === '' ? null : v) : v === null ? null : undefined), multipv: intRange(1, 10), movetime: intRange(50, 5000), clockInitialSeconds: intRange(30, 3600), clockIncrementSeconds: intRange(0, 60) },
   diagnose: { depth: intRange(1, 30) },
   llm: { apiKey: strOrNull, model: str, baseURL: strOrNull },
   tts: { mossNanoUrl: localHttpUrl, referenceAudio: str, streaming: (v) => (typeof v === 'boolean' ? v : undefined) },

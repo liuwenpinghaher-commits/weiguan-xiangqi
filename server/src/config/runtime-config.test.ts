@@ -72,7 +72,19 @@ describe('RuntimeConfig personas', () => {
     const c = cfg(); c.personas()
     c.updatePersona('coach', { name: '林老师', ttsVoice: 'custom_ref.wav' })
     expect(c.personas().find(p => p.id === 'coach')!.name).toBe('林老师')
-    expect(c.voiceProfileForPersona('coach')).toEqual(DEFAULT_VOICE_PROFILES.coach)
+    // 改了 ttsVoice 后 voiceProfileForPersona 应反映:referenceAudio 被覆盖,其余档位保持默认
+    expect(c.voiceProfileForPersona('coach')).toEqual({ ...DEFAULT_VOICE_PROFILES.coach, referenceAudio: 'custom_ref.wav' })
+  })
+  it('voiceProfileForPersona 读取控制台改过的 ttsVoice 覆盖 referenceAudio', () => {
+    const c = cfg(); c.personas()
+    // 默认播种时 ttsVoice=DEFAULT_REFERENCE_AUDIO → 返回纯默认档
+    expect(c.voiceProfileForPersona('laopaoer')).toEqual(DEFAULT_VOICE_PROFILES.laopaoer)
+    // 控制台改 ttsVoice 后,该函数返回应反映改动(referenceAudio 覆盖),其余字段仍为默认档
+    c.updatePersona('laopaoer', { ttsVoice: 'assets/tts/laopaoer.wav' })
+    const vp = c.voiceProfileForPersona('laopaoer')
+    expect(vp.referenceAudio).toBe('assets/tts/laopaoer.wav')
+    expect(vp.audioTemperature).toBe(DEFAULT_VOICE_PROFILES.laopaoer.audioTemperature)
+    expect(vp.maxNewFrames).toBe(DEFAULT_VOICE_PROFILES.laopaoer.maxNewFrames)
   })
   it('resetPersona 恢复默认(重新播种该行)', () => {
     const c = cfg(); c.personas()

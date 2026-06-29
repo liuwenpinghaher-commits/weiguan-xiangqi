@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { cardStyle } from '../../ui/PageShell.js'
 import { color, space, radius, fontSize, btn as btnStyle } from '../../ui/theme.js'
 import { putSection, revealLlmKey, type LlmCfg, type TtsCfg } from '../../api/admin.js'
@@ -12,6 +12,13 @@ export function KeysModelsTab({ llm, tts, onChanged }: { llm: LlmCfg; tts: TtsCf
   const [ttsEndpoint, setTtsEndpoint] = useState(tts.endpoint)
   const [ttsModel, setTtsModel] = useState(tts.model)
   const [msg, setMsg] = useState<string | null>(null)
+
+  // 明文 key 揭示后 20s 自动清除,组件卸载也清,避免长期留屏被旁观或截图泄露。
+  useEffect(() => {
+    if (revealed == null) return
+    const t = setTimeout(() => setRevealed(null), 20000)
+    return () => clearTimeout(t)
+  }, [revealed])
 
   const saveLlm = async () => {
     setMsg(null)

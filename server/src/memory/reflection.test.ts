@@ -143,6 +143,31 @@ test('未传 getPersona → 回退静态 personas(系统 prompt 用静态 name)'
   expect(sys?.content).toContain('林教练')
 })
 
+test('record 抛错被逐条隔离:中间一条失败不丢后续 entry', async () => {
+  const recorded: string[] = []
+  // 第二条 record 抛错,验证第一/第三条仍被写入(不被中断)。
+  const flakyStore = {
+    record: async (e: { content: string }) => {
+      if (e.content === '残局易急躁') throw new Error('boom')
+      recorded.push(e.content)
+      return 'id'
+    },
+    list: async () => [],
+  } as any
+  const llm = new FakeLLM(['- 爱走当头炮\n- 残局易急躁\n洞见: 进攻型棋手'])
+
+  await reflect({
+    store: flakyStore, llm, personaId: 'coach', gameId: 9,
+    now: () => 0,
+    playerSummary: '红炮二平五',
+  })
+
+  // 失败的 "残局易急躁" 被跳过,但 fact "爱走当头炮" 与 insight "进攻型棋手" 仍写入。
+  expect(recorded).toContain('爱走当头炮')
+  expect(recorded.some(c => c.includes('进攻型'))).toBe(true)
+  expect(recorded).not.toContain('残局易急躁')
+})
+
 test('只有一次 LLM 调用(单次 chat 请求)', async () => {
   const store = new FakeMemoryStore(() => 0)
   const llmReply = '- 爱走马\n洞见: 灵活棋手'

@@ -47,6 +47,9 @@ export class ChatEngine {
   private recent = new Map<number, RecentEntry[]>()
   /** 按 gameId 缓存最近一次走子的局面上下文,供 idle 贴着局面说 */
   private lastCtx = new Map<number, { moveZh: string; qual: string; ply: number }>()
+  /** 串行化 onStimulus:fire-and-forget 的刺激重叠时,保证同一时刻只处理一个,
+   *  避免 lastSpokeAt/lastText 在 await llm 之后才更新导致并发读到旧态、同角色重复说话。 */
+  private queue: Promise<void> = Promise.resolve()
 
   constructor(private deps: ChatEngineDeps) {
     this.guard = new TempoGuard({
@@ -61,7 +64,18 @@ export class ChatEngine {
     this.lastCtx.delete(gameId)
   }
 
-  async onStimulus(stim: Stimulus): Promise<void> {
+  /** 串行入口:把每个刺激挂到 queue 链尾,确保前一个处理完才开始下一个。
+   *  await 它会等到「自己这条」处理结束(单刺激下与旧行为一致)。 */
+  onStimulus(stim: Stimulus): Promise<void> {
+    const run = this.queue.then(() => this.handleStimulus(stim)).catch((err) => {
+      console.warn('[chat] onStimulus 处理失败:', (err as Error).message)
+    })
+    // queue 只串行化、不在某条失败时断链(catch 已吞错)
+    this.queue = run
+    return run
+  }
+
+  private async handleStimulus(stim: Stimulus): Promise<void> {
     if (!this.guard.allow()) return
     if (stim.moveZh) {
       this.lastCtx.set(stim.gameId, { moveZh: stim.moveZh, qual: qualWord(stim.scoreCp ?? null), ply: stim.ply ?? 0 })

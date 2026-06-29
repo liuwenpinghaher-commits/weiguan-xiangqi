@@ -1,12 +1,13 @@
 import { createRoot } from 'react-dom/client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import './index.css'
-import { PlayPage } from './pages/PlayPage.js'
-import { ReviewPage } from './pages/ReviewPage.js'
-import { AnalysisPage } from './pages/AnalysisPage.js'
-import { GrowthPage } from './pages/GrowthPage.js'
-import { TrainingPage } from './pages/TrainingPage.js'
-import { ConsolePage } from './pages/console/ConsolePage.js'
+// 页面级代码分割:按路由懒加载,把各页(及 recharts 等重依赖)拆出主 chunk,减小首屏体积
+const PlayPage = lazy(() => import('./pages/PlayPage.js').then(m => ({ default: m.PlayPage })))
+const ReviewPage = lazy(() => import('./pages/ReviewPage.js').then(m => ({ default: m.ReviewPage })))
+const AnalysisPage = lazy(() => import('./pages/AnalysisPage.js').then(m => ({ default: m.AnalysisPage })))
+const GrowthPage = lazy(() => import('./pages/GrowthPage.js').then(m => ({ default: m.GrowthPage })))
+const TrainingPage = lazy(() => import('./pages/TrainingPage.js').then(m => ({ default: m.TrainingPage })))
+const ConsolePage = lazy(() => import('./pages/console/ConsolePage.js').then(m => ({ default: m.ConsolePage })))
 import { HTTP_BASE } from './api/config.js'
 import { color, space, radius, fontSize, font, z } from './ui/theme.js'
 
@@ -121,7 +122,9 @@ function App() {
   return (
     <>
       <Nav active={route.page} />
-      {page}
+      <Suspense fallback={<div style={{ padding: space.xl, color: color.textMuted }}>加载中…</div>}>
+        {page}
+      </Suspense>
     </>
   )
 }

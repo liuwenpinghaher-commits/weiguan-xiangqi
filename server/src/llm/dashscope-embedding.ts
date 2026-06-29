@@ -28,7 +28,16 @@ export class DashscopeEmbedding implements EmbeddingProvider {
       input: texts,
       dimensions: this.dimension,
     })
+    const data = resp.data
     // 结构异常(data 缺失)时返回空数组,由上层(embedOne 取 [0]→undefined→null)走无向量降级
-    return (resp.data ?? []).map((d: any) => d.embedding as number[])
+    if (!Array.isArray(data) || data.length === 0) return []
+    // OpenAI 兼容 /embeddings 不保证返回顺序与输入一致,每元素带 index;
+    // 按 index 重排后再取 embedding,否则向量会与文本错位。
+    // 条数对不上(部分丢失/重复)则视为不可靠结果,直接抛错而非静默错位。
+    if (data.length !== texts.length) {
+      throw new Error(`embedding 条数不符: 期望 ${texts.length} 得到 ${data.length}`)
+    }
+    const sorted = [...data].sort((a: any, b: any) => (a.index ?? 0) - (b.index ?? 0))
+    return sorted.map((d: any) => d.embedding as number[])
   }
 }

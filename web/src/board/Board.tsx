@@ -147,14 +147,23 @@ export function Board({ fen, onMove, size = 480, lastMove, disabled = false, ori
   function handleSquareClick(square: Square): void {
     if (disabled) return
     if (selectedSquare === null) {
+      // 第一次点击:选中起点并请求合法落点(legalSquares 会随之回填)。
       setSelectedSquare(square)
       onSquareSelect?.(squareToPikafish(square))
+    } else if (selectedSquare === square) {
+      // 再次点同一格:取消选中。
+      setSelectedSquare(null)
     } else {
-      if (selectedSquare !== square) {
-        const from = squareToPikafish(selectedSquare)
-        const to = squareToPikafish(square)
-        onMove(from + to)
+      const targetPika = squareToPikafish(square)
+      // 若已知合法落点集合且目标不在其中,则把本次点击当作"重新选中起点",
+      // 而非发出非法 onMove(避免点选模式下走非法着)。legalSquares 为空时保持原行为。
+      if (legalSquares && legalSquares.length > 0 && !legalSquares.includes(targetPika)) {
+        setSelectedSquare(square)
+        onSquareSelect?.(targetPika)
+        return
       }
+      const from = squareToPikafish(selectedSquare)
+      onMove(from + targetPika)
       setSelectedSquare(null)
     }
   }

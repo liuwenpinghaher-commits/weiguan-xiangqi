@@ -58,7 +58,9 @@ export class SurrealMemoryStore implements MemoryStore {
       throw err
     }
     const dim = this.deps.embedding.dimension
-    await this.db.query(`
+    // DDL(建表/HNSW 索引)也纳入超时:大维度索引重建可能卡住,避免启动无限挂起。
+    try {
+      await withTimeout(this.db.query(`
       DEFINE TABLE IF NOT EXISTS memory SCHEMAFULL;
       DEFINE FIELD IF NOT EXISTS persona_id    ON memory TYPE string;
       DEFINE FIELD IF NOT EXISTS kind          ON memory TYPE string;
@@ -70,7 +72,11 @@ export class SurrealMemoryStore implements MemoryStore {
       DEFINE FIELD IF NOT EXISTS embedding     ON memory TYPE option<array<float>>;
       DEFINE INDEX IF NOT EXISTS mem_hnsw    ON memory FIELDS embedding HNSW DIMENSION ${dim} DIST COSINE;
       DEFINE INDEX IF NOT EXISTS mem_persona ON memory FIELDS persona_id, kind;
-    `)
+    `), timeoutMs, `SurrealDB 建表/建索引超时(${timeoutMs}ms)`)
+    } catch (err) {
+      try { await this.db.close() } catch { /* ignore */ }
+      throw err
+    }
   }
 
   async close(): Promise<void> { await this.db.close() }
@@ -87,7 +93,10 @@ export class SurrealMemoryStore implements MemoryStore {
     if (e.kind === 'episode') return this.insert(e, null)
     const vec = await this.embedOne(e.content)
     if (!vec) return this.insert(e, null)
-    const [nn] = await this.knn(e.personaId, e.kind, vec, 1)
+    // HNSW `<|K,EF|>` 先取 K 个最近邻再后过滤 persona/superseded;K 太小(原为 1)时,
+    // 真正该 merge/supersede 的同 persona 候选可能被无关记录占满名额而漏判。放大 K,
+    // 后续仍只取过滤后的 top-1(nn)。
+    const [nn] = await this.knn(e.personaId, e.kind, vec, this.knnK(1))
     if (nn && nn.sim >= (this.deps.simThreshold ?? DEFAULT_SIM_THRESHOLD)) {
       const verdict = await judgeMemory(this.deps.llm, nn.row.content, e.content)
       if (verdict.action === 'merge') {
@@ -95,17 +104,19 @@ export class SurrealMemoryStore implements MemoryStore {
         const imp = Math.min(5, nn.row.importance + 1)
         // 合并文本嵌入失败(mvec==null)时,绝不写 embedding 字段——否则 undefined→NONE
         // 会清掉被合并记录的已有向量,该记忆从此对 KNN 语义检索永久不可见。保留旧向量。
+        // 并发守卫:judge LLM 期间该行可能被并发作废;只更新仍未作废的行,避免复活已作废记录。
         if (mvec) {
-          await this.db.query('UPDATE $id SET content=$c, importance=$imp, embedding=$emb',
+          await this.db.query('UPDATE $id SET content=$c, importance=$imp, embedding=$emb WHERE superseded_at IS NONE',
             { id: this.thing(nn.row.id), c: verdict.merged, imp, emb: mvec })
         } else {
-          await this.db.query('UPDATE $id SET content=$c, importance=$imp',
+          await this.db.query('UPDATE $id SET content=$c, importance=$imp WHERE superseded_at IS NONE',
             { id: this.thing(nn.row.id), c: verdict.merged, imp })
         }
         return nn.row.id
       }
       if (verdict.action === 'supersede') {
-        await this.db.query('UPDATE $id SET superseded_at=$at',
+        // 同样守卫:仅作废仍未作废的行(并发已作废则无需重复)。
+        await this.db.query('UPDATE $id SET superseded_at=$at WHERE superseded_at IS NONE',
           { id: this.thing(nn.row.id), at: new Date(this.deps.now()).toISOString() })
         return this.insert(e, vec)
       }
@@ -119,8 +130,15 @@ export class SurrealMemoryStore implements MemoryStore {
     const [res] = await this.db.query<[Array<{ id: unknown }>]>(
       'CREATE memory CONTENT { persona_id:$p, kind:$k, content:$c, importance:$imp, game_id:$g, created_at:$ts, superseded_at:NONE, embedding:$emb } RETURN id',
       { p: e.personaId, k: e.kind, c: e.content, imp: e.importance, g: e.gameId ?? undefined, ts: e.createdAt, emb: vec ?? undefined })
-    return String((res as Array<{ id: unknown }>)[0].id)
+    const created = (res as Array<{ id: unknown }> | undefined)?.[0]
+    if (!created || created.id == null) {
+      throw new Error(`CREATE memory 返回空结果(persona=${e.personaId}, kind=${e.kind}):无法获取新记录 id`)
+    }
+    return String(created.id)
   }
+
+  /** 放大 HNSW 的 K:取最近邻时先多取(≥32),抵消"先取 K 再后过滤 persona/superseded"造成的占位漏判。 */
+  private knnK(want: number): number { return Math.max(want * 8, 32) }
 
   private async knn(personaId: string, kind: MemoryKind, vec: number[], k: number): Promise<Array<{ row: Row; sim: number }>> {
     // v3 的 KNN 算子语法:`embedding <|K,EF|> $vec`(HNSW 索引);旧的 `<|K|>` 已被移除。
@@ -140,7 +158,8 @@ export class SurrealMemoryStore implements MemoryStore {
     const t = this.deps.now()
     let rows: Array<{ row: Row; sim: number }> = []
     if (vec) {
-      for (const k of kinds) rows.push(...await this.knn(personaId, k, vec, Math.max(limit, 5))) // 候选放宽到 ≥5:KNN 返回纯语义近邻,留更大池子让 recency/importance 重排
+      for (const k of kinds) rows.push(...await this.knn(personaId, k, vec, this.knnK(limit))) // KNN 取放大后的 K(≥32),抵消后过滤占位漏判;最终结果仍 slice 回 limit
+
     } else {
       // 嵌入失败降级:不走 KNN,纯按 recency/importance 融合。
       const [res] = await this.db.query<[any[]]>(
@@ -150,7 +169,9 @@ export class SurrealMemoryStore implements MemoryStore {
     }
     return rows
       .map(({ row, sim }) => {
-        const recency = Math.pow(0.5, (t - Date.parse(row.created_at)) / RECENCY_HALFLIFE_MS)
+        // created_at 解析失败(NaN)会让 recency→NaN、score→NaN 打乱排序;失配时把该条当最旧(recency=0)。
+        const parsed = Date.parse(row.created_at)
+        const recency = Number.isNaN(parsed) ? 0 : Math.pow(0.5, (t - parsed) / RECENCY_HALFLIFE_MS)
         return { row, score: sim + recency + row.importance / 5 }
       })
       .sort((a, b) => b.score - a.score)

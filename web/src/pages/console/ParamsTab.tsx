@@ -20,11 +20,20 @@ export function ParamsTab({ chat, director, engine, diagnose, onChanged }:
 
 function NumSection({ title, section, fields, initial, onChanged, note }:
   { title: string; section: ConfigSection; fields: typeof PARAM_FIELDS.chat; initial: NumMap; onChanged: () => void; note?: string }) {
-  const [vals, setVals] = useState<NumMap>(() => Object.fromEntries(fields.map(f => [f.key, initial[f.key]])))
+  // 编辑态允许空串(用户清空再输入的临时态);保存时再校验/回填。
+  const [vals, setVals] = useState<Record<string, number | ''>>(() => Object.fromEntries(fields.map(f => [f.key, initial[f.key]])))
   const [msg, setMsg] = useState<string | null>(null)
   const save = async () => {
     setMsg(null)
-    try { await putSection(section, vals); setMsg('已保存'); onChanged() } catch (e) { setMsg('保存失败:' + (e as Error).message) }
+    // 保存前剔除空串/非有限数,避免 JSON 序列化成 null 提交给后端。
+    const payload: NumMap = {}
+    for (const f of fields) {
+      const raw = vals[f.key]
+      const n = typeof raw === 'number' ? raw : Number(raw)
+      if (raw === '' || !Number.isFinite(n)) { setMsg(`保存失败:${f.label} 不是有效数字`); return }
+      payload[f.key] = n
+    }
+    try { await putSection(section, payload); setMsg('已保存'); onChanged() } catch (e) { setMsg('保存失败:' + (e as Error).message) }
   }
   return (
     <div style={{ ...cardStyle, marginBottom: space.lg }}>
@@ -33,7 +42,12 @@ function NumSection({ title, section, fields, initial, onChanged, note }:
         <label key={f.key} style={lbl}>
           <span>{f.label}{f.help ? <span style={{ color: color.textFaint }}>（{f.help}）</span> : null}</span>
           <input style={inp} type="number" min={f.min} max={f.max} step={f.step}
-            value={vals[f.key]} onChange={e => setVals(v => ({ ...v, [f.key]: Number(e.target.value) }))} />
+            value={vals[f.key]} onChange={e => {
+              const raw = e.target.value
+              const n = Number(raw)
+              // 仅在空串(临时态)或有限数时更新,过滤 '-'/'1e'/'.' 等中间态产生的 NaN。
+              if (raw === '' || Number.isFinite(n)) setVals(v => ({ ...v, [f.key]: raw === '' ? '' : n }))
+            }} />
         </label>
       ))}
       {note && <p style={{ color: color.textFaint, fontSize: fontSize.xs }}>{note}</p>}

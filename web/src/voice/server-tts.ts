@@ -124,11 +124,16 @@ async function drain(): Promise<void> {
       const a = getAudio()
       a.src = url
       fireStart(item)
-      await new Promise<void>((resolve) => {
-        a.onended = () => resolve()
-        a.onerror = () => resolve()
-        a.play().catch(() => resolve())
-      })
+      try {
+        await new Promise<void>((resolve) => {
+          a.onended = () => resolve()
+          a.onerror = () => resolve()
+          a.play().catch(() => resolve())
+        })
+      } finally {
+        // 清掉本条的播放回调,避免复用同一 audio 元素时旧闭包与下一条交叉触发。
+        a.onended = a.onerror = null
+      }
     } catch {
       // play 异常 → 静默跳过(不需要 browserSpeak,合成本身成功了)
     }
@@ -145,6 +150,8 @@ export function stopVoice(): void {
   queue = []
   if (audioEl) {
     try { audioEl.pause() } catch { /* 忽略 */ }
+    // 清掉残留播放回调,避免被中止的旧一句在 stop 后仍 resolve 干扰新局。
+    audioEl.onended = audioEl.onerror = null
     audioEl.src = ''
   }
   // 重置 draining,让 drain 入口可重入(配合 gen !== generation 守卫,

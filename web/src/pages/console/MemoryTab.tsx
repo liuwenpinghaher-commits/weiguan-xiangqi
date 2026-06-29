@@ -49,11 +49,13 @@ export function MemoryTab({ personas }: { personas: PersonaConfig[] }) {
 
 function MemRow({ r, onChanged }: { r: MemoryRecord; onChanged: () => void }) {
   const [content, setContent] = useState(r.content)
-  const [importance, setImportance] = useState(r.importance)
+  // 允许空串临时态(用户清空再输入);保存前校验,避免 NaN 序列化成 null 提交。
+  const [importance, setImportance] = useState<number | ''>(r.importance)
   const [editing, setEditing] = useState(false)
   const [rowErr, setRowErr] = useState<string | null>(null)
   const save = async () => {
     setRowErr(null)
+    if (importance === '' || !Number.isFinite(importance)) { setRowErr('保存失败:重要度不是有效数字'); return }
     try { await updateMemory(r.id, { content, importance }); setEditing(false); onChanged() }
     catch (e) { setRowErr('保存失败:' + (e as Error).message) }
   }
@@ -71,7 +73,12 @@ function MemRow({ r, onChanged }: { r: MemoryRecord; onChanged: () => void }) {
         : <span style={{ color: r.supersededAt ? color.textFaint : color.text, textDecoration: r.supersededAt ? 'line-through' : 'none' }}>{r.content}</span>}
         {rowErr && <div style={{ color: color.danger, fontSize: fontSize.xs, marginTop: space.xs }} role="alert">{rowErr}</div>}</td>
       <td style={darkTdStyle}>{editing
-        ? <input style={{ ...inp, width: 56 }} type="number" min={1} max={5} value={importance} onChange={e => setImportance(Number(e.target.value))} />
+        ? <input style={{ ...inp, width: 56 }} type="number" min={1} max={5} value={importance} onChange={e => {
+            const raw = e.target.value
+            const n = Number(raw)
+            // 仅在空串(临时态)或有限数时更新,过滤中间态产生的 NaN。
+            if (raw === '' || Number.isFinite(n)) setImportance(raw === '' ? '' : n)
+          }} />
         : r.importance}</td>
       <td style={darkTdStyle}>
         {editing

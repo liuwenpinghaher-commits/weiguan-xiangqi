@@ -51,6 +51,11 @@ export async function diagnoseGame(deps: DiagnoseDeps, gameId: number): Promise<
   const analyses: EngineLine[] = []
   for (const fen of fens) {
     const lines = await deps.engine.analyze(fen, { multipv: 1, depth })
+    // 引擎返回空(无主变)时整局诊断会在后续 before.scoreCp 处崩——这里提前抛清晰错误,
+    // 不再把 undefined 压入 analyses 拖到下游报 "Cannot read properties of undefined"。
+    if (!lines || lines.length === 0 || !lines[0]) {
+      throw new Error(`引擎分析返回空: fen=${fen}`)
+    }
     analyses.push(lines[0])
   }
 
@@ -61,6 +66,9 @@ export async function diagnoseGame(deps: DiagnoseDeps, gameId: number): Promise<
     const loss = cpLoss(before.scoreCp, after.scoreCp)
     const hadMateBefore = before.mate != null && before.mate > 0
     const tookMate = hadMateBefore && m.move === before.move
+    // 固有限制:末手没有 fens[i+2](对手尚未应手),无法判定"被回吃"的 hangs_piece——
+    // 需对手回应才能确认丢子,故对局最后一手该主题恒为 false(不做 i+1 伪兜底,因走子方
+    // 自己回合内己方子数不变,i+1 比较无意义)。
     const twoLater = fens[i + 2]
     const lostMaterial =
       twoLater != null && countSidePieces(fens[i], m.side) > countSidePieces(twoLater, m.side)

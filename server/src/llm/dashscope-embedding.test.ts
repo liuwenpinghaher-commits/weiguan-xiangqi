@@ -21,4 +21,33 @@ describe('DashscopeEmbedding', () => {
     const emb = new DashscopeEmbedding('text-embedding-v3', 3, fakeClient as any)
     await expect(emb.embed(['a'])).resolves.toEqual([])
   })
+
+  it('乱序 data(带 index)按 index 重排,向量与输入对齐', async () => {
+    // 端返回顺序打乱:index 2 在前、0 在中、1 在后;每个 embedding 用 index 当标记
+    const fakeClient = {
+      embeddings: {
+        create: async () => ({
+          data: [
+            { index: 2, embedding: [2] },
+            { index: 0, embedding: [0] },
+            { index: 1, embedding: [1] },
+          ],
+        }),
+      },
+    }
+    const emb = new DashscopeEmbedding('text-embedding-v3', 1, fakeClient as any)
+    const vecs = await emb.embed(['a', 'b', 'c'])
+    // 重排后应按 0,1,2 顺序,与输入 a,b,c 对齐
+    expect(vecs).toEqual([[0], [1], [2]])
+  })
+
+  it('返回条数与输入不符 → 抛错(不静默错位)', async () => {
+    const fakeClient = {
+      embeddings: {
+        create: async () => ({ data: [{ index: 0, embedding: [0] }] }), // 只回 1 条
+      },
+    }
+    const emb = new DashscopeEmbedding('text-embedding-v3', 1, fakeClient as any)
+    await expect(emb.embed(['a', 'b'])).rejects.toThrow(/条数不符/)
+  })
 })
