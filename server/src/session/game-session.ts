@@ -102,8 +102,49 @@ export class GameSession {
    */
   private lastHumanBlunder = new Map<number, boolean>()
   private clockStates = new Map<number, { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null; startedAt: number | null }>()
+  /** 每局已用悔棋次数(服务端权威;前端 undoRemaining 仅展示) */
+  private undoCounts = new Map<number, number>()
 
   constructor(private deps: GameSessionDeps) {}
+
+  /** 结算当前走钟一方的耗时(含增秒);startedAt=null(暂停/未启动)时为空操作。 */
+  private settleActive(clock: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null; startedAt: number | null }, withIncrement: boolean): void {
+    if (clock.activeSide === null || clock.startedAt === null) return
+    const elapsed = Date.now() - clock.startedAt
+    if (clock.activeSide === 'red') clock.redRemaining = Math.max(0, clock.redRemaining - elapsed)
+    else clock.blackRemaining = Math.max(0, clock.blackRemaining - elapsed)
+    if (withIncrement) {
+      const inc = this.deps.cfg.getEngineParams().clockIncrementSeconds * 1000
+      if (clock.activeSide === 'red') clock.redRemaining += inc
+      else clock.blackRemaining += inc
+    }
+    clock.activeSide = null
+    clock.startedAt = null
+  }
+
+  private startClockFor(clock: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null; startedAt: number | null }, side: Side): void {
+    clock.activeSide = side
+    clock.startedAt = Date.now()
+  }
+
+  /**
+   * 超时判负检查:当前走钟方剩余时间归零 → 判对方胜并 finish。
+   * 由 ws-server 定时清扫器与走子入口调用;无钟/未走钟/未超时返回 null。
+   */
+  checkTimeout(gameId: number): { over: true; result: Side; fen: string } | null {
+    const clock = this.clockStates.get(gameId)
+    if (!clock || clock.activeSide === null || clock.startedAt === null) return null
+    const elapsed = Date.now() - clock.startedAt
+    const remaining = clock.activeSide === 'red' ? clock.redRemaining - elapsed : clock.blackRemaining - elapsed
+    if (remaining > 0) return null
+    const loser = clock.activeSide
+    const winner: Side = loser === 'red' ? 'black' : 'red'
+    this.ensureLoaded(gameId)
+    const pos = this.positions.get(gameId)
+    const fen = pos ? pos.fen() : ''
+    this.finish(gameId, winner)
+    return { over: true, result: winner, fen }
+  }
 
   /**
    * 若 positions Map 里没有 gameId，从 DB 重建内存态（续局支持）。
@@ -118,11 +159,30 @@ export class GameSession {
     const g = this.deps.repo.getGame(gameId)
     if (!g) return  // 调用方的 positions.get 会返回 undefined，由调用方抛 'game not found'
 
-    // 从起始局面开始重放所有已入库的着法
-    let pos = this.deps.makePosition(g.startFen)
+    this.rebuildDerivedState(gameId, g.startFen)
+    this.modes.set(gameId, g.mode)
+    this.humanSides.set(gameId, g.humanSide)
+
+    // 时钟不落库:续局/重启后按配置重建全新钟(重启=时间重置,注释明示该取舍)。
+    if (!this.clockStates.has(gameId) && !g.result) {
+      const engineCfg = this.deps.cfg.getEngineParams()
+      this.clockStates.set(gameId, {
+        redRemaining: engineCfg.clockInitialSeconds * 1000,
+        blackRemaining: engineCfg.clockInitialSeconds * 1000,
+        activeSide: null,
+        startedAt: null,
+      })
+    }
+  }
+
+  /**
+   * 由 startFen + DB moves 重放,重建 positions/repeatHistories/noCapturePlies。
+   * ensureLoaded(续局)与 undoLastMoves(悔棋后回滚裁决状态)共用,保证两处推导一致。
+   */
+  private rebuildDerivedState(gameId: number, startFen: string): void {
+    let pos = this.deps.makePosition(startFen)
     const moves = this.deps.repo.getMoves(gameId)
 
-    // 初始化 repeatHistories：与 newGame 逻辑一致
     const startKey = safeKey(pos)
     const repeatHistory: RepeatInfo[] = []
     if (startKey !== null) {
@@ -140,7 +200,6 @@ export class GameSession {
       const before = pos
       pos = pos.applyMove(m.move)
 
-      // 更新 repeatHistories（仅当 key 能力可用时）
       if (repeatHistory.length > 0) {
         const afterKey = safeKey(pos)
         if (afterKey !== null) {
@@ -154,21 +213,19 @@ export class GameSession {
         }
       }
 
-      // 更新无吃子计数
       const captured = pieceCount(before.fen()) > pieceCount(pos.fen())
       noCapture = captured ? 0 : noCapture + 1
     }
 
     this.positions.set(gameId, pos)
-    this.modes.set(gameId, g.mode)
-    this.humanSides.set(gameId, g.humanSide)
     this.repeatHistories.set(gameId, repeatHistory)
     this.noCapturePlies.set(gameId, noCapture)
   }
 
   newGame(g: { mode: GameMode; humanSide: Side; startFen: string }): number {
-    const id = this.deps.repo.createGame({ ...g, startedAt: this.deps.clock() })
+    // 先解析后落库:非法 startFen 在此抛出,不产生无着法的孤儿 games 行
     const startPos = this.deps.makePosition(g.startFen)
+    const id = this.deps.repo.createGame({ ...g, startedAt: this.deps.clock() })
     this.positions.set(id, startPos)
     this.modes.set(id, g.mode)
     this.humanSides.set(id, g.humanSide)
@@ -201,18 +258,12 @@ export class GameSession {
     return id
   }
 
-  async playHumanMove(gameId: number, move: string): Promise<{ aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw' }> {
+  async playHumanMove(gameId: number, move: string): Promise<{ aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; aiReason?: string }> {
+    // 走子前先查超时:读秒已归零则直接判负(flag-fall),不再受理这手棋
+    const timedOut = this.checkTimeout(gameId)
+    if (timedOut) return { aiMove: null, ...timedOut }
     const clock = this.clockStates.get(gameId)
-    if (clock && clock.activeSide !== null && clock.startedAt !== null) {
-      const elapsed = Date.now() - clock.startedAt
-      if (clock.activeSide === 'red') clock.redRemaining = Math.max(0, clock.redRemaining - elapsed)
-      else clock.blackRemaining = Math.max(0, clock.blackRemaining - elapsed)
-      const inc = this.deps.cfg.getEngineParams().clockIncrementSeconds * 1000
-      if (clock.activeSide === 'red') clock.redRemaining += inc
-      else clock.blackRemaining += inc
-      clock.activeSide = null
-      clock.startedAt = null
-    }
+    if (clock) this.settleActive(clock, true)
     this.ensureLoaded(gameId)
     const pos = this.positions.get(gameId)
     if (!pos) throw new Error('game not found')
@@ -266,8 +317,16 @@ export class GameSession {
     }
 
     // 4. 计算 AI 回着(此处任何失败都抛出,且尚未写任何库、未改 position,可重试)
+    //    AI 一侧按真实计算耗时走钟(诚实计时,不再恒为初始值)
+    const aiThinkingSide = afterHuman.sideToMove()
+    if (clock) this.startClockFor(clock, aiThinkingSide)
     const ep = this.deps.cfg.getEngineParams()
-    const lines = await this.deps.engine.analyze(afterHuman.fen(), { multipv: ep.multipv, movetime: ep.movetime })
+    let lines
+    try {
+      lines = await this.deps.engine.analyze(afterHuman.fen(), { multipv: ep.multipv, movetime: ep.movetime })
+    } finally {
+      if (clock) this.settleActive(clock, true)
+    }
     const ctx = this.buildContext(gameId)
     const decision = selectMove(lines, ctx)
     const aiSide = afterHuman.sideToMove()
@@ -351,14 +410,10 @@ export class GameSession {
     if (aiOver.over || aiRepeat !== null) {
       const result = aiOver.over ? aiOver.result! : aiRepeat!.result
       this.finish(gameId, result)
-      return { aiMove: decision.move, fen: afterAI.fen(), over: true, result }
+      return { aiMove: decision.move, fen: afterAI.fen(), over: true, result, aiReason: decision.reason }
     }
-    if (clock) {
-      const humanSide = this.humanSides.get(gameId)!
-      clock.activeSide = humanSide
-      clock.startedAt = Date.now()
-    }
-    return { aiMove: decision.move, fen: afterAI.fen(), over: false }
+    if (clock) this.startClockFor(clock, this.humanSides.get(gameId)!)
+    return { aiMove: decision.move, fen: afterAI.fen(), over: false, aiReason: decision.reason }
   }
 
   /**
@@ -369,7 +424,7 @@ export class GameSession {
    * - 触发 byPlayerPersona 刺激（与 playHumanMove AI 段一致）。
    * - 返回 { aiMove, fen, over, result? }。
    */
-  async aiFirstMove(gameId: number): Promise<{ aiMove: string; fen: string; over: boolean; result?: 'red' | 'black' | 'draw' }> {
+  async aiFirstMove(gameId: number): Promise<{ aiMove: string; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; aiReason?: string }> {
     this.ensureLoaded(gameId)
     const pos = this.positions.get(gameId)
     if (!pos) throw new Error('game not found')
@@ -380,9 +435,16 @@ export class GameSession {
       throw new Error(`not AI turn: side to move is ${currentSide}, human is ${humanSide}`)
     }
 
-    // 引擎分析当前局面，AI 走一手
+    // 引擎分析当前局面,AI 走一手(AI 侧真实走钟)
+    const clock = this.clockStates.get(gameId)
+    if (clock) this.startClockFor(clock, currentSide)
     const ep = this.deps.cfg.getEngineParams()
-    const lines = await this.deps.engine.analyze(pos.fen(), { multipv: ep.multipv, movetime: ep.movetime })
+    let lines
+    try {
+      lines = await this.deps.engine.analyze(pos.fen(), { multipv: ep.multipv, movetime: ep.movetime })
+    } finally {
+      if (clock) this.settleActive(clock, true)
+    }
     const ctx = this.buildContext(gameId)
     const decision = selectMove(lines, ctx)
     const aiSide = currentSide
@@ -426,10 +488,12 @@ export class GameSession {
     if (aiOver.over || aiRepeat !== null) {
       const result = aiOver.over ? aiOver.result! : aiRepeat!.result
       this.finish(gameId, result)
-      return { aiMove: decision.move, fen: afterAI.fen(), over: true, result }
+      return { aiMove: decision.move, fen: afterAI.fen(), over: true, result, aiReason: decision.reason }
     }
 
-    return { aiMove: decision.move, fen: afterAI.fen(), over: false }
+    // AI 先手落定后轮到人类,人类开始走钟
+    if (clock) this.startClockFor(clock, humanSide)
+    return { aiMove: decision.move, fen: afterAI.fen(), over: false, aiReason: decision.reason }
   }
 
   private buildContext(gameId: number): DirectorContext {
@@ -517,7 +581,7 @@ export class GameSession {
       || this.lastMoveAt.has(gameId) || this.lastMoveMs.has(gameId)
       || this.repeatHistories.has(gameId) || this.noCapturePlies.has(gameId)
       || this.prevRedCp.has(gameId) || this.lastHumanBlunder.has(gameId)
-      || this.clockStates.has(gameId)
+      || this.clockStates.has(gameId) || this.undoCounts.has(gameId)
   }
 
   getClockState(gameId: number) {
@@ -533,14 +597,21 @@ export class GameSession {
     return { redRemaining: red, blackRemaining: black, activeSide: clock.activeSide }
   }
 
+  /** 暂停走钟:结算已耗时(不加增秒),保留 activeSide、冻结计时。WS pause 分支调用。 */
   pauseClock(gameId: number): void {
     const clock = this.clockStates.get(gameId)
     if (!clock || clock.activeSide === null || clock.startedAt === null) return
     const elapsed = Date.now() - clock.startedAt
-    if (clock.activeSide === 'red') clock.redRemaining -= elapsed
-    else clock.blackRemaining -= elapsed
-    clock.activeSide = null
-    clock.startedAt = null
+    if (clock.activeSide === 'red') clock.redRemaining = Math.max(0, clock.redRemaining - elapsed)
+    else clock.blackRemaining = Math.max(0, clock.blackRemaining - elapsed)
+    clock.startedAt = null  // activeSide 保留 → resume 知道该给谁重新起钟
+  }
+
+  /** 恢复走钟:pause 冻结的一方从当前时刻继续计时。WS resume 分支调用。 */
+  resumeClock(gameId: number): void {
+    const clock = this.clockStates.get(gameId)
+    if (!clock || clock.activeSide === null || clock.startedAt !== null) return
+    clock.startedAt = Date.now()
   }
 
   /** 公开只读取 fen，避免调用方穿透私有 positions（不存在时返回空串）。 */
@@ -565,8 +636,20 @@ export class GameSession {
   offerDraw(gameId: number): { accepted: boolean; fen: string } {
     this.ensureLoaded(gameId)
     const mode = this.modes.get(gameId)
-    const prob = mode === 'coach' ? 0.8 : 0.6
-    const accepted = Math.random() < prob
+    // 看局面应答(用最近一手 AI 落定后的红方视角评分),无评分时退回旧概率:
+    //   AI 明显劣势(≤-80cp)→ 接受;AI 明显优势(≥+150cp)→ 拒绝;胶着 → 按模式概率。
+    const humanSide = this.humanSides.get(gameId)
+    const prevRed = this.prevRedCp.get(gameId) ?? null
+    let accepted: boolean
+    if (prevRed !== null && humanSide) {
+      const aiSide: Side = humanSide === 'red' ? 'black' : 'red'
+      const aiCp = aiSide === 'red' ? prevRed : -prevRed
+      if (aiCp <= -80) accepted = true
+      else if (aiCp >= 150) accepted = false
+      else accepted = Math.random() < (mode === 'coach' ? 0.6 : 0.4)
+    } else {
+      accepted = Math.random() < (mode === 'coach' ? 0.8 : 0.6)
+    }
     let fen = ''
     if (accepted) {
       const pos = this.positions.get(gameId)
@@ -576,31 +659,45 @@ export class GameSession {
     return { accepted, fen }
   }
 
-  undoLastMoves(gameId: number): { success: boolean; fen: string } {
+  /** 每局悔棋上限(服务端权威;前端展示 remaining) */
+  static readonly MAX_UNDOS = 3
+
+  undoLastMoves(gameId: number): { success: boolean; fen: string; undoRemaining: number } {
     this.ensureLoaded(gameId)
+    const used = this.undoCounts.get(gameId) ?? 0
+    const remainingBudget = GameSession.MAX_UNDOS - used
     const pos = this.positions.get(gameId)
-    if (!pos) return { success: false, fen: '' }
+    if (!pos) return { success: false, fen: '', undoRemaining: remainingBudget }
     const mode = this.modes.get(gameId)
-    if (mode !== 'coach') return { success: false, fen: '' }
+    if (mode !== 'coach') return { success: false, fen: '', undoRemaining: remainingBudget }
+    if (remainingBudget <= 0) return { success: false, fen: '', undoRemaining: 0 }
 
     const moves = this.deps.repo.getMoves(gameId)
-    if (moves.length < 2) return { success: false, fen: '' }
+    if (moves.length < 2) return { success: false, fen: '', undoRemaining: remainingBudget }
 
     this.deps.repo.deleteLastMove(gameId)
     this.deps.repo.deleteLastMove(gameId)
 
+    // 与 ensureLoaded 同源重放:同步回滚 positions/repeatHistories/noCapturePlies,
+    // 避免被撤两手残留在重复历史里污染三次重复/60回合裁决。
     const g = this.deps.repo.getGame(gameId)!
-    let newPos = this.deps.makePosition(g.startFen)
-    const remaining = this.deps.repo.getMoves(gameId)
-    for (const m of remaining) {
-      newPos = newPos.applyMove(m.move)
-    }
-    this.positions.set(gameId, newPos)
+    this.rebuildDerivedState(gameId, g.startFen)
+    const newPos = this.positions.get(gameId)!
 
+    const remaining = this.deps.repo.getMoves(gameId)
     const lastAi = remaining.filter(m => m.byAi).pop()
     this.prevRedCp.set(gameId, lastAi?.scoreCp ?? null)
 
-    return { success: true, fen: newPos.fen() }
+    this.undoCounts.set(gameId, used + 1)
+
+    // 悔棋后轮到人类:结算在途计时并重新给人类起钟
+    const clock = this.clockStates.get(gameId)
+    if (clock) {
+      this.settleActive(clock, false)
+      this.startClockFor(clock, this.humanSides.get(gameId)!)
+    }
+
+    return { success: true, fen: newPos.fen(), undoRemaining: GameSession.MAX_UNDOS - (used + 1) }
   }
 
   private finish(gameId: number, result: Side | 'draw') {
@@ -616,5 +713,15 @@ export class GameSession {
     this.prevRedCp.delete(gameId)
     this.lastHumanBlunder.delete(gameId)
     this.clockStates.delete(gameId)
+    this.undoCounts.delete(gameId)
+  }
+
+  /** 有走钟在途的活跃局(供 ws-server 超时清扫器遍历)。 */
+  activeClockGameIds(): number[] {
+    const ids: number[] = []
+    for (const [id, c] of this.clockStates) {
+      if (c.activeSide !== null && c.startedAt !== null) ids.push(id)
+    }
+    return ids
   }
 }

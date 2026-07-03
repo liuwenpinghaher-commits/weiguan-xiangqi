@@ -10,12 +10,15 @@ export class DashscopeEmbedding implements EmbeddingProvider {
     private model = process.env.EMBEDDING_MODEL ?? 'text-embedding-v3',
     public readonly dimension = Number(process.env.EMBEDDING_DIM ?? 1024),
     client?: { embeddings: { create: (b: any) => Promise<any> } },
+    apiKeyOverride?: string,
+    baseURLOverride?: string,
   ) {
     if (client) {
       this.client = client
     } else {
-      const apiKey = process.env.DASHSCOPE_API_KEY
-      const baseURL = process.env.DASHSCOPE_BASE_URL
+      // 凭据优先显式传入(跟随控制台 llm 段热更),回退 env
+      const apiKey = apiKeyOverride ?? process.env.DASHSCOPE_API_KEY
+      const baseURL = baseURLOverride ?? process.env.DASHSCOPE_BASE_URL
       if (!apiKey || !baseURL) throw new Error('缺少 DASHSCOPE_API_KEY / DASHSCOPE_BASE_URL(见 .env)')
       // 30s 超时:防嵌入请求卡住拖垮记忆写入/检索
       this.client = new OpenAI({ apiKey, baseURL, timeout: 30_000 }) as any

@@ -46,6 +46,7 @@ const SCHEMA: Record<ConfigSection, Record<string, Cleaner>> = {
   chat: {
     minSilenceMs: intMin0, maxPerMin: intMin0, speakThreshold: prob, jitterWidth: numRange(0, 2),
     idleProb: prob, idleIntervalMs: intMin0, reactProb: prob, lenShortP: prob, lenLongP: prob,
+    humanSaidTension: prob, idleTension: prob, playerSelfProb: prob, playerChimeProb: prob,
   },
   director: { coach: modeCleaner, humanlike: modeCleaner },
   engine: { pikafishPath: (v) => (typeof v === 'string' ? (v.trim() === '' ? null : v) : v === null ? null : undefined), multipv: intRange(1, 10), movetime: intRange(50, 5000), clockInitialSeconds: intRange(30, 3600), clockIncrementSeconds: intRange(0, 60) },

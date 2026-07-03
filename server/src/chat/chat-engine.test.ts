@@ -36,7 +36,6 @@ test('高张力刺激 → 产出至少一条弹幕,落 episode 记忆,关推理'
   await engine.onStimulus(stim)
   expect(out.length).toBeGreaterThanOrEqual(1)
   expect(out[0].text).toContain('软')
-  expect(llm.calls[0].opts?.disableThinking).toBe(true)
   expect((await mem.list({ personaId: out[0].personaId })).some(m => m.kind === 'episode')).toBe(true)
 })
 

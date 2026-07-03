@@ -96,9 +96,11 @@ export class SurrealMemoryStore implements MemoryStore {
     // HNSW `<|K,EF|>` 先取 K 个最近邻再后过滤 persona/superseded;K 太小(原为 1)时,
     // 真正该 merge/supersede 的同 persona 候选可能被无关记录占满名额而漏判。放大 K,
     // 后续仍只取过滤后的 top-1(nn)。
-    const [nn] = await this.knn(e.personaId, e.kind, vec, this.knnK(1))
+    const [nn] = await this.knn(e.personaId, e.kind, vec, this.knnK(1)).catch(() => [] as Awaited<ReturnType<SurrealMemoryStore['knn']>>)
     if (nn && nn.sim >= (this.deps.simThreshold ?? DEFAULT_SIM_THRESHOLD)) {
+      // judge 调用抛错(LLM 网络/限流)与解析失败同口径降级为 keep:宁可多存一条,不丢记忆
       const verdict = await judgeMemory(this.deps.llm, nn.row.content, e.content)
+        .catch(() => ({ action: 'keep' as const }))
       if (verdict.action === 'merge') {
         const mvec = await this.embedOne(verdict.merged)
         const imp = Math.min(5, nn.row.importance + 1)
@@ -172,7 +174,8 @@ export class SurrealMemoryStore implements MemoryStore {
         // created_at 解析失败(NaN)会让 recency→NaN、score→NaN 打乱排序;失配时把该条当最旧(recency=0)。
         const parsed = Date.parse(row.created_at)
         const recency = Number.isNaN(parsed) ? 0 : Math.pow(0.5, (t - parsed) / RECENCY_HALFLIFE_MS)
-        return { row, score: sim + recency + row.importance / 5 }
+        // 加权归一:三项都在 0..1 量纲,语义相似度为主(0.6),时近其次(0.25),重要度微调(0.15)
+        return { row, score: 0.6 * sim + 0.25 * recency + 0.15 * (row.importance / 5) }
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
@@ -201,6 +204,13 @@ export class SurrealMemoryStore implements MemoryStore {
   }
 
   async remove(id: string): Promise<void> { await this.db.query('DELETE $id', { id: this.thing(id) }) }
+
+  /** 删局级联:清该局全部记忆(admin 删对局时调用),避免 game_id 悬挂孤儿。 */
+  async removeByGame(gameId: number): Promise<void> {
+    await this.db.query('DELETE memory WHERE game_id = $g', { g: gameId })
+  }
+
+  isDegraded(): boolean { return false }
 
   private norm(r: any): Row {
     return {

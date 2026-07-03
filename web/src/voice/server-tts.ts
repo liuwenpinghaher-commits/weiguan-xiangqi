@@ -2,7 +2,8 @@ import { ttsUrl } from '../api/config.js'
 import { isMuted, speak as browserSpeak } from './browser-tts.js'
 
 /**
- * 云端 qwen3-tts-flash 语音播放,流水线预合成以降低时延。
+ * 服务端本地 TTS(moss-tts-nano)语音播放,流水线预合成以降低时延。
+ * 后端 /tts 路由调用本地 moss-tts-nano 合成 WAV;不可用时前端回退浏览器 Web Speech。
  *
  * 关键设计:
  * 1. 手势解锁(保留原逻辑):复用单个 <audio> 元素,首次用户手势播放静音 WAV 解锁。
@@ -118,24 +119,27 @@ async function drain(): Promise<void> {
     }
     if (gen !== generation) break // await 期间 stopVoice 触发 → 不要再 play 这条残留
 
-    // 用 OSS url 直接播放(浏览器从 CDN 流式拉,起播快)。
+    // 用后端返回的本地 /static/tts 相对 url 直接播放(同源静态文件,起播快)。
     // 此刻起这条就是"正在播放的一句"→ fireStart 让 UI 同步揭示该气泡(文字随声音出现)。
     try {
       const a = getAudio()
       a.src = url
       fireStart(item)
+      let failed = false
       try {
         await new Promise<void>((resolve) => {
           a.onended = () => resolve()
-          a.onerror = () => resolve()
-          a.play().catch(() => resolve())
+          a.onerror = () => { failed = true; resolve() }
+          a.play().catch(() => { failed = true; resolve() })
         })
       } finally {
         // 清掉本条的播放回调,避免复用同一 audio 元素时旧闭包与下一条交叉触发。
         a.onended = a.onerror = null
       }
+      // 合成成功但 wav 损坏/播放被拒 → 回退浏览器 TTS,该句不再静默无声
+      if (failed) browserSpeak(item.personaId, item.text)
     } catch {
-      // play 异常 → 静默跳过(不需要 browserSpeak,合成本身成功了)
+      browserSpeak(item.personaId, item.text)
     }
   }
 

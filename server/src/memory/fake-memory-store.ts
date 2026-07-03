@@ -43,6 +43,13 @@ export class FakeMemoryStore implements MemoryStore {
     if (patch.importance !== undefined) row.importance = patch.importance
   }
 
+  async removeByGame(gameId: number): Promise<void> {
+    this.rows = this.rows.filter(r => r.gameId !== gameId)
+  }
+
+  /** Fake = 降级态(不持久、无语义检索),控制台应提示 */
+  isDegraded(): boolean { return true }
+
   async remove(id: string): Promise<void> {
     this.rows = this.rows.filter(r => r.id !== id)
   }

@@ -94,7 +94,8 @@ function registerMemoryRoutes(app: FastifyInstance, { mem }: AdminDeps): void {
     }
     if (q.kind) filter.kind = q.kind as MemoryKind
     if (q.includeSuperseded === 'true') filter.includeSuperseded = true
-    return mem.list(filter)
+    // degraded=true 表示记忆处于内存降级态(SurrealDB 不可用):不持久、无语义检索,前端应提示
+    return { degraded: mem.isDegraded(), items: await mem.list(filter) }
   })
 
   app.put('/admin/memory/:id', async (req, reply) => {
@@ -114,7 +115,7 @@ function registerMemoryRoutes(app: FastifyInstance, { mem }: AdminDeps): void {
     return { ok: true }
   })
 }
-function registerGamesRoutes(app: FastifyInstance, { games, messages }: AdminDeps): void {
+function registerGamesRoutes(app: FastifyInstance, { games, messages, mem }: AdminDeps): void {
   app.get('/admin/games', async () => games.listGames())
 
   app.get('/admin/games/:id', async (req, reply) => {
@@ -129,6 +130,8 @@ function registerGamesRoutes(app: FastifyInstance, { games, messages }: AdminDep
     const id = parseInt((req.params as { id: string }).id, 10)
     if (isNaN(id)) return reply.code(400).send({ error: 'invalid id' })
     games.deleteGame(id)
+    // 跨库级联:该局沉淀的记忆一并清除(尽力而为,Surreal 掉线时不阻塞删局)
+    try { await mem.removeByGame(id) } catch { /* 记忆清理失败不影响 SQLite 删除 */ }
     return { ok: true }
   })
 }

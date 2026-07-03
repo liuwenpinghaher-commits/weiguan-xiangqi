@@ -9,8 +9,9 @@ export function KeysModelsTab({ llm, tts, onChanged }: { llm: LlmCfg; tts: TtsCf
   const [revealed, setRevealed] = useState<string | null>(null)
   const [model, setModel] = useState(llm.model)
   const [baseURL, setBaseURL] = useState(llm.baseURL ?? '')
-  const [ttsEndpoint, setTtsEndpoint] = useState(tts.endpoint)
-  const [ttsModel, setTtsModel] = useState(tts.model)
+  const [mossNanoUrl, setMossNanoUrl] = useState(tts.mossNanoUrl)
+  const [referenceAudio, setReferenceAudio] = useState(tts.referenceAudio)
+  const [streaming, setStreaming] = useState(tts.streaming)
   const [msg, setMsg] = useState<string | null>(null)
 
   // 明文 key 揭示后 20s 自动清除,组件卸载也清,避免长期留屏被旁观或截图泄露。
@@ -29,7 +30,7 @@ export function KeysModelsTab({ llm, tts, onChanged }: { llm: LlmCfg; tts: TtsCf
   }
   const saveTts = async () => {
     setMsg(null)
-    try { await putSection('tts', { endpoint: ttsEndpoint, model: ttsModel }); setMsg('已保存 TTS 配置'); onChanged() }
+    try { await putSection('tts', { mossNanoUrl, referenceAudio, streaming }); setMsg('已保存 TTS 配置'); onChanged() }
     catch (e) { setMsg('保存失败:' + (e as Error).message) }
   }
   const doReveal = async () => {
@@ -53,9 +54,12 @@ export function KeysModelsTab({ llm, tts, onChanged }: { llm: LlmCfg; tts: TtsCf
       </div>
 
       <div style={{ ...cardStyle, marginTop: space.lg }}>
-        <h3 style={h3}>TTS(qwen3-tts-flash)</h3>
-        <label style={lbl}>端点<input style={inp} value={ttsEndpoint} onChange={e => setTtsEndpoint(e.target.value)} /></label>
-        <label style={lbl}>模型<input style={inp} value={ttsModel} onChange={e => setTtsModel(e.target.value)} /></label>
+        <h3 style={h3}>TTS(moss-tts-nano 本地)</h3>
+        <label style={lbl}>服务地址<input style={inp} value={mossNanoUrl} onChange={e => setMossNanoUrl(e.target.value)} placeholder="http://127.0.0.1:18083" /></label>
+        <label style={lbl}>默认参考音频<input style={inp} value={referenceAudio} onChange={e => setReferenceAudio(e.target.value)} placeholder="assets/tts/reference.wav" /></label>
+        <label style={{ ...lbl, display: 'flex', alignItems: 'center', gap: space.sm }}>
+          <input type="checkbox" checked={streaming} onChange={e => setStreaming(e.target.checked)} /> 流式合成(失败自动回退一次性生成)
+        </label>
         <button style={btnStyle('primary')} onClick={saveTts}>保存 TTS</button>
       </div>
 

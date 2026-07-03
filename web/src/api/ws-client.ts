@@ -2,11 +2,23 @@ import { WS_BASE } from './config.js'
 
 export type ServerMsg =
   | { type: 'started'; gameId: number }
-  | { type: 'update'; aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; clockState?: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null } }
+  | { type: 'update'; aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; aiReason?: string; clockState?: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null } | null }
   | { type: 'error'; message: string }
   | { type: 'chat'; gameId: number; personaId: string; text: string; addressee: string; ts: string }
   | { type: 'draw_response'; gameId: number; accepted: boolean }
-  | { type: 'undo_result'; gameId: number; success: boolean; fen?: string; clockState?: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null } }
+  | { type: 'undo_result'; gameId: number; success: boolean; fen?: string; undoRemaining?: number; clockState?: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null } }
+
+/** 出站帧契约(与 ws-server 消息分派对应),send 收窄到此类型获得编译期校验 */
+export type ClientMsg =
+  | { type: 'new'; mode: 'coach' | 'humanlike'; humanSide: 'red' | 'black'; startFen?: string; spectators?: boolean }
+  | { type: 'move'; gameId: number; move: string }
+  | { type: 'say'; gameId: number; text: string }
+  | { type: 'pause'; gameId: number }
+  | { type: 'resume'; gameId: number }
+  | { type: 'spectators'; gameId: number; enabled: boolean }
+  | { type: 'resign'; gameId: number }
+  | { type: 'draw_offer'; gameId: number }
+  | { type: 'undo'; gameId: number }
 
 export type ConnStatus = 'open' | 'closed' | 'error' | 'reconnecting'
 
@@ -16,7 +28,7 @@ const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000]
 export function connect(
   onMsg: (m: ServerMsg) => void,
   onStatus?: (s: ConnStatus) => void,
-): { send: (m: object) => void; close: () => void } {
+): { send: (m: ClientMsg) => void; close: () => void } {
   let ws: WebSocket
   let intentionallyClosed = false
   // 重连彻底失败后置 true:此后 send 直接丢弃,不再入队(防 pendingQueue 无界增长泄漏)。

@@ -6,18 +6,19 @@ export interface WindowStats {
   accuracy: number
   estElo: number
   blundersPerGame: number
+  mistakesPerGame: number
 }
 
 export interface CompareReport {
   before: WindowStats
   after: WindowStats
-  deltas: { acpl: number; accuracy: number; estElo: number; blundersPerGame: number }
+  deltas: { acpl: number; accuracy: number; estElo: number; blundersPerGame: number; mistakesPerGame: number }
   summary: string
 }
 
 function aggregate(ms: GrowthMetric[]): WindowStats {
   const n = ms.length
-  if (n === 0) return { games: 0, acpl: 0, accuracy: 0, estElo: 0, blundersPerGame: 0 }
+  if (n === 0) return { games: 0, acpl: 0, accuracy: 0, estElo: 0, blundersPerGame: 0, mistakesPerGame: 0 }
   const sum = (f: (m: GrowthMetric) => number) => ms.reduce((a, m) => a + f(m), 0)
   return {
     games: n,
@@ -25,6 +26,7 @@ function aggregate(ms: GrowthMetric[]): WindowStats {
     accuracy: Math.round((sum((m) => m.accuracy) / n) * 10) / 10,
     estElo: Math.round(sum((m) => m.estElo) / n),
     blundersPerGame: Math.round((sum((m) => m.blunders) / n) * 100) / 100,
+    mistakesPerGame: Math.round((sum((m) => m.mistakes) / n) * 100) / 100,
   }
 }
 
@@ -36,6 +38,7 @@ export function compareWindows(before: GrowthMetric[], after: GrowthMetric[]): C
     accuracy: Math.round((a.accuracy - b.accuracy) * 10) / 10,
     estElo: a.estElo - b.estElo,
     blundersPerGame: Math.round((a.blundersPerGame - b.blundersPerGame) * 100) / 100,
+    mistakesPerGame: Math.round((a.mistakesPerGame - b.mistakesPerGame) * 100) / 100,
   }
   return { before: b, after: a, deltas, summary: summarize(b, a, deltas) }
 }

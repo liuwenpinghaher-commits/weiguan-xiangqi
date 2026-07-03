@@ -2,7 +2,6 @@ export interface ChatMsg { role: 'system' | 'user' | 'assistant'; content: strin
 
 export interface LLMOpts {
   /** 关推理(高频弹幕用,省 token);诊断/反思置 false 开推理 */
-  disableThinking?: boolean
   maxTokens?: number
   temperature?: number
 }

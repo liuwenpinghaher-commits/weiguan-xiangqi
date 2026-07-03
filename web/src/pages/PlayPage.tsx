@@ -110,7 +110,9 @@ export function PlayPage() {
         setStatusMsg(txt ? `对局结束 — ${txt}` : '对局结束！')
       } else {
         setStatus('playing')
-        setStatusMsg(msg.aiMove ? `AI 走了 ${msg.aiMove}，轮到您走` : '轮到您走棋')
+        // 教练模式:导演给的选着解释(如"你最近连败,我这手放缓一点")随播报展示
+        const reason = msg.aiReason && mode === 'coach' ? ` · ${msg.aiReason}` : ''
+        setStatusMsg(msg.aiMove ? `AI 走了 ${msg.aiMove}${reason}，轮到您走` : '轮到您走棋')
       }
     } else if (msg.type === 'error') {
       // 非法着法或其他错误：解锁棋盘并强制回弹到当前合法 fen
@@ -120,6 +122,8 @@ export function PlayPage() {
       // 修改 fenKey 强制 Board key 变化，使其重新 mount 并显示真实局面
       setFenKey(k => k + 1)
     } else if (msg.type === 'chat') {
+      // 只收本局弹幕:换局瞬间旧局残留帧/多局并发时不串台
+      if (gameIdRef.current !== null && msg.gameId !== gameIdRef.current) return
       setLines(prev => [...prev, {
         personaId: msg.personaId,
         text: msg.text,
@@ -127,19 +131,25 @@ export function PlayPage() {
         ts: msg.ts,
       }])
     } else if (msg.type === 'draw_response') {
+      if (gameIdRef.current !== null && msg.gameId !== gameIdRef.current) return
       alert(msg.accepted ? 'AI 接受和棋！' : 'AI 拒绝和棋')
     } else if (msg.type === 'undo_result') {
+      if (gameIdRef.current !== null && msg.gameId !== gameIdRef.current) return
+      // 悔棋余额以服务端为准(服务端有硬上限,刷新页面也不会重置)
+      if (typeof msg.undoRemaining === 'number') setUndoRemaining(msg.undoRemaining)
       if (msg.success && msg.fen) {
         setFen(msg.fen)
         setFenKey(k => k + 1)
         setViewingHistory(false)
-        setUndoRemaining(u => u - 1)
+        if (typeof msg.undoRemaining !== 'number') setUndoRemaining(u => u - 1)
         setMoveHistory(prev => prev.slice(0, -2))
         // 撤回 2 手 = 回退 1 个 server 帧;保留开局帧
         setFenHistory(prev => prev.length > 1 ? prev.slice(0, -1) : prev)
         if (msg.clockState) setClockState(msg.clockState)
       } else {
-        alert('无法悔棋（走法太少或非陪练模式）')
+        alert(typeof msg.undoRemaining === 'number' && msg.undoRemaining <= 0
+          ? '悔棋次数已用完(每局 3 次)'
+          : '无法悔棋（走法太少或非陪练模式）')
       }
     }
   }
@@ -244,7 +254,7 @@ export function PlayPage() {
   }
 
   function handleRestart(activeMode?: GameMode, activeSide?: HumanSide) {
-    stopVoice()   // 停掉上一局在播/排队的云端语音,避免串台到新局
+    stopVoice()   // 停掉上一局在播/排队的本地 TTS 语音,避免串台到新局
     cancelSpeech()
     if (preMoveTimerRef.current) { clearTimeout(preMoveTimerRef.current); preMoveTimerRef.current = null }
     setFen(START_FEN)

@@ -126,6 +126,9 @@ export function ReviewPage(props: { gameId: number }) {
                       </span>
                       <span style={{ fontWeight: 600, marginRight: 6, color: color.gold }}>
                         {personaName(m.personaId)}
+                        {m.addressee && m.addressee !== 'all' && (
+                          <span style={{ color: color.textFaint, fontWeight: 400 }}> → {m.addressee === 'human' ? '你' : personaName(m.addressee)}</span>
+                        )}
                       </span>
                       <span style={{ color: color.text }}>{m.text}</span>
                     </div>

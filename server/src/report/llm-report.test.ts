@@ -5,9 +5,9 @@ import type { CompareReport } from './compare.js'
 
 // 构造一个有效的 CompareReport fixture
 const makeReport = (): CompareReport => ({
-  before: { games: 5, acpl: 140, accuracy: 68, estElo: 1750, blundersPerGame: 1.5 },
-  after:  { games: 5, acpl: 90,  accuracy: 76, estElo: 2050, blundersPerGame: 0.8 },
-  deltas: { acpl: -50, accuracy: 8, estElo: 300, blundersPerGame: -0.7 },
+  before: { games: 5, acpl: 140, accuracy: 68, estElo: 1750, mistakesPerGame: 0, blundersPerGame: 1.5 },
+  after:  { games: 5, acpl: 90,  accuracy: 76, estElo: 2050, mistakesPerGame: 0, blundersPerGame: 0.8 },
+  deltas: { acpl: -50, accuracy: 8, estElo: 300, mistakesPerGame: 0, blundersPerGame: -0.7 },
   summary: '规则版摘要:棋力提升约 300 分。',
 })
 
@@ -33,9 +33,9 @@ test('FakeLLM 返回空串 → 回退到规则 summary', async () => {
 test('样本不足(before.games=0) → 直接回退规则 summary,不调用 LLM', async () => {
   const llm = new FakeLLM(['不应该被调用'])
   const cmp: CompareReport = {
-    before: { games: 0, acpl: 0, accuracy: 0, estElo: 0, blundersPerGame: 0 },
-    after:  { games: 3, acpl: 80, accuracy: 75, estElo: 2000, blundersPerGame: 0.5 },
-    deltas: { acpl: 0, accuracy: 0, estElo: 0, blundersPerGame: 0 },
+    before: { games: 0, acpl: 0, accuracy: 0, estElo: 0, mistakesPerGame: 0, blundersPerGame: 0 },
+    after:  { games: 3, acpl: 80, accuracy: 75, estElo: 2000, mistakesPerGame: 0, blundersPerGame: 0.5 },
+    deltas: { acpl: 0, accuracy: 0, estElo: 0, mistakesPerGame: 0, blundersPerGame: 0 },
     summary: '样本不足:两个时间段都需要至少一局已诊断的对局才能对比。',
   }
   const result = await growthReport(llm, cmp)

@@ -5,7 +5,7 @@ import { WeaknessRadar } from '../charts/WeaknessRadar.js'
 import { PageShell, cardStyle, headingStyle, darkThStyle, darkTrStyle, darkTdStyle, ErrorBanner } from '../ui/PageShell.js'
 import { color, radius, fontSize, btn, pill, space } from '../ui/theme.js'
 
-interface Metric { gameId: number; estElo: number; acpl: number; accuracy: number }
+interface Metric { gameId: number; estElo: number; acpl: number; accuracy: number; openingAcpl: number; midgameAcpl: number; endgameAcpl: number; mistakes: number; blunders: number; result: string | null }
 interface Weak { phase: string; theme: string; count: number; avgLoss: number }
 interface Compare { summary: string; report?: string; before: { games: number }; after: { games: number } }
 
@@ -140,9 +140,12 @@ export function GrowthPage({ side: initialSide = 'red' as 'red' | 'black' }) {
               <thead>
                 <tr>
                   <th style={darkThStyle}>局次</th>
+                  <th style={darkThStyle}>胜负</th>
                   <th style={darkThStyle}>估算棋力</th>
                   <th style={darkThStyle}>ACPL</th>
+                  <th style={darkThStyle}>开/中/残 ACPL</th>
                   <th style={darkThStyle}>准确率</th>
+                  <th style={darkThStyle}>失误/大错</th>
                   <th style={darkThStyle}>操作</th>
                 </tr>
               </thead>
@@ -150,9 +153,12 @@ export function GrowthPage({ side: initialSide = 'red' as 'red' | 'black' }) {
                 {metrics.map((m) => (
                   <tr key={m.gameId} style={darkTrStyle}>
                     <td style={darkTdStyle}>#{m.gameId}</td>
+                    <td style={darkTdStyle}>{m.result === 'draw' ? '和' : m.result ? (m.result === 'red' ? '红胜' : '黑胜') : '—'}</td>
                     <td style={darkTdStyle}>{m.estElo}</td>
                     <td style={darkTdStyle}>{m.acpl}</td>
-                    <td style={darkTdStyle}>{(m.accuracy * 100).toFixed(1)}%</td>
+                    <td style={darkTdStyle}>{m.openingAcpl}/{m.midgameAcpl}/{m.endgameAcpl}</td>
+                    <td style={darkTdStyle}>{m.accuracy.toFixed(1)}%</td>
+                    <td style={darkTdStyle}>{m.mistakes}/{m.blunders}</td>
                     <td style={{ ...darkTdStyle, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <a href={`#/analysis/${m.gameId}`} style={aAnalysisStyle} aria-label={`分析第${m.gameId}局`}>
                         分析本局

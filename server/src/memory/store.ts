@@ -40,4 +40,8 @@ export interface MemoryStore {
   update(id: string, patch: { content?: string; importance?: number }): Promise<void>
   /** 控制台删除 */
   remove(id: string): Promise<void>
+  /** 删局级联:清掉该局产生的全部记忆(episode/fact/insight),避免 gameId 悬挂 */
+  removeByGame(gameId: number): Promise<void>
+  /** 是否处于降级态(不持久/无语义)。控制台据此显示提示 */
+  isDegraded(): boolean
 }

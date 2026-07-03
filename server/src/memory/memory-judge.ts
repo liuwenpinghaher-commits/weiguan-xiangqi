@@ -33,6 +33,6 @@ export async function judgeMemory(llm: LLMProvider, existing: string, incoming: 
         + '只输出这一行,不要解释。',
     },
     { role: 'user', content: `已有记忆:${existing}\n新记忆:${incoming}` },
-  ], { disableThinking: false /* 需要推理判断语义关系 */, maxTokens: 120 /* ≈60 汉字,够一句归并 */ })
+  ], { maxTokens: 120 /* ≈60 汉字,够一句归并 */ })
   return parseJudge(raw)
 }

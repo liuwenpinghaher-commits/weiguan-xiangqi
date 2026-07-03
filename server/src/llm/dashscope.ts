@@ -48,7 +48,7 @@ export class DashscopeLLM implements LLMProvider {
   }
 
   async chat(messages: ChatMsg[], opts: LLMOpts = {}): Promise<string> {
-    // 用 any 容纳非标准键(与 volcano.ts 同策略)
+    // 用 any 容纳非标准键(temperature 等直传)
     const body: any = {
       model: this.model,
       messages,

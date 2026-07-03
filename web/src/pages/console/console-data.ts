@@ -1,15 +1,11 @@
-/** qwen3-tts-flash 已验证可用音色(spec §6) */
+/** moss-tts-nano 参考音频(音色克隆源)。id 是相对 server/ 根的 wav 路径,
+ *  与 persona.ttsVoice 直接对应;文件在 server/assets/tts/(源自 moss 官方样本库)。 */
 export const VOICES: { id: string; label: string }[] = [
-  { id: 'Dylan', label: 'Dylan(北京话)' },
-  { id: 'Ethan', label: 'Ethan' },
-  { id: 'Serena', label: 'Serena' },
-  { id: 'Eric', label: 'Eric' },
-  { id: 'Cherry', label: 'Cherry' },
-  { id: 'Chelsie', label: 'Chelsie' },
-  { id: 'Kiki', label: 'Kiki' },
-  { id: 'Rocky', label: 'Rocky' },
-  { id: 'Jada', label: 'Jada(沪语)' },
-  { id: 'Sunny', label: 'Sunny(四川话)' },
+  { id: 'assets/tts/reference.wav', label: '京味茶馆(老炮儿默认)' },
+  { id: 'assets/tts/biaozhun.wav', label: '标准口播(老黑默认)' },
+  { id: 'assets/tts/jiangtang.wav', label: '讲堂主播(教练默认)' },
+  { id: 'assets/tts/taiwanqiang.wav', label: '台湾腔·活泼(网友默认)' },
+  { id: 'assets/tts/wanfeng.wav', label: '电台晚风·温柔' },
 ]
 
 export interface ParamField { key: string; label: string; min: number; max: number; step: number; help?: string }
@@ -26,10 +22,16 @@ export const PARAM_FIELDS: Record<'chat' | 'engine' | 'diagnose', ParamField[]> 
     { key: 'reactProb', label: '互相搭话概率', min: 0, max: 1, step: 0.05 },
     { key: 'lenShortP', label: '短句档概率上界', min: 0, max: 1, step: 0.05, help: '<此值出短句' },
     { key: 'lenLongP', label: '中句档概率上界', min: 0, max: 1, step: 0.05, help: '>此值出稍长句' },
+    { key: 'humanSaidTension', label: '玩家发言张力', min: 0, max: 1, step: 0.05, help: '越高越必有人接话' },
+    { key: 'idleTension', label: '冷场张力', min: 0, max: 1, step: 0.05 },
+    { key: 'playerSelfProb', label: '老黑自评概率', min: 0, max: 1, step: 0.05 },
+    { key: 'playerChimeProb', label: '老黑插话概率', min: 0, max: 1, step: 0.05 },
   ],
   engine: [
     { key: 'multipv', label: '候选着法数(MultiPV)', min: 1, max: 10, step: 1 },
     { key: 'movetime', label: '每步思考(ms)', min: 50, max: 5000, step: 50 },
+    { key: 'clockInitialSeconds', label: '棋钟初始(秒)', min: 30, max: 3600, step: 30, help: '超时判负' },
+    { key: 'clockIncrementSeconds', label: '每步增秒', min: 0, max: 60, step: 1 },
   ],
   diagnose: [
     { key: 'depth', label: '诊断深度', min: 1, max: 30, step: 1 },

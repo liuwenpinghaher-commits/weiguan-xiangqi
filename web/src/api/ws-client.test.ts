@@ -56,7 +56,7 @@ describe('ws-client 队列与 dead 标志', () => {
     expect(statuses[statuses.length - 1]).toBe('closed')
 
     // dead 之后 send 应被丢弃:不进任何 ws.send,且打印 warn。
-    client.send({ type: 'move', move: 'h2e2' })
+    client.send({ type: 'move', gameId: 1, move: 'h2e2' })
     const totalSent = FakeWS.instances.reduce((n, w) => n + w.sent.length, 0)
     expect(totalSent).toBe(0)
     expect(warn).toHaveBeenCalled()
@@ -69,12 +69,12 @@ describe('ws-client 队列与 dead 标志', () => {
 
     const ws = FakeWS.instances[0]
     ws.open()
-    client.send({ a: 1 })
+    client.send({ type: 'pause', gameId: 1 })
     expect(ws.sent).toHaveLength(1)
 
     client.close()
     ws.readyState = 3
-    client.send({ b: 2 })
+    client.send({ type: 'resume', gameId: 1 })
     expect(ws.sent).toHaveLength(1) // 未新增
     expect(warn).toHaveBeenCalled()
   })

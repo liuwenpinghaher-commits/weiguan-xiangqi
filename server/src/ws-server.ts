@@ -30,7 +30,6 @@ import { SurrealMemoryStore } from './memory/surreal-memory-store.js'
 import { FakeMemoryStore } from './memory/fake-memory-store.js'
 import { DashscopeEmbedding } from './llm/dashscope-embedding.js'
 import { reflect } from './memory/reflection.js'
-import { spectators } from './personas/personas.js'
 import { describeMoveZh } from './rules/describe-move.js'
 import { MessagesRepo } from './store/messages-repo.js'
 import { serializeGame, validateImport } from './store/game-export.js'
@@ -49,7 +48,7 @@ export async function buildServer(opts: {
   enginePath?: string
   /** 若传入则直接使用,跳过 enginePath 构造(传 null 表示强制无引擎) */
   engine?: EngineLike | null
-  /** 若传入则替换默认 LLM(FakeLLM/VolcanoLLM) */
+  /** 若传入则替换默认 LLM(测试注入 FakeLLM) */
   llm?: LLMProvider
   /** 若传入则直接使用,跳过 DASHSCOPE key 检查与 DashscopeAsr 构造(测试注入 FakeAsr) */
   asr?: import('./voice/asr.js').AsrProvider
@@ -67,9 +66,11 @@ export async function buildServer(opts: {
     // 显式传入(含 null):直接使用
     engine = opts.engine ?? null
   } else {
-    // 未注入:按原始逻辑按路径构造
-    engine = opts.enginePath && existsSync(opts.enginePath)
-      ? new UciEngine(spawnTransport(opts.enginePath))
+    // 未注入:env PIKAFISH_PATH 优先,回退控制台配置的 engine.pikafishPath
+    // (原来 DB 值是 100% 死配置——写了但 spawn 永不读;现在重启后生效,控制台提示才成立)
+    const enginePath = opts.enginePath ?? cfg.getEngineParams().pikafishPath ?? undefined
+    engine = enginePath && existsSync(enginePath)
+      ? new UciEngine(spawnTransport(enginePath))
       : null
     if (!engine) {
       console.warn('象棋引擎未配置或路径不存在:对弈/诊断功能不可用,聊天与复盘仍可用')
@@ -100,7 +101,18 @@ export async function buildServer(opts: {
   // 记忆:优先 SurrealDB 语义记忆;连接/配置失败则降级为内存 store(聊天/反思照常,只是不持久、不语义)
   let mem: import('./memory/store.js').MemoryStore
   try {
-    const embedding = new DashscopeEmbedding()
+    // 嵌入凭据跟随控制台 llm 段热更(原为 boot 期锁死 env,三套凭据行为不一致)
+    let innerEmbedding = new DashscopeEmbedding()
+    const prevOnLlmChange = cfg.onLlmChange
+    cfg.onLlmChange = () => {
+      prevOnLlmChange?.()
+      const l = cfg.getLlm()
+      try { innerEmbedding = new DashscopeEmbedding(undefined, undefined, undefined, l.apiKey ?? undefined, l.baseURL ?? undefined) } catch { /* 缺凭据时保留旧实例 */ }
+    }
+    const embedding = {
+      embed: (texts: string[]) => innerEmbedding.embed(texts),
+      get dimension() { return innerEmbedding.dimension },
+    }
     const surreal = new SurrealMemoryStore({
       url: process.env.SURREAL_URL ?? 'ws://127.0.0.1:8000',
       namespace: process.env.SURREAL_NS ?? 'weiguan',
@@ -202,7 +214,9 @@ export async function buildServer(opts: {
     }
 
     // 等待所有旁观者反思完成;任一失败则整体抛出 → reflectGame 不标记 reflectedGames(下次重试)。
-    await Promise.all(spectators().map(p =>
+    // 名册走运行时配置(尊重控制台 enabled 开关):禁用角色不参与反思,
+    // 修"禁用任一角色 → getPersona 抛错 → 反思整体失败无限重跑"
+    await Promise.all(cfg.personas().filter(p => !p.isPlayer).map(p =>
       reflect({
         store: mem, llm, personaId: p.id, gameId, now: () => Date.now(), playerSummary,
         getPersona: (id) => cfg.getPersona(id),
@@ -235,13 +249,30 @@ export async function buildServer(opts: {
         roll: Math.random(),
         prob: cfg.getChat().idleProb,
       })) {
-        void chat.onStimulus({ kind: 'idle', gameId: lastGameId!, scoreCp: null, tension: 0.55 })
+        void chat.onStimulus({ kind: 'idle', gameId: lastGameId!, scoreCp: null, tension: cfg.getChat().idleTension })
       }
       scheduleIdle()
     }, c.idleIntervalMs)
     idleTimer.unref?.()
   }
   scheduleIdle()
+
+  // 时钟超时清扫器:每 2s 检查在途走钟,归零 → 判负 + 广播 + 走终局收尾链
+  // (flag-fall 不能只靠"下一手走子时检查"——超时方可能永远不走那手棋)
+  const clockSweeper = setInterval(() => {
+    for (const gid of session.activeClockGameIds()) {
+      if (pausedGames.has(gid)) continue
+      const timedOut = session.checkTimeout(gid)
+      if (!timedOut) continue
+      const frame = JSON.stringify({ type: 'update', aiMove: null, ...timedOut, clockState: null })
+      for (const s of sockets) {
+        try { s.send(frame) } catch { /* 单连接发送失败忽略 */ }
+      }
+      cleanupFinishedGame(gid)
+      void reflectGame(gid).catch(() => {})
+    }
+  }, 2000)
+  clockSweeper.unref?.()
 
   const analysis = new AnalysisRepo(db)
   const training = new TrainingRepo(db)
@@ -278,6 +309,19 @@ export async function buildServer(opts: {
 
   const app = Fastify({ logger: true })
 
+  // 统一错误体:框架级 413/415 给干净中文(默认体会透出 FST_ERR_* 内部码),
+  // 未被路由捕获的 5xx 一律不透传内部信息(与 /tts、/asr 的脱敏口径一致)。
+  app.setErrorHandler((err, req, reply) => {
+    const e = err as { statusCode?: number; message?: string }
+    const sc = typeof e.statusCode === 'number' && e.statusCode >= 400 ? e.statusCode : 500
+    const msg = sc === 413 ? '请求体过大'
+      : sc === 415 ? '内容类型不支持'
+      : sc >= 500 ? '服务器内部错误'
+      : (e.message ?? '请求错误')
+    if (sc >= 500) req.log.error(err, '未捕获错误')
+    reply.code(sc).send({ error: msg })
+  })
+
   // ── moss-tts-nano 进程管理 ──────────────────────────────────────────────────
   let mossProcess: ChildProcess | null = null
   // 重启定时器句柄与关闭标志:防止关闭后 exit handler 仍调度重启,泄漏定时器/复活子进程
@@ -289,13 +333,18 @@ export async function buildServer(opts: {
     const ttsCfg = cfg.getTts()
     const url = new URL(ttsCfg.mossNanoUrl)
     const port = url.port || '18083'
+    // 二进制路径:优先 MOSS_TTS_BIN(指向 venv 内的 moss-tts-nano),回退 PATH 查找。
+    // moss-tts-nano 装在独立 Python venv 里,通常不在全局 PATH,故用 env 显式指定。
+    const mossBin = process.env.MOSS_TTS_BIN || 'moss-tts-nano'
+    // 推理设备:默认 cpu;有 CUDA 的机器可设 MOSS_TTS_DEVICE=auto(上游仅支持 cpu/auto,auto=有 cuda 用 cuda)
+    const mossDevice = process.env.MOSS_TTS_DEVICE || 'cpu'
     try {
-      mossProcess = spawn('moss-tts-nano', ['serve', '--device', 'cpu', '--port', port], {
+      mossProcess = spawn(mossBin, ['serve', '--device', mossDevice, '--port', port], {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
       })
     } catch {
-      app.log.warn('moss-tts-nano 未安装或不在 PATH 中,TTS 功能不可用')
+      app.log.warn(`moss-tts-nano 未安装或不在 PATH 中(MOSS_TTS_BIN=${process.env.MOSS_TTS_BIN ?? '未设置'}),TTS 功能不可用`)
       mossProcess = null
       return
     }
@@ -347,6 +396,7 @@ export async function buildServer(opts: {
   // 优雅关闭:关闭 Fastify 时同步释放引擎子进程与 SQLite WAL
   app.addHook('onClose', async () => {
     if (idleTimer) clearTimeout(idleTimer)
+    clearInterval(clockSweeper)
     stopMossTts()
     try { engine?.close?.() } catch {}
     try { db.close() } catch {}
@@ -401,24 +451,30 @@ export async function buildServer(opts: {
       try {
         if (msg.type === 'new') {
           const humanSide = msg.humanSide as Side
-          const gameId = session.newGame({
-            mode: msg.mode as GameMode,
-            humanSide,
-            startFen: (msg.startFen as string | undefined) ?? 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1',
-          })
+          const startFen = (msg.startFen as string | undefined) ?? 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
+          // 执黑需要 AI 先手,无引擎时是死局:开局前明确拒绝而非留下不可玩的残局
+          if (humanSide === 'black' && !engine) {
+            socket.send(JSON.stringify({ type: 'error', message: '未配置象棋引擎,无法执黑对弈(执红可落子但无 AI 应手)' }))
+            return
+          }
+          const gameId = session.newGame({ mode: msg.mode as GameMode, humanSide, startFen })
           lastGameId = gameId
           socketGameId = gameId  // 记录该连接当前局 id,供 close 时触发中途反思
           // 开局即带的观众席开关(默认开;前端可在 new 里传 spectators:false 表示开局就关)
           if (msg.spectators === false) spectatorsOffGames.add(gameId)
           socket.send(JSON.stringify({ type: 'started', gameId }))
-          // 若玩家执黑且引擎可用，AI（红方）先手走一步
-          if (humanSide === 'black' && engine) {
-            try {
-              const aiResult = await session.aiFirstMove(gameId)
-              const clockState = session.getClockState(gameId)
-              socket.send(JSON.stringify({ type: 'update', ...aiResult, clockState }))
-            } catch (e) {
-              socket.send(JSON.stringify({ type: 'error', message: `AI先手失败: ${(e as Error).message}` }))
+          // AI 先手条件:引擎可用,且当前局面轮到的不是人类(标准开局执黑=红方 AI 先走;
+          // 专项陪练的中局 FEN 若轮到人走,不触发——修"执黑陪练必弹伪错误")
+          if (engine && session.getFen(gameId) && msg.humanSide !== undefined) {
+            const sideToMove = session.getFen(gameId).split(' ')[1] === 'b' ? 'black' : 'red'
+            if (sideToMove !== humanSide) {
+              try {
+                const aiResult = await session.aiFirstMove(gameId)
+                const clockState = session.getClockState(gameId)
+                socket.send(JSON.stringify({ type: 'update', ...aiResult, clockState }))
+              } catch (e) {
+                socket.send(JSON.stringify({ type: 'error', message: `AI先手失败: ${(e as Error).message}` }))
+              }
             }
           }
         } else if (msg.type === 'move') {
@@ -452,7 +508,7 @@ export async function buildServer(opts: {
           // 玩家发言 → human_said 刺激,高张力必有人接
           const gid = msg.gameId
           if (typeof gid !== 'number') return
-          if (pausedGames.has(gid) || spectatorsOffGames.has(gid)) return // 观众席关了就没人接,直接忽略
+          if (pausedGames.has(gid)) return // 整局暂停:前端已禁输入,这里兜底
           const text = String(msg.text ?? '').slice(0, 500) // 限长,防超大字符串写库
           if (text.trim() === '') return // 空白发言:不落库、不广播、不触发刺激
           const ts = new Date().toISOString()
@@ -469,13 +525,23 @@ export async function buildServer(opts: {
             try { s.send(echo) } catch { /* 单连接发送失败忽略 */ }
           }
           lastChatAt = Date.now()
-          void chat.onStimulus({ kind: 'human_said', gameId: gid, scoreCp: null, humanText: text, tension: 0.9 })
+          // 观众席关闭 = 观棋者闭嘴(不产生 AI 回应刺激),但玩家自己的话照常回显+落库
+          const cfg2 = cfg.getChat()
+          if (!spectatorsOffGames.has(gid)) {
+            void chat.onStimulus({ kind: 'human_said', gameId: gid, scoreCp: null, humanText: text, tension: cfg2.humanSaidTension })
+          }
         } else if (msg.type === 'pause') {
           const gid = msg.gameId
-          if (typeof gid === 'number') pausedGames.add(gid)
+          if (typeof gid === 'number') {
+            pausedGames.add(gid)
+            session.pauseClock(gid)  // 暂停真停钟:不再把暂停的墙钟时间扣给玩家
+          }
         } else if (msg.type === 'resume') {
           const gid = msg.gameId
-          if (typeof gid === 'number') pausedGames.delete(gid)
+          if (typeof gid === 'number') {
+            pausedGames.delete(gid)
+            session.resumeClock(gid)
+          }
         } else if (msg.type === 'spectators') {
           // 开/关观众席:关闭则停生成弹幕/语音(服务端不再产生 chat 刺激),开启则恢复
           const gid = msg.gameId
@@ -508,9 +574,9 @@ export async function buildServer(opts: {
           const result = session.undoLastMoves(gid)
           if (result.success) {
             const clockState = session.getClockState(gid)
-            socket.send(JSON.stringify({ type: 'undo_result', gameId: gid, success: true, fen: result.fen, clockState }))
+            socket.send(JSON.stringify({ type: 'undo_result', gameId: gid, success: true, fen: result.fen, clockState, undoRemaining: result.undoRemaining }))
           } else {
-            socket.send(JSON.stringify({ type: 'undo_result', gameId: gid, success: false }))
+            socket.send(JSON.stringify({ type: 'undo_result', gameId: gid, success: false, undoRemaining: result.undoRemaining }))
           }
         } else {
           socket.send(JSON.stringify({ type: 'error', message: `unknown message type: ${msg.type}` }))
@@ -523,6 +589,7 @@ export async function buildServer(opts: {
   })
 
   // HTTP 只读路由 /games/:id（供复盘页）
+  // ?include=annotations 时附带诊断标注(与 /games/:id/diagnosis 合一的数据源)
   app.get('/games/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
     const numId = parseInt(id, 10)
@@ -535,6 +602,10 @@ export async function buildServer(opts: {
     }
     const moves = repo.getMoves(numId)
     const msgs = messages.getMessages(numId)
+    const include = String((req.query as { include?: string }).include ?? '')
+    if (include.split(',').includes('annotations')) {
+      return { game, moves, messages: msgs, annotations: analysis.getAnnotations(numId) }
+    }
     return { game, moves, messages: msgs }
   })
 
@@ -576,9 +647,12 @@ export async function buildServer(opts: {
     if (!Number.isInteger(id)) return reply.code(400).send({ error: 'invalid id' })
     const game = repo.getGame(id)
     if (!game) return reply.code(404).send({ error: 'not found' })
+    // 已答对的手不再出题(原来练对了下次还出同一题)
+    const solved = training.correctPlies(id)
+    const annotations = analysis.getAnnotations(id).filter(a => !solved.has(a.ply))
     const drills = generateDrills({
       gameId: id, humanSide: game.humanSide, startFen: game.startFen,
-      moves: repo.getMoves(id), annotations: analysis.getAnnotations(id),
+      moves: repo.getMoves(id), annotations,
     })
     const stats = training.drillStats(id)
     return { drills, stats }
@@ -620,8 +694,11 @@ export async function buildServer(opts: {
   })
 
   // 历史对比(已诊断局按时间对半:前半 vs 后半) + LLM 自然语言成长报告
-  app.get('/compare', async () => {
-    const all = analysis.listGrowthMetrics()
+  app.get('/compare', async (req) => {
+    // ?side=red|black 只比该执方的局(红黑不再混池);排序已改按对局真实开始时间
+    const q = req.query as { side?: string }
+    const side = q.side === 'red' || q.side === 'black' ? q.side : undefined
+    const all = analysis.listGrowthMetrics(side)
     const mid = Math.floor(all.length / 2)
     const cmp = compareWindows(all.slice(0, mid), all.slice(mid))
     const report = await growthReport(llm, cmp)
@@ -703,6 +780,7 @@ export async function buildServer(opts: {
     try {
       const body = req.body as {
         startFen?: string; moves?: unknown; mode?: string; result?: string
+        humanSide?: string; createdAt?: string; scoreCps?: unknown[]; byAis?: unknown[]
       }
       if (!Array.isArray(body?.moves)) {
         return reply.code(400).send({ error: 'moves 必须为字符串数组' })
@@ -712,20 +790,25 @@ export async function buildServer(opts: {
         moves: body.moves as string[],
         mode: body.mode,
         result: body.result,
+        humanSide: body.humanSide,
+        createdAt: body.createdAt,
+        scoreCps: body.scoreCps,
+        byAis: body.byAis,
       })
     } catch (e) {
       return reply.code(400).send({ error: (e as Error).message })
     }
 
-    const { startFen, moves, mode, result } = validated
+    const { startFen, moves, mode, result, humanSide, createdAt, scoreCps, byAis } = validated
     const now = new Date().toISOString()
 
-    // createGame：humanSide 无法从导出数据还原（本系统简化：默认 red）
-    const gameId = repo.createGame({ mode: mode as GameMode, humanSide: 'red', startFen, startedAt: now })
+    // 保真导入:humanSide/原始时间戳/逐手评分/AI 标记全部还原(旧格式缺省 red/导入时刻/null/false)
+    const gameId = repo.createGame({ mode: mode as GameMode, humanSide, startFen, startedAt: createdAt ?? now })
 
     // 逐手重放写入 moves 表；side 从 startFen 起算交替
     let pos = Position.fromFen(startFen)
-    for (const move of moves) {
+    for (let i = 0; i < moves.length; i++) {
+      const move = moves[i]
       const side = pos.sideToMove()
       const nextPos = pos.applyMove(move)
       repo.addMove({
@@ -733,8 +816,8 @@ export async function buildServer(opts: {
         side,
         move,
         fenAfter: nextPos.fen(),
-        scoreCp: null,
-        byAi: false,
+        scoreCp: scoreCps[i],
+        byAi: byAis[i],
       })
       pos = nextPos
     }

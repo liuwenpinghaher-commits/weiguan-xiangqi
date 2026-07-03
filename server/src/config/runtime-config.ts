@@ -49,13 +49,13 @@ export class RuntimeConfig {
     if (section === 'llm' || section === 'tts') this.onLlmChange?.()
   }
 
-  /** 懒播种:persona_config 为空时用 PERSONAS + 默认音色映射写入 */
+  /** 懒播种:persona_config 为空时用 PERSONAS + 各角色专属默认音色写入 */
   private ensureSeeded(): void {
     if (!this.repo.personaConfigEmpty()) return
     const seed: PersonaConfig[] = PERSONAS.map(p => ({
       id: p.id, name: p.name, isPlayer: p.isPlayer, skill: p.skill,
       background: p.background, voiceStyle: p.voice, leaning: p.leaning,
-      ttsVoice: DEFAULT_REFERENCE_AUDIO, enabled: true,
+      ttsVoice: DEFAULT_VOICE_PROFILES[p.id]?.referenceAudio ?? DEFAULT_REFERENCE_AUDIO, enabled: true,
     }))
     this.repo.seedPersonas(seed, this.now())
   }
@@ -99,7 +99,7 @@ export class RuntimeConfig {
     if (p) this.repo.seedPersonas([{
       id: p.id, name: p.name, isPlayer: p.isPlayer, skill: p.skill,
       background: p.background, voiceStyle: p.voice, leaning: p.leaning,
-      ttsVoice: DEFAULT_REFERENCE_AUDIO, enabled: true,
+      ttsVoice: DEFAULT_VOICE_PROFILES[p.id]?.referenceAudio ?? DEFAULT_REFERENCE_AUDIO, enabled: true,
     }], this.now())
   }
 

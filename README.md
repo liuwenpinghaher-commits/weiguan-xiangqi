@@ -10,8 +10,8 @@
 |------|------|
 | 后端 | Node.js + Fastify + `@fastify/websocket`、SQLite (`better-sqlite3`)、Pikafish（UCI 象棋引擎，可选）、`elephantops`（规则库） |
 | 前端 | Vite + React 18 + TypeScript、`react-xiangqiboard`（棋盘组件）、recharts（图表） |
-| LLM | 火山方舟 / 豆包（`doubao-seed-2.0-pro`，可选；无 key 时 FakeLLM 占位） |
-| 语音 | 浏览器 Web Speech API（TTS + STT，零外部依赖） |
+| LLM | 阿里云百炼 DashScope（`qwen-plus-latest`,控制台可换模型/热重载;无 key 时 FakeLLM 占位） |
+| 语音 | 服务端 TTS：本地 `moss-tts-nano`（见 [docs/moss-tts-local-setup.md](docs/moss-tts-local-setup.md)，不可用时回退浏览器 Web Speech）；服务端 STT：百炼 `qwen3-asr-flash`；浏览器 Web Speech 作兜底 |
 
 ---
 
@@ -35,10 +35,10 @@
 │       ├── analysis/       # 逐手诊断（cploss, elo, phase, tags, diagnose-game）
 │       ├── training/       # 训练题生成（generate-drills）
 │       ├── report/         # 历史对比（compare）
-│       ├── memory/         # 角色长期记忆（persona-memory-repo, reflection）
+│       ├── memory/         # 角色语义记忆(SurrealDB store + reflection + judge)
 │       ├── chat/           # 聊天引擎（chat-engine, speaker-select, tempo）
 │       ├── personas/       # 角色定义与差异化引擎读数（personas, engine-view）
-│       ├── llm/            # LLM 抽象（volcano, fake, provider）
+│       ├── llm/            # LLM 抽象（dashscope, mutable, embedding, fake）
 │       ├── ws-server.ts    # HTTP+WebSocket 路由总入口
 │       └── index.ts        # 服务启动（引擎/LLM 均为可选）
 ├── web/                # 前端
@@ -85,14 +85,13 @@
    > 注意：Pikafish 采用 GPL v3 许可证。使用前请核对各平台二进制可用性。
    > **无引擎时降级：** 对弈/诊断功能不可用，聊天与复盘仍可用。
 
-3. **火山方舟 LLM key（可选，无 key 仍可对弈和诊断）**
+3. **百炼 DASHSCOPE_API_KEY（可选，无 key 仍可对弈和诊断）**
 
    配置 `server/.env`（见 `server/.env.example`，勿提交）：
 
    ```
-   ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
-   ARK_API_KEY=你的火山 key
-   ARK_MODEL=doubao-seed-2.0-pro
+   DASHSCOPE_API_KEY=你的百炼 key
+   DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
    ```
 
    > **无 key 时降级：** 观棋聊天功能不可用（FakeLLM 占位），对弈/诊断照常运行。
@@ -316,7 +315,7 @@ node --env-file=server/.env --import tsx server/scripts/smoke-llm.ts
 - **历史对比**：规则版文字摘要；LLM 措辞接口（`ReportProvider`）留给后续扩展。
 - **浏览器语音**：TTS 音色依赖系统，Chrome/Edge 最佳；STT 为一次性听写，非持续聆听；Firefox 基本无 STT。
 - **Pikafish 强度档**：`UCI_Elo`/`LimitStrength` 暂未下发，拟人模式靠 MultiPV 浅采样近似强度差异。
-- **专项陪练**：裁剪到 M2.5，当前版本不含（计划中）。
+- **训练反哺**：训练正确率已用于排除已答对题目,但暂不反哺弱点画像权重(计划中)。
 - **导演心流 EDDA**：悔棋频率/参与度趋势等字段尚未采集；当前仅连败时静态下调评分带。
 
 ---
@@ -353,8 +352,7 @@ ARK_MODEL=doubao-seed-2.0-pro
 
 ---
 
-## M3b：语音（浏览器原生）
+## M3b：语音
 
-见功能概览。无额外凭证，浏览器内置 Web Speech API。
-
-**火山云 TTS 升级路径（有语音凭证再做）：** 详见 `docs/superpowers/plans/2026-06-20-m3b-voice.md`。
+服务端 TTS 走本地 moss-tts-nano(见 docs/moss-tts-local-setup.md),不可用时回退浏览器 Web Speech;
+STT 走百炼 qwen3-asr-flash(POST /asr),浏览器 Web Speech 兜底。

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { setMuted, isMuted, isTtsSupported, hasZhVoice, cancelSpeech } from '../voice/browser-tts.js'
-import { speakServer } from '../voice/server-tts.js'
+import { speakServer, stopVoice } from '../voice/server-tts.js'
 import { useSpeechInput } from '../voice/use-speech-input.js'
 import { color, font } from '../ui/theme.js'
 
@@ -130,6 +130,8 @@ export function ChatPanel({ lines, onSay, enabled = true }: Props) {
     const n = !muted
     setMuted(n)       // browser-tts 内部已持久化 localStorage
     setMutedState(n)
+    // 静音硬停:清掉服务端 TTS 的当前播放与预合成队列(原来只停浏览器兜底,已入队的 wav 会继续播完)
+    if (n) stopVoice()
   }
 
   // cancelSpeech 在 PlayPage 重开局时使用，此处只引入不调用

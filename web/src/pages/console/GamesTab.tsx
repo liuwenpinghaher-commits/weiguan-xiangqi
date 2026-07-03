@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { cardStyle, ErrorBanner, darkThStyle, darkTdStyle } from '../../ui/PageShell.js'
 import { color, space, fontSize, btn } from '../../ui/theme.js'
-import { listGames, getGame, deleteGame, type GameRow, type GameDetail } from '../../api/admin.js'
+import { listGames, getGame, deleteGame, importGame, type GameRow, type GameDetail } from '../../api/admin.js'
 
 export function GamesTab() {
   const [rows, setRows] = useState<GameRow[]>([])
@@ -15,6 +15,16 @@ export function GamesTab() {
   useEffect(() => { load() }, [load])
 
   const open = async (id: number) => { try { setDetail(await getGame(id)) } catch (e) { setErr('详情加载失败:' + (e as Error).message) } }
+  const doImport = async (file: File) => {
+    setErr(null)
+    try {
+      const data = JSON.parse(await file.text())
+      const { gameId } = await importGame(data)
+      window.alert(`导入成功:对局 #${gameId}(可到分析页跑诊断以进入成长统计)`)
+      load()
+    } catch (e) { setErr('导入失败:' + (e as Error).message) }
+  }
+
   const del = async (id: number) => {
     if (!window.confirm(`删除对局 #${id} 及其全部走法/消息?`)) return
     try { await deleteGame(id); if (detail?.game.id === id) setDetail(null); load() } catch (e) { setErr('删除失败:' + (e as Error).message) }
@@ -23,6 +33,13 @@ export function GamesTab() {
   return (
     <div>
       {err && <ErrorBanner msg={err} />}
+      <div style={{ marginBottom: space.md }}>
+        <label style={{ ...btn('secondary'), display: 'inline-block', cursor: 'pointer' }}>
+          导入棋谱 JSON
+          <input type="file" accept="application/json,.json" style={{ display: 'none' }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) void doImport(f); e.target.value = '' }} />
+        </label>
+      </div>
       <div style={cardStyle}>
         {rows.length === 0 ? <p style={{ color: color.textFaint }}>(无对局)</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: fontSize.sm }}>

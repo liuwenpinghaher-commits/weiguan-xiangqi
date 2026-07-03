@@ -23,6 +23,14 @@ export interface GameExport {
   mode: string
   /** 创建时间（ISO 8601） */
   createdAt: string
+  /** 人类执方(缺省视为 red,兼容旧导出) */
+  humanSide?: 'red' | 'black'
+  /** 结束时间(ISO 8601,进行中为 null) */
+  endedAt?: string | null
+  /** 每手引擎评分(与 moves 等长;人手/无评分为 null) */
+  scoreCps?: (number | null)[]
+  /** 每手是否 AI 所走(与 moves 等长) */
+  byAis?: boolean[]
 }
 
 // ─── serializeGame ──────────────────────────────────────────
@@ -52,6 +60,10 @@ export function serializeGame(game: GameRow, moves: MoveRow[]): GameExport {
     result: game.result ?? null,
     mode: game.mode,
     createdAt: game.startedAt,
+    humanSide: game.humanSide,
+    endedAt: game.endedAt ?? null,
+    scoreCps: moves.map(m => m.scoreCp ?? null),
+    byAis: moves.map(m => m.byAi),
   }
 }
 
@@ -66,20 +78,50 @@ const VALID_RESULTS = new Set<string>(['red', 'black', 'draw'])
  * - result 只接受 red/black/draw/null（其他 throw）
  * - 逐手用 Position.applyMove 重放校验；非法手 throw（含第几手）
  */
+const VALID_MODES = new Set<string>(['coach', 'humanlike'])
+const VALID_SIDES = new Set<string>(['red', 'black'])
+
 export function validateImport(input: {
   startFen?: string
   moves: string[]
   mode?: string
   result?: string
+  humanSide?: string
+  createdAt?: string
+  scoreCps?: unknown[]
+  byAis?: unknown[]
 }): {
   startFen: string
   moves: string[]
   mode: string
   result: 'red' | 'black' | 'draw' | null
+  humanSide: 'red' | 'black'
+  createdAt: string | null
+  scoreCps: (number | null)[]
+  byAis: boolean[]
 } {
   const startFen = input.startFen ?? START_FEN
-  const mode = input.mode ?? 'coach'
   const moves = input.moves
+
+  // mode 枚举校验(原任意串静默当 coach → 现在非法值明确报错)
+  const mode = input.mode ?? 'coach'
+  if (!VALID_MODES.has(mode)) throw new Error(`无效的 mode 值 "${mode}",只允许 coach/humanlike`)
+
+  // humanSide:缺省 red(兼容旧导出),非法值报错——修"执黑局导入变执红"
+  const humanSide = (input.humanSide ?? 'red') as 'red' | 'black'
+  if (!VALID_SIDES.has(humanSide)) throw new Error(`无效的 humanSide 值 "${input.humanSide}",只允许 red/black`)
+
+  // createdAt:合法 ISO 时间则保留原始时间戳(不再用导入时刻覆盖)
+  const createdAt = typeof input.createdAt === 'string' && !Number.isNaN(Date.parse(input.createdAt))
+    ? input.createdAt : null
+
+  // 逐手评分/AI 标记:与 moves 等长才采用,否则整列丢弃(容错旧格式)
+  const scoreCps: (number | null)[] = Array.isArray(input.scoreCps) && input.scoreCps.length === moves.length
+    ? input.scoreCps.map(v => (typeof v === 'number' && Number.isFinite(v) ? v : null))
+    : moves.map(() => null)
+  const byAis: boolean[] = Array.isArray(input.byAis) && input.byAis.length === moves.length
+    ? input.byAis.map(v => v === true)
+    : moves.map(() => false)
 
   // 校验 result
   const rawResult = input.result
@@ -103,5 +145,5 @@ export function validateImport(input: {
     }
   }
 
-  return { startFen, moves, mode, result }
+  return { startFen, moves, mode, result, humanSide, createdAt, scoreCps, byAis }
 }

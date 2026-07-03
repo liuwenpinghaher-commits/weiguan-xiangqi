@@ -87,8 +87,8 @@ export class ChatEngine {
 
     // 老黑(AI 棋手)参与:自己刚走→高概率自评;其余有看头时→中概率作为当事人插话
     if (stim.byPlayerPersona) {
-      if (this.deps.rng() < 0.6) speakers.push('player')
-    } else if (this.deps.rng() < 0.3 && (stim.moveZh != null || stim.kind === 'human_said' || stim.kind === 'idle')) {
+      if (this.deps.rng() < chat.playerSelfProb) speakers.push('player')
+    } else if (this.deps.rng() < chat.playerChimeProb && (stim.moveZh != null || stim.kind === 'human_said' || stim.kind === 'idle')) {
       speakers.push('player')
     }
 
@@ -108,7 +108,7 @@ export class ChatEngine {
 
         const plan = await this.plan(persona, stim, context)
         const text = (await this.deps.llm.chat(plan.messages, {
-          disableThinking: true, maxTokens: 70,
+          maxTokens: 70,
         })).trim()
         if (!text) continue
 
@@ -197,7 +197,10 @@ export class ChatEngine {
       ? context.map(c => `- ${c.name}:${c.text}`).join('\n')
       : '(刚开局,还没人说话)'
 
-    const sys = `你是「${p.name}」。${p.background}\n说话像:${p.voice} 立场:${p.leaning}\n`
+    // 阶段词进 prompt:开/中/残局的谈资口味不同(残局理路/开局套路)——消费 Stimulus.phase
+    const phaseWord = stim.phase === 'opening' ? '开局' : stim.phase === 'endgame' ? '残局' : stim.phase === 'midgame' ? '中盘' : ''
+    const phaseHint = phaseWord ? `现在是${phaseWord}阶段。` : ''
+    const sys = `你是「${p.name}」。${p.background}\n说话像:${p.voice} 立场:${p.leaning}\n${phaseHint}`
       + `你蹲在棋摊边看棋,是懂棋的人。主要谈眼前这盘——这步好不好、为什么、对方该怎么应、有什么威胁、什么棋理路数;也会互相拌嘴,但别脱离这盘棋瞎贫。\n`
       + `- 口语、随意,别像电视解说;少用感叹号,只有真出彩或真离谱才激动。\n`
       + `- 长短不一:有时俩字("软了""稳"),有时半句,偶尔一整句把道理说透。别每句一个调。\n`

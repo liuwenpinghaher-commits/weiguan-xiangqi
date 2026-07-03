@@ -397,7 +397,7 @@ describe('ws-server 集成测试', () => {
     expect(chats.some((m) => m.personaId === 'human' && m.text === '继续了')).toBe(true)
   }, 10_000)
 
-  it('WS /play:关闭观众席后 say 不产生任何 chat 广播', async () => {
+  it('WS /play:关闭观众席后 say 仍回显玩家自己的话,但无角色回应', async () => {
     app = await makeApp()
     await app.listen({ port: 0, host: '127.0.0.1' })
     const addr = app.server.address()
@@ -419,7 +419,9 @@ describe('ws-server 集成测试', () => {
     })
     ws.send(JSON.stringify({ type: 'say', gameId, text: '观众席关了说话' }))
     await new Promise((r) => setTimeout(r, 600))
-    expect(chats).toHaveLength(0)
+    // 玩家自己的话照常回显+落库(不再被吞),但观棋者不接话
+    expect(chats.filter((m) => m.personaId === 'human')).toHaveLength(1)
+    expect(chats.filter((m) => m.personaId !== 'human')).toHaveLength(0)
   }, 10_000)
 
   it('WS /play:关闭再开启观众席,say 恢复回显', async () => {

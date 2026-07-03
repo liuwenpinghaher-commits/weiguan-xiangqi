@@ -7,3 +7,6 @@ dist
 .env
 /engine/
 .codegraph
+
+# 第三方 TTS 引擎源码包(引擎解压在已忽略的 /engine/;避免 14MB 二进制进 git 历史)
+MOSS-TTS-Nano-main.zip

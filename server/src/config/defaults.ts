@@ -1,6 +1,14 @@
 export interface ChatCfg {
   minSilenceMs: number; maxPerMin: number; speakThreshold: number; jitterWidth: number
   idleProb: number; idleIntervalMs: number; reactProb: number; lenShortP: number; lenLongP: number
+  /** 玩家发言刺激的张力(原硬编码 0.9) */
+  humanSaidTension: number
+  /** 冷场刺激的张力(原硬编码 0.55) */
+  idleTension: number
+  /** 老黑(player 角色)对自己走子的自评概率(原硬编码 0.6) */
+  playerSelfProb: number
+  /** 老黑作为当事人对他人刺激的插话概率(原硬编码 0.3) */
+  playerChimeProb: number
 }
 export interface DirectorModeCfg { maxDropCp: number; targetBand: { low: number; high: number }; strength: number }
 export interface DirectorCfg { coach: DirectorModeCfg; humanlike: DirectorModeCfg }
@@ -20,6 +28,7 @@ export const DEFAULTS = {
   chat: {
     minSilenceMs: 4000, maxPerMin: 12, speakThreshold: 0.6, jitterWidth: 0.4,
     idleProb: 0.35, idleIntervalMs: 20000, reactProb: 0.3, lenShortP: 0.55, lenLongP: 0.85,
+    humanSaidTension: 0.9, idleTension: 0.55, playerSelfProb: 0.6, playerChimeProb: 0.3,
   } as ChatCfg,
   director: {
     coach: { maxDropCp: 320, targetBand: { low: -50, high: 80 }, strength: 0.6 },

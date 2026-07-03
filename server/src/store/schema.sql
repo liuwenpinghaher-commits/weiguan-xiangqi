@@ -94,3 +94,7 @@ CREATE TABLE IF NOT EXISTS persona_config (
   enabled     INTEGER NOT NULL DEFAULT 1,
   updated_at  TEXT NOT NULL
 );
+
+-- 热路径索引:recentResults(每步 buildContext 必调)与 weaknessProfile 原为全表扫
+CREATE INDEX IF NOT EXISTS idx_games_result_ended ON games(result, ended_at);
+CREATE INDEX IF NOT EXISTS idx_annotations_side_theme ON move_annotations(side, theme);

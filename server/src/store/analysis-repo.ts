@@ -43,8 +43,12 @@ export class AnalysisRepo {
     return r ? mapGrowth(r) : null
   }
 
-  listGrowthMetrics(): GrowthMetric[] {
-    const rows = this.db.prepare('SELECT * FROM growth_metrics ORDER BY analyzed_at, game_id').all() as any[]
+  listGrowthMetrics(side?: 'red' | 'black'): GrowthMetric[] {
+    // 按对局开始时间排序(原按诊断时间:重诊断旧局会被误挪进"近期"窗口);可按执方过滤
+    const base = `SELECT gm.* FROM growth_metrics gm JOIN games g ON g.id = gm.game_id`
+    const rows = (side
+      ? this.db.prepare(`${base} WHERE gm.human_side = ? ORDER BY g.started_at, gm.game_id`).all(side)
+      : this.db.prepare(`${base} ORDER BY g.started_at, gm.game_id`).all()) as any[]
     return rows.map(mapGrowth)
   }
 

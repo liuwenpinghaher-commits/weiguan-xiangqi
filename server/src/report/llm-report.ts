@@ -29,7 +29,7 @@ export async function growthReport(
         { role: 'system', content: '你是专业的中国象棋教练，擅长用简洁中文点评棋手成长。' },
         { role: 'user', content: prompt },
       ],
-      { disableThinking: true, maxTokens: 300, temperature: 0.7 },
+      { maxTokens: 300, temperature: 0.7 },
     )
 
     const text = reply.trim()

@@ -26,6 +26,14 @@ export class TrainingRepo {
   }
 
   /** 单局训练进度:该局所有作答的总数和答对数 */
+  /** 该局已答对过的 ply 集合(出题时排除,答对的不再重复出) */
+  correctPlies(gameId: number): Set<number> {
+    const rows = this.db.prepare(
+      'SELECT DISTINCT ply FROM drill_attempts WHERE game_id = ? AND correct = 1'
+    ).all(gameId) as Array<{ ply: number }>
+    return new Set(rows.map(r => r.ply))
+  }
+
   drillStats(gameId: number): DrillStats {
     const row = this.db.prepare(
       `SELECT COUNT(*) AS total, COALESCE(SUM(correct), 0) AS correct
