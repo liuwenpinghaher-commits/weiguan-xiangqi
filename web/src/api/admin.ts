@@ -54,7 +54,7 @@ export const putPersona = (id: string, patch: Partial<Omit<PersonaConfig, 'id'>>
   jsend(`/admin/personas/${id}`, 'PUT', patch)
 export const resetPersona = (id: string): Promise<{ ok: true }> => jsend(`/admin/personas/${id}/reset`, 'POST')
 
-export const listMemory = (q: { personaId?: string; kind?: string; includeSuperseded?: boolean }): Promise<{ degraded: boolean; items: MemoryRecord[] }> => {
+export const listMemory = (q: { personaId?: string; kind?: string; includeSuperseded?: boolean }): Promise<{ degraded: boolean; degradedReason?: string | null; items: MemoryRecord[] }> => {
   const p = new URLSearchParams()
   if (q.personaId) p.set('personaId', q.personaId)
   if (q.kind) p.set('kind', q.kind)

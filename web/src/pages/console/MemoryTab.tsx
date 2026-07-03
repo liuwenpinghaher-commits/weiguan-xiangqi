@@ -9,11 +9,11 @@ export function MemoryTab({ personas }: { personas: PersonaConfig[] }) {
   const [rows, setRows] = useState<MemoryRecord[]>([])
   const [err, setErr] = useState<string | null>(null)
 
-  const [degraded, setDegraded] = useState(false)
+  const [degradedReason, setDegradedReason] = useState<string | null>(null)
   const load = useCallback(() => {
     setErr(null)
     listMemory({ personaId: personaId || undefined, kind: kind || undefined })
-      .then(r => { setRows(r.items); setDegraded(r.degraded) })
+      .then(r => { setRows(r.items); setDegradedReason(r.degraded ? (r.degradedReason ?? '记忆处于降级态') : null) })
       .catch(e => setErr('加载失败:' + (e as Error).message))
   }, [personaId, kind])
   useEffect(() => { load() }, [load])
@@ -36,7 +36,7 @@ export function MemoryTab({ personas }: { personas: PersonaConfig[] }) {
         </label>
       </div>
       {err && <ErrorBanner msg={err} />}
-      {degraded && <ErrorBanner msg="记忆处于降级态(SurrealDB 未连接):当前记忆仅存内存,重启即失,且无语义检索" />}
+      {degradedReason && <ErrorBanner msg={`记忆降级:${degradedReason}`} />}
       <div style={cardStyle}>
         {rows.length === 0 ? <p style={{ color: color.textFaint }}>(无记忆)</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: fontSize.sm }}>

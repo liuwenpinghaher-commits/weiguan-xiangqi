@@ -94,8 +94,8 @@ function registerMemoryRoutes(app: FastifyInstance, { mem }: AdminDeps): void {
     }
     if (q.kind) filter.kind = q.kind as MemoryKind
     if (q.includeSuperseded === 'true') filter.includeSuperseded = true
-    // degraded=true 表示记忆处于内存降级态(SurrealDB 不可用):不持久、无语义检索,前端应提示
-    return { degraded: mem.isDegraded(), items: await mem.list(filter) }
+    // degraded=true 表示记忆降级(未连接 或 连上但嵌入异常);degradedReason 给出具体原因供前端精确提示
+    return { degraded: mem.isDegraded(), degradedReason: mem.degradedReason(), items: await mem.list(filter) }
   })
 
   app.put('/admin/memory/:id', async (req, reply) => {

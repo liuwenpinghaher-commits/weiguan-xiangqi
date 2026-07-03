@@ -15,6 +15,9 @@ const RECENCY_HALFLIFE_MS = 1000 * 60 * 60 * 24 * 14
 // 这类语义很远的更新(~0.50)会被当新事实另存(可接受)。judge 自带"相关但不同→keep"
 // 分支兜底误合并。可经 deps.simThreshold 覆盖。
 const DEFAULT_SIM_THRESHOLD = 0.6
+// 检索注入相关度地板:低于此 cosine sim 的记忆视为与当前话题无关,不注入(修 L1:persona 记忆稀少时
+// 低相关 fact/insight 仍被塞进 prompt)。取写路径去重阈值(0.6)之半为经验起点,偏宽松,只挡近乎无关。
+const DEFAULT_RETRIEVE_MIN_SIM = 0.3
 const HNSW_EF = 64 // HNSW 查询时的候选列表大小;v3 的 KNN 算子要求显式给出
 
 export interface SurrealMemoryDeps {
@@ -22,6 +25,8 @@ export interface SurrealMemoryDeps {
   embedding: EmbeddingProvider; llm: LLMProvider; now: () => number
   /** 余弦相似度高于此值才触发 judge;默认 DEFAULT_SIM_THRESHOLD(0.6);测试可注入低值以确定性触发 judge 路径。 */
   simThreshold?: number
+  /** 检索注入相关度地板(仅向量路径);默认 DEFAULT_RETRIEVE_MIN_SIM(0.3);测试注入 -1 关闭。 */
+  retrieveMinSim?: number
   /** 连接(connect+signin+use)超时(ms),默认 4000。超时即 reject,让 ws-server 即时降级而非挂起启动。 */
   connectTimeoutMs?: number
 }
@@ -81,9 +86,20 @@ export class SurrealMemoryStore implements MemoryStore {
 
   async close(): Promise<void> { await this.db.close() }
 
+  /** 嵌入服务健康标志:embedOne 失败→false,成功→true。供 isDegraded/degradedReason 反映
+   *  "Surreal 连上但嵌入持续失败→语义检索静默失效"这一降级态(修 L2)。 */
+  private embeddingHealthy = true
+
   private async embedOne(text: string): Promise<number[] | null> {
-    try { return (await this.deps.embedding.embed([text]))[0] }
-    catch (err) { console.warn('[memory] 嵌入失败,降级为无向量:', (err as Error).message); return null }
+    try {
+      const v = (await this.deps.embedding.embed([text]))[0]
+      this.embeddingHealthy = true
+      return v
+    }
+    catch (err) {
+      this.embeddingHealthy = false
+      console.warn('[memory] 嵌入失败,降级为无向量:', (err as Error).message); return null
+    }
   }
 
   /** 把 record id 字符串("memory:xxx")转回可绑定的 RecordId,供 UPDATE/DELETE 复用。 */
@@ -161,7 +177,10 @@ export class SurrealMemoryStore implements MemoryStore {
     let rows: Array<{ row: Row; sim: number }> = []
     if (vec) {
       for (const k of kinds) rows.push(...await this.knn(personaId, k, vec, this.knnK(limit))) // KNN 取放大后的 K(≥32),抵消后过滤占位漏判;最终结果仍 slice 回 limit
-
+      // 相关度地板(仅向量路径有意义的 sim):挡住与当前话题近乎无关的记忆被注入 prompt。
+      // 降级(无向量)路径 sim 恒 0,不套用此过滤,以免把 recency 兜底结果全滤掉。
+      const floor = this.deps.retrieveMinSim ?? DEFAULT_RETRIEVE_MIN_SIM
+      rows = rows.filter(r => r.sim >= floor)
     } else {
       // 嵌入失败降级:不走 KNN,纯按 recency/importance 融合。
       const [res] = await this.db.query<[any[]]>(
@@ -210,7 +229,11 @@ export class SurrealMemoryStore implements MemoryStore {
     await this.db.query('DELETE memory WHERE game_id = $g', { g: gameId })
   }
 
-  isDegraded(): boolean { return false }
+  // 连上 Surreal 时不算"未连接降级";但嵌入持续失败=语义检索失效,也是一种降级。
+  isDegraded(): boolean { return !this.embeddingHealthy }
+  degradedReason(): string | null {
+    return this.embeddingHealthy ? null : '嵌入服务异常:语义检索暂不可用,当前仅按时间/重要度召回(记忆仍持久化)'
+  }
 
   private norm(r: any): Row {
     return {

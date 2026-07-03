@@ -44,4 +44,6 @@ export interface MemoryStore {
   removeByGame(gameId: number): Promise<void>
   /** 是否处于降级态(不持久/无语义)。控制台据此显示提示 */
   isDegraded(): boolean
+  /** 降级原因文案(健康时 null)。区分"未连接"与"连上但嵌入异常",供控制台精确提示。 */
+  degradedReason(): string | null
 }

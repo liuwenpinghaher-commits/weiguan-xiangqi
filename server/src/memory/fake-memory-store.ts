@@ -49,6 +49,9 @@ export class FakeMemoryStore implements MemoryStore {
 
   /** Fake = 降级态(不持久、无语义检索),控制台应提示 */
   isDegraded(): boolean { return true }
+  degradedReason(): string | null {
+    return 'SurrealDB 未连接:记忆仅存于内存,重启即失,且无语义检索'
+  }
 
   async remove(id: string): Promise<void> {
     this.rows = this.rows.filter(r => r.id !== id)

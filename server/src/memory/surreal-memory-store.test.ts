@@ -56,7 +56,7 @@ describe.skipIf(!hasBin)('SurrealMemoryStore (集成)', () => {
   function makeStore(llm = new FakeLLM(['keep'])) {
     return new SurrealMemoryStore({
       url: URL, namespace: 'test', database: 'test', username: 'root', password: 'root',
-      embedding: new FakeEmbedding(16), llm, now: () => clock, simThreshold: -1,
+      embedding: new FakeEmbedding(16), llm, now: () => clock, simThreshold: -1, retrieveMinSim: -1,
     })
   }
 
@@ -68,6 +68,19 @@ describe.skipIf(!hasBin)('SurrealMemoryStore (集成)', () => {
     const got = await store.retrieve('coach', '残局急躁', 5, ['fact', 'insight'])
     expect(got).toHaveLength(1)
     expect(got[0].content).toBe('残局易急躁')
+    await store.close()
+  })
+
+  it('检索相关度地板:sim 低于 retrieveMinSim 的记忆不注入(L1)', async () => {
+    const store = new SurrealMemoryStore({
+      url: URL, namespace: 'test', database: 'floor', username: 'root', password: 'root',
+      embedding: new FakeEmbedding(16), llm: new FakeLLM(['keep']), now: () => clock,
+      simThreshold: -1, retrieveMinSim: 1.1, // 地板抬到 1.1:cosine 上限 1.0 永远达不到
+    })
+    await store.connect()
+    await store.record({ personaId: 'coach', kind: 'fact', content: '当头炮开局', importance: 3, gameId: null, createdAt: new Date(clock).toISOString() })
+    // 即便用与内容完全一致的 query(FakeEmbedding 同文本同向量→cosine=1.0),1.0 < 1.1 → 被地板过滤
+    expect(await store.retrieve('coach', '当头炮开局', 5, ['fact'])).toHaveLength(0)
     await store.close()
   })
 
@@ -109,7 +122,7 @@ describe.skipIf(!hasBin)('SurrealMemoryStore (集成)', () => {
     }
     const store = new SurrealMemoryStore({
       url: URL, namespace: 'test', database: 'merge_emb', username: 'root', password: 'root',
-      embedding: flaky as any, llm: new FakeLLM([`merge: ${MERGED}`]), now: () => clock, simThreshold: -1,
+      embedding: flaky as any, llm: new FakeLLM([`merge: ${MERGED}`]), now: () => clock, simThreshold: -1, retrieveMinSim: -1,
     })
     await store.connect()
     // 首条 fact:带向量入库
@@ -137,6 +150,9 @@ describe.skipIf(!hasBin)('SurrealMemoryStore (集成)', () => {
     expect(id).toBeTruthy()
     const got = await store.retrieve('player', '当头炮', 5, ['fact'])
     expect(got).toHaveLength(1)
+    // L2:嵌入失败后 isDegraded=true 且 degradedReason 指出"嵌入"异常(区别于"未连接")
+    expect(store.isDegraded()).toBe(true)
+    expect(store.degradedReason()).toContain('嵌入')
     await store.close()
   })
 })
