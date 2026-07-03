@@ -51,5 +51,7 @@ function summarize(b: WindowStats, a: WindowStats, d: CompareReport['deltas']): 
     : `平均每手丢分持平(${a.acpl})`
   const blunder = d.blundersPerGame < 0 ? `每局漏着减少 ${-d.blundersPerGame}`
     : d.blundersPerGame > 0 ? `每局漏着增加 ${d.blundersPerGame}` : '每局漏着持平'
-  return `近 ${a.games} 局对比此前 ${b.games} 局:估算棋力${elo};${acpl};${blunder}。`
+  const mistake = d.mistakesPerGame < 0 ? `失误减少 ${-d.mistakesPerGame}/局`
+    : d.mistakesPerGame > 0 ? `失误增加 ${d.mistakesPerGame}/局` : '失误持平'
+  return `近 ${a.games} 局对比此前 ${b.games} 局:估算棋力${elo};${acpl};${blunder};${mistake}。`
 }

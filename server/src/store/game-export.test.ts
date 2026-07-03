@@ -118,6 +118,23 @@ test('validateImport: 完全不存在的 UCI 格式 throw', () => {
   })).toThrow()
 })
 
+test('validateImport: 还原 endedAt + humanSide,时间戳归一为规范 ISO(R-5/R-6a)', () => {
+  const r = validateImport({
+    startFen: START_FEN, moves: [MOVE1], result: 'black', humanSide: 'black',
+    createdAt: '2024/01/15 08:00:00', endedAt: '2024-01-15T09:30:00+08:00',
+  })
+  expect(r.humanSide).toBe('black')
+  expect(r.createdAt).toBe(new Date('2024/01/15 08:00:00').toISOString())
+  expect(r.endedAt).toBe('2024-01-15T01:30:00.000Z')
+  expect(r.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/)
+})
+
+test('validateImport: 缺 endedAt/createdAt → null(导入侧用 now 兜底)', () => {
+  const r = validateImport({ startFen: START_FEN, moves: [MOVE1] })
+  expect(r.endedAt).toBeNull()
+  expect(r.createdAt).toBeNull()
+})
+
 // ────────────────────────────────────────────────────────────
 // ④ 缺省 startFen/mode 填默认值
 // ────────────────────────────────────────────────────────────

@@ -136,10 +136,12 @@ async function drain(): Promise<void> {
         // 清掉本条的播放回调,避免复用同一 audio 元素时旧闭包与下一条交叉触发。
         a.onended = a.onerror = null
       }
-      // 合成成功但 wav 损坏/播放被拒 → 回退浏览器 TTS,该句不再静默无声
-      if (failed) browserSpeak(item.personaId, item.text)
+      // 合成成功但 wav 损坏/播放被拒 → 回退浏览器 TTS,该句不再静默无声。
+      // 但若期间 stopVoice 触发(gen 变化),则本次 play 被拒是"被中止"而非"坏 wav"——
+      // 不能兜底,否则会用浏览器机械音把已停的那句复活(暂停/重开局/关观众席时串台)。
+      if (failed && gen === generation) browserSpeak(item.personaId, item.text)
     } catch {
-      browserSpeak(item.personaId, item.text)
+      if (gen === generation) browserSpeak(item.personaId, item.text)
     }
   }
 

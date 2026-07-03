@@ -38,7 +38,7 @@ export function isRetryable(err: unknown): boolean {
 export class DashscopeLLM implements LLMProvider {
   private client: OpenAI
   constructor(
-    private model = process.env.DASHSCOPE_MODEL ?? 'qwen-plus',
+    private model = process.env.DASHSCOPE_MODEL ?? 'qwen-plus-latest',
     apiKey = process.env.DASHSCOPE_API_KEY,
     baseURL = process.env.DASHSCOPE_BASE_URL,
   ) {

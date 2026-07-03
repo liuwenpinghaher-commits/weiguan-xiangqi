@@ -73,9 +73,20 @@ export function TrainingPage({ gameId }: { gameId: number }) {
         )}
 
         {!loading && !fetchError && drills.length === 0 && (
-          <div style={{ ...cardStyle, color: color.textFaint }}>
-            本局暂无可练的失误题（需先诊断）。
-          </div>
+          <>
+            {/* 空态区分:练过(stats.total>0)→已全部答对;从未练过且无题→可能未诊断或本局无失误 */}
+            {stats && stats.total > 0 && (
+              <div style={statsBannerStyle}>
+                本局训练:正确 {stats.correct} / 共 {stats.total}
+                {accuracy !== null && <>（正确率 {accuracy}%）</>}
+              </div>
+            )}
+            <div style={{ ...cardStyle, color: color.textFaint }}>
+              {stats && stats.total > 0
+                ? '本局失误题已全部答对 🎉 无待练题目。'
+                : '本局没有待练的失误题(可能尚未诊断,或本局无明显失误)。到分析页可触发诊断。'}
+            </div>
+          </>
         )}
 
         {!loading && drills.length > 0 && d && (

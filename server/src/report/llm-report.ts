@@ -17,9 +17,9 @@ export async function growthReport(
   const { before: b, after: a, deltas: d } = compareData
 
   const prompt = `你是中国象棋 AI 教练，请根据以下数据对棋手的进步做简洁点评（中文，3-5 句）：
-- 此前 ${b.games} 局：估算棋力 ${b.estElo}，ACPL ${b.acpl}，准确率 ${b.accuracy}%，每局漏着 ${b.blundersPerGame}
-- 近期 ${a.games} 局：估算棋力 ${a.estElo}，ACPL ${a.acpl}，准确率 ${a.accuracy}%，每局漏着 ${a.blundersPerGame}
-- 变化：棋力 ${d.estElo > 0 ? '+' : ''}${d.estElo}，ACPL ${d.acpl > 0 ? '+' : ''}${d.acpl}，漏着/局 ${d.blundersPerGame > 0 ? '+' : ''}${d.blundersPerGame}
+- 此前 ${b.games} 局：估算棋力 ${b.estElo}，ACPL ${b.acpl}，准确率 ${b.accuracy}%，每局漏着 ${b.blundersPerGame}，每局失误 ${b.mistakesPerGame}
+- 近期 ${a.games} 局：估算棋力 ${a.estElo}，ACPL ${a.acpl}，准确率 ${a.accuracy}%，每局漏着 ${a.blundersPerGame}，每局失误 ${a.mistakesPerGame}
+- 变化：棋力 ${d.estElo > 0 ? '+' : ''}${d.estElo}，ACPL ${d.acpl > 0 ? '+' : ''}${d.acpl}，漏着/局 ${d.blundersPerGame > 0 ? '+' : ''}${d.blundersPerGame}，失误/局 ${d.mistakesPerGame > 0 ? '+' : ''}${d.mistakesPerGame}
 
 请指出：进步在哪、仍存在什么缺陷、给出一条具体建议。不要列点，直接用自然段落。`
 

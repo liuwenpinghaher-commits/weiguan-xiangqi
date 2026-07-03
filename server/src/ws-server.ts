@@ -101,8 +101,10 @@ export async function buildServer(opts: {
   // 记忆:优先 SurrealDB 语义记忆;连接/配置失败则降级为内存 store(聊天/反思照常,只是不持久、不语义)
   let mem: import('./memory/store.js').MemoryStore
   try {
-    // 嵌入凭据跟随控制台 llm 段热更(原为 boot 期锁死 env,三套凭据行为不一致)
-    let innerEmbedding = new DashscopeEmbedding()
+    // 嵌入凭据跟随控制台 llm 段(初始构造与热更都用 cfg.getLlm() ?? env,三套凭据行为一致):
+    // 修 R-3——原初始行只读 env,env 无 key 但控制台有 key 时会 boot 抛错→永久降级 Fake。
+    const l0 = cfg.getLlm()
+    let innerEmbedding = new DashscopeEmbedding(undefined, undefined, undefined, l0.apiKey ?? undefined, l0.baseURL ?? undefined)
     const prevOnLlmChange = cfg.onLlmChange
     cfg.onLlmChange = () => {
       prevOnLlmChange?.()
@@ -269,7 +271,7 @@ export async function buildServer(opts: {
         try { s.send(frame) } catch { /* 单连接发送失败忽略 */ }
       }
       cleanupFinishedGame(gid)
-      void reflectGame(gid).catch(() => {})
+      reflectThenForget(gid)
     }
   }, 2000)
   clockSweeper.unref?.()
@@ -305,6 +307,11 @@ export async function buildServer(opts: {
   function forgetGuards(gameId: number): void {
     reflectedGames.delete(gameId)
     diagnosedGames.delete(gameId)
+  }
+  // 终局(超时/认负/和棋)路径的反思:反思落定后清幂等闸,避免 reflectedGames 单调泄漏(修 R-10)。
+  // move-over 路径另有 reflect+diagnose 合并清理,不走这里。
+  function reflectThenForget(gameId: number): void {
+    void reflectGame(gameId).catch(() => { /* 反思失败静默 */ }).finally(() => forgetGuards(gameId))
   }
 
   const app = Fastify({ logger: true })
@@ -450,6 +457,14 @@ export async function buildServer(opts: {
 
       try {
         if (msg.type === 'new') {
+          // 畸形输入健壮性(修 R-11):humanSide/mode 缺省或非法会让后续 humanSides.get 落空 →
+          // playHumanMove "not your turn" 恒真死局。开局前显式校验,拒绝畸形请求。
+          if (msg.humanSide !== 'red' && msg.humanSide !== 'black') {
+            socket.send(JSON.stringify({ type: 'error', message: '非法 humanSide(只允许 red/black)' })); return
+          }
+          if (msg.mode !== 'coach' && msg.mode !== 'humanlike') {
+            socket.send(JSON.stringify({ type: 'error', message: '非法 mode(只允许 coach/humanlike)' })); return
+          }
           const humanSide = msg.humanSide as Side
           const startFen = (msg.startFen as string | undefined) ?? 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
           // 执黑需要 AI 先手,无引擎时是死局:开局前明确拒绝而非留下不可玩的残局
@@ -556,7 +571,7 @@ export async function buildServer(opts: {
           const { result, fen } = session.resign(gid)
           socket.send(JSON.stringify({ type: 'update', aiMove: null, fen, over: true, result, clockState }))
           cleanupFinishedGame(gid)
-          void reflectGame(gid).catch(() => {})
+          reflectThenForget(gid)
         } else if (msg.type === 'draw_offer') {
           const gid = msg.gameId
           if (typeof gid !== 'number') { socket.send(JSON.stringify({ type: 'error', message: '非法 gameId' })); return }
@@ -566,7 +581,7 @@ export async function buildServer(opts: {
           if (accepted) {
             socket.send(JSON.stringify({ type: 'update', aiMove: null, fen, over: true, result: 'draw', clockState }))
             cleanupFinishedGame(gid)
-            void reflectGame(gid).catch(() => {})
+            reflectThenForget(gid)
           }
         } else if (msg.type === 'undo') {
           const gid = msg.gameId
@@ -776,11 +791,17 @@ export async function buildServer(opts: {
   // body: { startFen?, moves: string[], mode?, result? }
   // 校验失败 → 400；成功 → { gameId }
   app.post('/games/import', async (req, reply) => {
+    // 安全:导入是写库操作,与 /admin 同口径限本机(修 R-8;控制台同机使用不受影响,
+    // 挡住服务绑非 loopback 时的远程建局写库)
+    const ip = req.ip
+    if (!(ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1')) {
+      return reply.code(403).send({ error: '导入接口仅限本机访问' })
+    }
     let validated: ReturnType<typeof validateImport>
     try {
       const body = req.body as {
         startFen?: string; moves?: unknown; mode?: string; result?: string
-        humanSide?: string; createdAt?: string; scoreCps?: unknown[]; byAis?: unknown[]
+        humanSide?: string; createdAt?: string; endedAt?: string | null; scoreCps?: unknown[]; byAis?: unknown[]
       }
       if (!Array.isArray(body?.moves)) {
         return reply.code(400).send({ error: 'moves 必须为字符串数组' })
@@ -792,6 +813,7 @@ export async function buildServer(opts: {
         result: body.result,
         humanSide: body.humanSide,
         createdAt: body.createdAt,
+        endedAt: body.endedAt,
         scoreCps: body.scoreCps,
         byAis: body.byAis,
       })
@@ -799,7 +821,7 @@ export async function buildServer(opts: {
       return reply.code(400).send({ error: (e as Error).message })
     }
 
-    const { startFen, moves, mode, result, humanSide, createdAt, scoreCps, byAis } = validated
+    const { startFen, moves, mode, result, humanSide, createdAt, endedAt, scoreCps, byAis } = validated
     const now = new Date().toISOString()
 
     // 保真导入:humanSide/原始时间戳/逐手评分/AI 标记全部还原(旧格式缺省 red/导入时刻/null/false)
@@ -822,9 +844,9 @@ export async function buildServer(opts: {
       pos = nextPos
     }
 
-    // 如果有结果，补写 finishGame
+    // 如果有结果，补写 finishGame(还原原始 endedAt,缺省才用 now——修 R-5 战绩污染)
     if (result !== null) {
-      repo.finishGame(gameId, result, now)
+      repo.finishGame(gameId, result, endedAt ?? now)
     }
 
     return { gameId }

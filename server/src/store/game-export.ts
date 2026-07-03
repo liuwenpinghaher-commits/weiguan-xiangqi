@@ -88,6 +88,7 @@ export function validateImport(input: {
   result?: string
   humanSide?: string
   createdAt?: string
+  endedAt?: string | null
   scoreCps?: unknown[]
   byAis?: unknown[]
 }): {
@@ -97,6 +98,7 @@ export function validateImport(input: {
   result: 'red' | 'black' | 'draw' | null
   humanSide: 'red' | 'black'
   createdAt: string | null
+  endedAt: string | null
   scoreCps: (number | null)[]
   byAis: boolean[]
 } {
@@ -111,9 +113,13 @@ export function validateImport(input: {
   const humanSide = (input.humanSide ?? 'red') as 'red' | 'black'
   if (!VALID_SIDES.has(humanSide)) throw new Error(`无效的 humanSide 值 "${input.humanSide}",只允许 red/black`)
 
-  // createdAt:合法 ISO 时间则保留原始时间戳(不再用导入时刻覆盖)
-  const createdAt = typeof input.createdAt === 'string' && !Number.isNaN(Date.parse(input.createdAt))
-    ? input.createdAt : null
+  // 时间戳:合法可解析则归一为规范 ISO(不再原样存——修 R-6a:非规范串会破坏 started_at 字典序,
+  // 进而错切 compare 前后窗;归一为 toISOString 后字典序=时序)。不合法则置 null(导入时用 now 兜底)。
+  const toIso = (v?: string | null): string | null =>
+    typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : null
+  const createdAt = toIso(input.createdAt)
+  // endedAt:还原原始结束时间(修 R-5:原来丢弃→导入用 now→旧局顶到 recentResults 最前污染战绩)
+  const endedAt = toIso(input.endedAt)
 
   // 逐手评分/AI 标记:与 moves 等长才采用,否则整列丢弃(容错旧格式)
   const scoreCps: (number | null)[] = Array.isArray(input.scoreCps) && input.scoreCps.length === moves.length
@@ -145,5 +151,5 @@ export function validateImport(input: {
     }
   }
 
-  return { startFen, moves, mode, result, humanSide, createdAt, scoreCps, byAis }
+  return { startFen, moves, mode, result, humanSide, createdAt, endedAt, scoreCps, byAis }
 }

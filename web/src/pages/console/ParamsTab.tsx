@@ -42,6 +42,10 @@ function NumSection({ title, section, fields, initial, onChanged, note }:
       const fresh = await getConfig()
       const freshSec = (fresh as unknown as Record<string, NumMap>)[section] ?? {}
       const clamped = fields.filter(f => typeof freshSec[f.key] === 'number' && freshSec[f.key] !== payload[f.key])
+      // 用后端权威值回填输入框(否则被钳制项仍显旧值,重复保存反复提示"被调整")
+      if (clamped.length) {
+        setVals(v => { const next = { ...v }; for (const f of clamped) next[f.key] = freshSec[f.key]; return next })
+      }
       setMsg(clamped.length ? `已保存(${clamped.map(f => f.label).join('、')} 被调整到合法范围)` : '已保存')
       onChanged()
     } catch (e) { setMsg('保存失败:' + (e as Error).message) }

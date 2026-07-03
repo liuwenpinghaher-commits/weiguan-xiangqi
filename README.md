@@ -345,10 +345,10 @@ M2 在对弈闭环基础上增加了局后自动诊断：
 见功能概览。LLM 配置（`server/.env`）：
 
 ```
-ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
-ARK_API_KEY=你的火山 key
-ARK_MODEL=doubao-seed-2.0-pro
+DASHSCOPE_API_KEY=你的百炼 key
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 ```
+> 模型在控制台"密钥与模型"页配置(默认 `qwen-plus-latest`),可热重载。
 
 ---
 

@@ -258,7 +258,15 @@ export class GameSession {
     return id
   }
 
+  /** 该局是否已终局(DB 有 result)。完局后 finish 已删净内存态,ensureLoaded 会从 DB
+   *  重建可下局面——若不拦,超时/认负/和棋后到达的 move/undo 会"复活"已结束的局、追加脏着法。 */
+  private isFinished(gameId: number): boolean {
+    return !!this.deps.repo.getGame(gameId)?.result
+  }
+
   async playHumanMove(gameId: number, move: string): Promise<{ aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; aiReason?: string }> {
+    // 完局守卫:对局已判负/和/超时后,拒绝任何后续走子(防复活僵尸局、写终局后脏着法)
+    if (this.isFinished(gameId)) throw new Error('对局已结束')
     // 走子前先查超时:读秒已归零则直接判负(flag-fall),不再受理这手棋
     const timedOut = this.checkTimeout(gameId)
     if (timedOut) return { aiMove: null, ...timedOut }
@@ -327,6 +335,9 @@ export class GameSession {
     } finally {
       if (clock) this.settleActive(clock, true)
     }
+    // 完局二次守卫:analyze 是唯一 await 点,期间 sweeper 可能因 AI 侧超时 finish 并删净内存态。
+    // 若已终局则中止,不把这手写进已结束的对局(也避免 applyRepeatState 读到已删的 repeatHistories)。
+    if (this.isFinished(gameId)) throw new Error('对局已结束')
     const ctx = this.buildContext(gameId)
     const decision = selectMove(lines, ctx)
     const aiSide = afterHuman.sideToMove()
@@ -425,6 +436,7 @@ export class GameSession {
    * - 返回 { aiMove, fen, over, result? }。
    */
   async aiFirstMove(gameId: number): Promise<{ aiMove: string; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; aiReason?: string }> {
+    if (this.isFinished(gameId)) throw new Error('对局已结束')
     this.ensureLoaded(gameId)
     const pos = this.positions.get(gameId)
     if (!pos) throw new Error('game not found')
@@ -663,6 +675,8 @@ export class GameSession {
   static readonly MAX_UNDOS = 3
 
   undoLastMoves(gameId: number): { success: boolean; fen: string; undoRemaining: number } {
+    // 完局守卫:已终局的对局不可悔棋(否则重建僵尸局 + 悔到 AI 回合却给人起钟致死锁)
+    if (this.isFinished(gameId)) return { success: false, fen: '', undoRemaining: 0 }
     this.ensureLoaded(gameId)
     const used = this.undoCounts.get(gameId) ?? 0
     const remainingBudget = GameSession.MAX_UNDOS - used
@@ -690,11 +704,11 @@ export class GameSession {
 
     this.undoCounts.set(gameId, used + 1)
 
-    // 悔棋后轮到人类:结算在途计时并重新给人类起钟
+    // 悔棋后按重建局面的实际行棋方起钟(正常删 2 手回到人类;不假定,读 sideToMove 更稳)
     const clock = this.clockStates.get(gameId)
     if (clock) {
       this.settleActive(clock, false)
-      this.startClockFor(clock, this.humanSides.get(gameId)!)
+      this.startClockFor(clock, newPos.sideToMove())
     }
 
     return { success: true, fen: newPos.fen(), undoRemaining: GameSession.MAX_UNDOS - (used + 1) }

@@ -101,6 +101,31 @@ test('悔棋:服务端 3 次上限 + 回滚重复裁决历史(真实 Position)',
   expect(r4.undoRemaining).toBe(0)
 })
 
+test('完局守卫:超时判负后再走子被拒(不复活僵尸局、不写脏着法)', async () => {
+  const repo = new GamesRepo(openDb(':memory:'))
+  const session = makeSession(repo)
+  const gid = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
+  await session.playHumanMove(gid, 'h2e2')
+  // 压红方超时 → checkTimeout 判负 + finish 删态
+  const clock = (session as any).clockStates.get(gid)
+  clock.redRemaining = 1; clock.startedAt = Date.now() - 10
+  expect(session.checkTimeout(gid)!.result).toBe('black')
+  const movesAfterFinish = repo.getMoves(gid).length
+  // 完局后再走子:必须被拒,且不追加任何着法
+  await expect(session.playHumanMove(gid, 'h2e2')).rejects.toThrow('对局已结束')
+  expect(repo.getMoves(gid).length).toBe(movesAfterFinish)
+})
+
+test('完局守卫:已结束对局不可悔棋(返回 success:false)', async () => {
+  const repo = new GamesRepo(openDb(':memory:'))
+  const session = makeSession(repo)
+  const gid = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
+  await session.playHumanMove(gid, 'h2e2')
+  repo.finishGame(gid, 'black', new Date().toISOString()) // 直接置终局
+  const r = session.undoLastMoves(gid)
+  expect(r.success).toBe(false)
+})
+
 test('非法 startFen:先解析后落库,不产生孤儿 games 行', () => {
   const repo = new GamesRepo(openDb(':memory:'))
   const throwingMakePosition = (fen: string) => {

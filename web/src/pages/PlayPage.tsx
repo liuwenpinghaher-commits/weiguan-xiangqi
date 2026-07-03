@@ -46,6 +46,12 @@ export function PlayPage() {
   const wsRef = useRef<ReturnType<typeof connect> | null>(null)
   const gameIdRef = useRef<number | null>(null)
   gameIdRef.current = gameId
+  // handleServerMsg 在 connect 时被一次性捕获;切执方/模式后即时重开局会捕获切换前的闭包。
+  // side/mode 用 ref 保证 handleServerMsg 内恒读最新值(否则胜负文案/走子执方/aiReason 门控会用旧值)。
+  const sideRef = useRef<HumanSide>(side)
+  sideRef.current = side
+  const modeRef = useRef<GameMode>(mode)
+  modeRef.current = mode
   const preMoveRef = useRef<{from:string;to:string}|null>(null)
   preMoveRef.current = preMove
   const preMoveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null) // preMove 延时发送句柄,换局/卸载时清理
@@ -59,11 +65,12 @@ export function PlayPage() {
     return Math.max(0, Math.min(f, fenHistory.length - 1))
   }
 
-  // 据 result 推导胜负文本（依据当前 side 状态）
+  // 据 result 推导胜负文本。读 sideRef.current 而非 side 闭包:handleServerMsg 是陈旧闭包,
+  // 但 sideRef 对象跨渲染稳定、.current 恒最新 → 切执方后新局胜负文案不再反转。渲染作用域调用同样正确。
   function resultText(result: GameResult): string {
     if (!result) return ''
     if (result === 'draw') return '和棋'
-    return result === side ? '你赢了！' : '你输了'
+    return result === sideRef.current ? '你赢了！' : '你输了'
   }
 
   // 共用消息处理函数，useEffect 与 handleRestart 均使用此函数
@@ -83,7 +90,7 @@ export function PlayPage() {
       setStatusError(false)
       if (msg.clockState) setClockState(msg.clockState)
       if (msg.aiMove) {
-        const aiSide = side === 'red' ? 'black' : 'red'
+        const aiSide = sideRef.current === 'red' ? 'black' : 'red'
         setMoveHistory(prev => [...prev, { ply: prev.length + 1, move: msg.aiMove!, side: aiSide }])
       }
       if (msg.fen) {
@@ -111,7 +118,7 @@ export function PlayPage() {
       } else {
         setStatus('playing')
         // 教练模式:导演给的选着解释(如"你最近连败,我这手放缓一点")随播报展示
-        const reason = msg.aiReason && mode === 'coach' ? ` · ${msg.aiReason}` : ''
+        const reason = msg.aiReason && modeRef.current === 'coach' ? ` · ${msg.aiReason}` : ''
         setStatusMsg(msg.aiMove ? `AI 走了 ${msg.aiMove}${reason}，轮到您走` : '轮到您走棋')
       }
     } else if (msg.type === 'error') {
