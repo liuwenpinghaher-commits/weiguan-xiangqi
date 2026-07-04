@@ -22,6 +22,7 @@ function setup(llm: FakeLLM, now = () => 1000) {
     llm, mem, cfg, now,
     emit: (line) => out.push(line),
     rng: () => 0.9,
+    repo: { getMoves: () => [] },
   })
   return { engine, out, mem }
 }
@@ -45,7 +46,7 @@ test('节奏护栏:静默期内的刺激不产出', async () => {
   const mem = new FakeMemoryStore(() => now)
   const out: any[] = []
   const cfg = makeCfg({ minSilenceMs: 5000, maxPerMin: 100 })
-  const engine = new ChatEngine({ llm, mem, cfg, now: () => now, emit: (l) => out.push(l), rng: () => 0.9 })
+  const engine = new ChatEngine({ llm, mem, cfg, now: () => now, emit: (l) => out.push(l), rng: () => 0.9, repo: { getMoves: () => [] } })
   await engine.onStimulus({ kind: 'move', gameId: 1, scoreCp: 0, tension: 0.95 })
   const after = out.length
   now = 1000
@@ -87,7 +88,7 @@ test('forgetGame 清掉该局上下文:之后 idle prompt 不再含旧着法,降
   const mem = new FakeMemoryStore(() => 1000)
   const out: any[] = []
   const cfg = makeCfg({ minSilenceMs: 0, maxPerMin: 100, speakThreshold: 1, jitterWidth: 0 })
-  const engine = new ChatEngine({ llm, mem, cfg, now: () => 1000, emit: (l) => out.push(l), rng: () => 0 })
+  const engine = new ChatEngine({ llm, mem, cfg, now: () => 1000, emit: (l) => out.push(l), rng: () => 0, repo: { getMoves: () => [] } })
   // 1) 走一步,设入 lastCtx
   await engine.onStimulus({
     kind: 'move', gameId: 7, scoreCp: 100, tension: 0.9,
@@ -196,6 +197,7 @@ test('并发重入串行化:两个重叠刺激不让同角色重复说同一句(
   const engine = new ChatEngine({
     llm: slowLLM as any, mem, cfg, now: () => 1000,
     emit: (line) => out.push(line), rng: () => 0.9,
+    repo: { getMoves: () => [] },
   })
   const stim: Stimulus = {
     kind: 'blunder', gameId: 1, scoreCp: -300, tension: 0.95,
@@ -246,6 +248,7 @@ test('AI 棋手自评:byPlayerPersona=true + rng<0.4 时 player 出现在 out �
     llm, mem, cfg, now: () => 1000,
     emit: (line) => out.push(line),
     rng,
+    repo: { getMoves: () => [] },
   })
 
   const stim: Stimulus = {
@@ -334,6 +337,7 @@ test('跨刺激记忆:第 2 次刺激的 prompt 含上一次 recent 中的内容
     llm, mem, cfg, now: () => 1000,
     emit: (line) => out.push(line),
     rng: () => 0.9,
+    repo: { getMoves: () => [] },
   })
 
   const stim1: Stimulus = {
@@ -437,7 +441,7 @@ describe('系统 prompt 贴棋局', () => {
     const caps: string[] = []
     const cfg = new RC2(new SR2(odb2(':memory:')), () => '2026-06-21T00:00:00.000Z')
     const llm = new FL2((msgs) => { const s = msgs.find(m => m.role === 'system'); if (s) caps.push(s.content); return '稳' })
-    const eng = new CE2({ llm, mem: new FM2(() => 0), cfg, now: () => 0, emit: () => {}, rng: () => 0.1 })
+    const eng = new CE2({ llm, mem: new FM2(() => 0), cfg, now: () => 0, emit: () => {}, rng: () => 0.1, repo: { getMoves: () => [] } })
     await eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 20, moveZh: '炮二平五', ply: 3, tension: 0.95 } as any)
     expect(caps.length).toBeGreaterThan(0)
     expect(caps.some(s => s.includes('扣') && s.includes('别瞎编'))).toBe(true)
@@ -453,7 +457,7 @@ describe('idle 贴局面', () => {
     const llm = new FL2((msgs) => { const u = msgs.find(m => m.role === 'user'); if (u) caps.push(u.content); return '僵着' })
     // now 在两次刺激间推进:跨过最近发言惩罚窗口(30s),让 idle 仍能选出说话者
     let nowMs = 0
-    const eng = new CE2({ llm, mem: new FM2(() => nowMs), cfg, now: () => nowMs, emit: () => {}, rng: () => 0.1 })
+    const eng = new CE2({ llm, mem: new FM2(() => nowMs), cfg, now: () => nowMs, emit: () => {}, rng: () => 0.1, repo: { getMoves: () => [] } })
     await eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 20, moveZh: '炮二平五', ply: 3, tension: 0.95 } as any)
     caps.length = 0
     nowMs = 60_000
@@ -472,7 +476,7 @@ describe('老黑参与 + 张力分级', () => {
     const caps: { user: string }[] = []
     const emitted: string[] = []
     const llm = new FL2((msgs: any[]) => { const u = msgs.find(m => m.role === 'user'); caps.push({ user: u?.content ?? '' }); return '行' })
-    const eng = new CE2({ llm, mem: new FM2(() => 0), cfg, now: () => 0, emit: (l: any) => emitted.push(l.personaId), rng: () => rngSeq[(i++) % rngSeq.length] })
+    const eng = new CE2({ llm, mem: new FM2(() => 0), cfg, now: () => 0, emit: (l: any) => emitted.push(l.personaId), rng: () => rngSeq[(i++) % rngSeq.length], repo: { getMoves: () => [] } })
     return { eng, caps, emitted }
   }
   it('人类走子(非 byPlayerPersona)时老黑也可能参与,prompt 带其身份/立场', async () => {
@@ -496,7 +500,7 @@ describe('记忆检索失败不让全场哑火', () => {
     const mem = new FM2(() => 0)
     // 模拟 SurrealDB 连接断开:每次检索都抛错
     mem.retrieve = async () => { throw new Error('记忆检索失败') }
-    const eng = new CE2({ llm, mem, cfg, now: () => 0, emit: (l: any) => emitted.push(l.personaId), rng: () => 0.1 })
+    const eng = new CE2({ llm, mem, cfg, now: () => 0, emit: (l: any) => emitted.push(l.personaId), rng: () => 0.1, repo: { getMoves: () => [] } })
     await eng.onStimulus({ kind: 'human_said', gameId: 1, scoreCp: null, humanText: '这步怎么样', tension: 0.9 } as any)
     // 检索失败不应导致 0 弹幕——背景降级为"还不了解",人照常说话
     expect(emitted.length).toBeGreaterThan(0)
@@ -519,7 +523,7 @@ describe('记忆落库失败不丢限流/上下文状态', () => {
     const mem = new FM2(() => 0)
     mem.record = async () => { throw new Error('落库失败') }
     // rng 固定 0.9 → 高张力 0.95 选 ≥2 人
-    const eng = new CE2({ llm, mem, cfg, now: () => 0, emit: (l: any) => emitted.push(l), rng: () => 0.9 })
+    const eng = new CE2({ llm, mem, cfg, now: () => 0, emit: (l: any) => emitted.push(l), rng: () => 0.9, repo: { getMoves: () => [] } })
     await eng.onStimulus({ kind: 'blunder', gameId: 1, scoreCp: -400, moveZh: '红炮乱走', ply: 3, tension: 0.95 } as any)
     // ① 落库失败不应吞掉发言
     expect(emitted.length).toBeGreaterThanOrEqual(1)

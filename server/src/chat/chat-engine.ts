@@ -5,6 +5,7 @@ import type { RuntimeConfig } from '../config/runtime-config.js'
 import { viewScore } from '../personas/engine-view.js'
 import { pickSpeakers } from './speaker-select.js'
 import { TempoGuard } from './tempo.js'
+import type { ScoredMove } from './narrative.js'
 
 export interface ChatEngineDeps {
   llm: LLMProvider
@@ -13,6 +14,8 @@ export interface ChatEngineDeps {
   now: () => number
   emit: (line: ChatLine) => void
   rng: () => number
+  /** 读历史着法评分,供叙事点评(局势总评/历史回顾)。 */
+  repo: { getMoves: (gameId: number) => ScoredMove[] }
 }
 
 /** 最近聊天缓冲条目 */

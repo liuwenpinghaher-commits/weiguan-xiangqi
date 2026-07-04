@@ -128,6 +128,7 @@ export async function buildServer(opts: {
     llm,
     mem,
     cfg,
+    repo,
     now: () => Date.now(),
     emit: (line) => {
       lastChatAt = Date.now()
