@@ -113,6 +113,7 @@ export interface ChatLine {
 export type StimulusKind =
   | 'move' | 'blunder' | 'brilliant' | 'long_think'
   | 'lose_streak' | 'idle' | 'human_said' | 'topic_open'
+  | 'turning_point' | 'phase_shift'
 
 export interface Stimulus {
   kind: StimulusKind
