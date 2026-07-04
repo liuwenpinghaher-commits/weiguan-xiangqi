@@ -374,8 +374,9 @@ test('idle 刺激:user prompt 含"棋外"或"掌故"提示,不含"这步"等着�
   const stim: Stimulus = { kind: 'idle', gameId: 1, scoreCp: null, tension: 0.95 }
   await engine.onStimulus(stim)
   expect(capturedUsers.length).toBeGreaterThanOrEqual(1)
-  // idle prompt 应提示闲聊/掌故内容
-  expect(capturedUsers.some(u => u.includes('掌故') || u.includes('棋谚') || u.includes('局面'))).toBe(true)
+  // idle prompt 应提示闲聊/掌故/棋理内容(Task 5 起 idle 轮换局势总评/历史回顾/展望三种;
+  // 本用例 rng 固定 0.9,dim=0.9 必落展望分支,文案用"棋理"而非旧版"棋谚")
+  expect(capturedUsers.some(u => u.includes('掌故') || u.includes('棋理') || u.includes('局面'))).toBe(true)
 })
 
 test('long_think 刺激:user prompt 含"想了很久"或"长考"或"调侃"相关词', async () => {
@@ -463,7 +464,9 @@ describe('idle 贴局面', () => {
     nowMs = 60_000
     await eng.onStimulus({ kind: 'idle', gameId: 1, scoreCp: null, tension: 0.95 } as any)
     const idleU = caps.join('\n')
-    expect(idleU.includes('眼前这盘') || idleU.includes('就着眼前')).toBe(true)
+    // Task 5 起 idle 三选一轮换,三个分支共同前缀"这会儿没新棋步"取代旧版"就着眼前这盘说";
+    // 本用例 rng 固定 0.1,dim=0.1 落局势总评分支,断言仍验证"贴着当前局面说、不扯场外"的原意图。
+    expect(idleU.includes('这会儿没新棋步')).toBe(true)
     expect(idleU.includes('炮二平五')).toBe(true)
     expect(idleU.includes('棋外') || idleU.includes('家里') || idleU.includes('行当')).toBe(false)
   })
@@ -548,7 +551,11 @@ describe('丢旧保新:高频刺激保留最近2步', () => {
     const cfg = new RC3(new SR3(odb3(':memory:')), () => '2026-06-21T00:00:00.000Z')
     // now 恒为 0:放开节奏护栏(默认 minSilenceMs=4000 会在同一时间戳下拦掉第 2 条处理的刺激,
     // 与本用例要测的"高频丢旧窗口"逻辑无关)——否则本该保留的第二步会被 TempoGuard 误伤,产生假失败。
-    cfg.updateSection('chat', { minSilenceMs: 0, maxPerMin: 100 })
+    // 同时放开 speakThreshold/jitterWidth:now 恒为 0 会让"刚说过"的惩罚(pickSpeakers 里
+    // sinceLast=0 → penalty=0.5)在连续多条刺激间不衰减,默认阈值 0.6 会让第一轮说过话的
+    // 旁观者在后续刺激里全部被腰斩出局(实测验证过),导致本该由旁观者说出的转折点分支
+    // 文案("转折"/"攻守易势")永远轮不到——清零后 score 恒为 tension-penalty,必然有人说话。
+    cfg.updateSection('chat', { minSilenceMs: 0, maxPerMin: 100, speakThreshold: 0, jitterWidth: 0 })
     // 固定 rng 极小值使所有候选都过阈值发言,保证每条被处理的刺激都产出可观测的 user prompt
     const llm = new FL3((msgs: any[]) => { const u = msgs.find((m: any) => m.role === 'user'); if (u) caps.push(u.content); return '评' })
     return new CE3({ llm, mem: new FM3(() => 0), cfg, now: () => 0, emit: () => {}, rng: () => 0.01,
@@ -568,16 +575,54 @@ describe('丢旧保新:高频刺激保留最近2步', () => {
     expect(joined.includes('炮二平五')).toBe(false) // 最旧:被丢
   })
 
-  it('turning_point 刺激不被高频丢旧规则跳过(一定被处理)', async () => {
+  it('turning_point 不被高频丢旧跳过,且走转折点分支', async () => {
     const caps: string[] = []
-    const eng = mk(caps)
-    // 一个 move 后紧跟一个 turning_point;turning_point 属"非高频",不进丢旧窗口,一定被处理
-    const p1 = eng.onStimulus({ kind: 'move', gameId: 2, scoreCp: 0, moveZh: '兵三进一', ply: 1, tension: 0.9 } as any)
-    const p2 = eng.onStimulus({ kind: 'turning_point', gameId: 2, scoreCp: 200, ply: 2, tension: 0.95 } as any)
-    const before = caps.length
-    await Promise.all([p1, p2])
-    // turning_point 被处理 → 至少产出一条 user prompt(内容分支由 Task 5 提供,这里只验"没被丢")
-    expect(caps.length).toBeGreaterThan(before)
-    expect(caps.length).toBeGreaterThanOrEqual(1)
+    const eng = mk(caps)  // 复用该 describe 的 mk(注意它已带 minSilenceMs:0 覆盖)
+    // 打满 3 条 move(触发丢旧窗口逐出)再发 1 条 turning_point:证明它既没被丢、又走对了
+    // Task 5 新增的转折点专属 prompt 分支(断言内容特征,而非只数 caps 增长)。
+    const ps = [
+      eng.onStimulus({ kind: 'move', gameId: 3, scoreCp: 0, moveZh: '兵三进一', ply: 1, tension: 0.9 } as any),
+      eng.onStimulus({ kind: 'move', gameId: 3, scoreCp: 0, moveZh: '马二进三', ply: 2, tension: 0.9 } as any),
+      eng.onStimulus({ kind: 'move', gameId: 3, scoreCp: 0, moveZh: '车一平二', ply: 3, tension: 0.9 } as any),
+      eng.onStimulus({ kind: 'turning_point', gameId: 3, scoreCp: 260, moveZh: '车八进六', ply: 4, tension: 0.95 } as any),
+    ]
+    await Promise.all(ps)
+    expect(caps.some(u => u.includes('转折') || u.includes('攻守易势'))).toBe(true)
+  })
+})
+
+// ─── Task 5:维度化 prompt——idle 轮换 + turning_point/phase_shift 分支 + persona 偏好 ──────
+
+describe('多维度点评', () => {
+  function mk(caps: string[], moves: any[] = []) {
+    const cfg = new RC3(new SR3(odb3(':memory:')), () => '2026-06-21T00:00:00.000Z')
+    // 除节奏护栏外,还要放开 speakThreshold/jitterWidth:pickSpeakers 的打分是
+    // tension + (rng()-0.5)*jitterWidth,rng 固定在 0.01 时 jitter 恒为负,默认阈值 0.6
+    // 会让 tension 0.5~0.7 的 phase_shift/idle 刺激一个说话人都选不出(实测验证过),
+    // 导致断言的失败原因是"根本没人说话"而非"分支没写对"——与本 describe 要测的
+    // prompt 分支内容无关,清零后 score 恒等于 tension,必然有人说话。
+    cfg.updateSection('chat', { minSilenceMs: 0, maxPerMin: 100, speakThreshold: 0, jitterWidth: 0 })
+    const llm = new FL3((msgs: any[]) => { const u = msgs.find((m: any) => m.role === 'user'); if (u) caps.push(u.content); return '评' })
+    return new CE3({ llm, mem: new FM3(() => 0), cfg, now: () => 0, emit: () => {}, rng: () => 0.01,
+      repo: { getMoves: () => moves } as any })
+  }
+  it('turning_point → 点评转折并回顾', async () => {
+    const caps: string[] = []
+    await mk(caps, [{ ply: 2, scoreCp: 10 }, { ply: 4, scoreCp: 260 }]).onStimulus(
+      { kind: 'turning_point', gameId: 1, scoreCp: 260, moveZh: '车四进五', ply: 4, tension: 0.95 } as any)
+    expect(caps.some(u => u.includes('转折') || u.includes('攻守易势'))).toBe(true)
+  })
+  it('phase_shift → 局势总评', async () => {
+    const caps: string[] = []
+    await mk(caps, [{ ply: 10, scoreCp: 80 }]).onStimulus(
+      { kind: 'phase_shift', gameId: 1, scoreCp: 80, ply: 10, phase: 'midgame', tension: 0.7 } as any)
+    expect(caps.some(u => u.includes('总评') || u.includes('局势') || u.includes('盘面'))).toBe(true)
+  })
+  it('idle 注入叙事(走势/转折)', async () => {
+    const caps: string[] = []
+    // rng 固定 0.01 → idle 走第一分支(局势总评),其 user 含 narrative 的"第X手/转折/走势"
+    await mk(caps, [{ ply: 2, scoreCp: 10 }, { ply: 6, scoreCp: -240 }]).onStimulus(
+      { kind: 'idle', gameId: 1, scoreCp: null, tension: 0.5 } as any)
+    expect(caps.some(u => u.includes('第6手') || u.includes('转折') || u.includes('走势'))).toBe(true)
   })
 })

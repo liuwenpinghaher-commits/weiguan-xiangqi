@@ -1,11 +1,11 @@
 import type { LLMProvider } from '../llm/provider.js'
 import type { MemoryStore } from '../memory/store.js'
-import type { ChatLine, Stimulus, Persona, PersonaId } from '../types.js'
+import type { ChatLine, Stimulus, Persona, PersonaId, StimulusKind } from '../types.js'
 import type { RuntimeConfig } from '../config/runtime-config.js'
 import { viewScore } from '../personas/engine-view.js'
 import { pickSpeakers } from './speaker-select.js'
 import { TempoGuard } from './tempo.js'
-import type { ScoredMove } from './narrative.js'
+import { buildNarrative, type ScoredMove } from './narrative.js'
 
 export interface ChatEngineDeps {
   llm: LLMProvider
@@ -69,7 +69,7 @@ export class ChatEngine {
   private queue: Promise<void> = Promise.resolve()
   /** 高频刺激(逐手 move/blunder/brilliant)保留窗口大小:走快时最多滞后这么多步,超出丢最旧。 */
   private static readonly HIGH_FREQ_KEEP = 2
-  private static readonly HIGH_FREQ_KINDS = new Set(['move', 'blunder', 'brilliant'])
+  private static readonly HIGH_FREQ_KINDS = new Set<StimulusKind>(['move', 'blunder', 'brilliant'])
   /** 按 gameId 的高频刺激待处理窗口(FIFO,最多 HIGH_FREQ_KEEP 条);其余刺激(转折/阶段/停顿等)
    *  不进此窗口、一律不丢——只有逐手级高频刺激才会因走子过快而被挤掉。 */
   private highFreqPending = new Map<number, Stimulus[]>()
@@ -225,6 +225,7 @@ export class ChatEngine {
     const c = this.deps.cfg.getChat()
     const seen = viewScore(stim.scoreCp, p.skill, this.deps.rng)
     const qual = qualWord(seen)
+    const narrative = buildNarrative(this.deps.repo.getMoves(stim.gameId))
 
     // 记忆检索只是辅助背景("你对这位棋手的了解");检索失败(嵌入异常等)
     // 必须降级为"还不了解",绝不能抛错——否则会被外层 per-speaker catch 吞掉,导致全场哑火。
@@ -252,6 +253,9 @@ export class ChatEngine {
       + `只输出你说的那一句话,不带引号、不加旁白、不写名字前缀。\n`
       + `你对这位棋手的了解:\n${facts}\n`
       + `刚才这桌在聊(要接就接到棋上,别空贫):\n${contextLine}`
+      + (p.id === 'coach' ? '你尤其擅长通盘局势总评与战略方向。\n'
+       : p.id === 'laopaoer' ? '你见多识广,尤其爱结合掌故、名局、往手回顾来点评。\n'
+       : '')
 
     // 长度风格:多数偏短,制造节奏
     const lr = this.deps.rng()
@@ -273,10 +277,23 @@ export class ChatEngine {
       addressee = 'human'
     } else if (stim.kind === 'long_think') {
       user = `对方这步想了很久还没落子。${len},用你的脾气随口催两句/调侃/安慰,别太冲:`
+    } else if (stim.kind === 'turning_point') {
+      user = `局面刚发生转折——第${stim.ply ?? '?'}手${stim.moveZh ?? ''}后,${qual}。${len}。`
+        + `点出这个转折:攻守易势在哪、谁抓住了机会、回看前面哪步埋的因;${narrative ? `叙事参考:${narrative}。` : ''}引一句棋谚/棋理,用你的口吻:`
+    } else if (stim.kind === 'phase_shift') {
+      const pw = stim.phase === 'endgame' ? '残局' : stim.phase === 'midgame' ? '中盘' : '开局'
+      user = `棋局进入${pw}。${len}。做个局势总评:盘面性质、谁占主动、双方战略方向;${narrative ? `参考走势:${narrative}。` : ''}引经据典,别流水账:`
     } else if (stim.kind === 'idle' || (stim.kind === 'topic_open' && !stim.moveZh)) {
+      const dim = this.deps.rng()
       const ictx = this.lastCtx.get(stim.gameId)
-      const sit = ictx ? `眼下走到第${ictx.ply}手「${ictx.moveZh}」,${ictx.qual}` : '这局还在走'
-      user = `这会儿没新棋步。${len},就着眼前这盘说(${sit}):僵不僵/谁占优/该走哪一步/某步还没应,或随口催两句;可带一句扣着当前局面的棋识(残局理路/棋谚/掌故),别扯场外、别瞎编:`
+      const sit = ictx ? `眼下第${ictx.ply}手「${ictx.moveZh}」,${ictx.qual}` : '这局还在走'
+      if (dim < 0.34) {
+        user = `这会儿没新棋步。${len}。做个局势总评(${sit}):谁占优、局面性质、下一阶段该往哪使劲;${narrative ? `走势:${narrative}。` : ''}引经据典别空谈:`
+      } else if (dim < 0.67 && narrative) {
+        user = `这会儿没新棋步。${len}。回看这盘的走势(${narrative}):哪步是转折、当时的伏笔现在兑现没、棋手这盘的路子;用你的口吻带点掌故:`
+      } else {
+        user = `这会儿没新棋步。${len}。展望一下(${sit}):双方接下来的计划、有什么威胁或杀着苗头、该防哪一手;引一句棋理,别瞎猜:`
+      }
     } else if (target && this.deps.rng() < c.reactProb) {
       // 真互动(占比小):接某人的话,但要说到棋上,不空贫
       user = `「${target.name}」刚说:"${target.text}"。${len},接他的话——同意就补一刀、不同意就摆棋上的道理反驳他,像老熟人拌嘴但别空贫:`
