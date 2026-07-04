@@ -121,7 +121,11 @@ export class ChatEngine {
     if (stim.moveZh) {
       this.lastCtx.set(stim.gameId, { moveZh: stim.moveZh, qual: qualWord(stim.scoreCp ?? null), ply: stim.ply ?? 0 })
     }
-    const recentSecs = this.recentMap()
+    // turning_point/phase_shift 常紧跟在同一手的 move/blunder/brilliant 之后触发,而那条刺激
+    // 可能已让多个旁观者刚发言。若仍套用最近发言惩罚,他们的分数会被打压到阈值以下,导致这类
+    // 低频但重要的"关键时刻"反而选不出人、静默过去。故这两类刺激绕过惩罚(视为无人刚发言过)。
+    const isKeyStim = stim.kind === 'turning_point' || stim.kind === 'phase_shift'
+    const recentSecs = isKeyStim ? new Map<string, number>() : this.recentMap()
     const chat = this.deps.cfg.getChat()
     const maxSpk = stim.tension >= 0.8 ? 3 : stim.tension >= 0.5 ? 2 : 1
     const speakers = pickSpeakers(stim, this.deps.cfg.personas().filter(p => !p.isPlayer), recentSecs, this.deps.rng, chat.speakThreshold, chat.jitterWidth, maxSpk)

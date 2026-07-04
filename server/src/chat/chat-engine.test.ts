@@ -608,21 +608,81 @@ describe('多维度点评', () => {
   }
   it('turning_point → 点评转折并回顾', async () => {
     const caps: string[] = []
-    await mk(caps, [{ ply: 2, scoreCp: 10 }, { ply: 4, scoreCp: 260 }]).onStimulus(
+    await mk(caps, [{ ply: 2, scoreCp: 10, side: 'red' }, { ply: 4, scoreCp: 260, side: 'red' }]).onStimulus(
       { kind: 'turning_point', gameId: 1, scoreCp: 260, moveZh: '车四进五', ply: 4, tension: 0.95 } as any)
     expect(caps.some(u => u.includes('转折') || u.includes('攻守易势'))).toBe(true)
   })
   it('phase_shift → 局势总评', async () => {
     const caps: string[] = []
-    await mk(caps, [{ ply: 10, scoreCp: 80 }]).onStimulus(
+    await mk(caps, [{ ply: 10, scoreCp: 80, side: 'red' }]).onStimulus(
       { kind: 'phase_shift', gameId: 1, scoreCp: 80, ply: 10, phase: 'midgame', tension: 0.7 } as any)
     expect(caps.some(u => u.includes('总评') || u.includes('局势') || u.includes('盘面'))).toBe(true)
   })
   it('idle 注入叙事(走势/转折)', async () => {
     const caps: string[] = []
     // rng 固定 0.01 → idle 走第一分支(局势总评),其 user 含 narrative 的"第X手/转折/走势"
-    await mk(caps, [{ ply: 2, scoreCp: 10 }, { ply: 6, scoreCp: -240 }]).onStimulus(
+    await mk(caps, [{ ply: 2, scoreCp: 10, side: 'red' }, { ply: 6, scoreCp: -240, side: 'red' }]).onStimulus(
       { kind: 'idle', gameId: 1, scoreCp: null, tension: 0.5 } as any)
     expect(caps.some(u => u.includes('第6手') || u.includes('转折') || u.includes('走势'))).toBe(true)
+  })
+})
+
+// ─── I1 回归:关键刺激(turning_point/phase_shift)绕过最近发言惩罚,避免被"刚发言"误伤致静默 ──
+// 背景:turning_point/phase_shift 往往紧跟在同一手的 move/blunder/brilliant 之后触发,
+// 而那条刺激可能已经让最多 3 个旁观者发言。pickSpeakers 的"最近发言惩罚"会让这些刚说过话的
+// 候选人分数骤降,若关键刺激仍复用同一份 recentMap,可能导致压根没人选中——"关键时刻"反而哑火。
+
+describe('关键刺激绕过最近发言惩罚(I1)', () => {
+  /** speakThreshold=0.5 是关键:round 1(无惩罚)score=tension(0.9)>=0.5 通过;
+   *  若关键刺激仍套用 recentMap()(now 恒为 0 → sinceLast=0 → 满额惩罚 0.5),
+   *  score = tension - 0.5,turning_point(0.95-0.5=0.45)/phase_shift(0.7-0.5=0.2)均 < 0.5 → 全员静默。
+   *  jitterWidth=0 消除随机扰动;rng 固定 0.99 令 playerChimeProb(默认0.3)判定必不通过,
+   *  把 player 排除在外,断言只反映 pickSpeakers/旁观者的行为。 */
+  function mkKeyStimHarness(emitted: any[]) {
+    const cfg = new RC3(new SR3(odb3(':memory:')), () => '2026-06-21T00:00:00.000Z')
+    cfg.updateSection('chat', { minSilenceMs: 0, maxPerMin: 100, speakThreshold: 0.5, jitterWidth: 0 })
+    const llm = new FL3((msgs: any[]) => {
+      const u = msgs.find((m: any) => m.role === 'user')?.content ?? ''
+      // 关键刺激的 prompt 分支含"转折"/"总评"字样;用不同回复文本避免被去重护栏误杀。
+      return u.includes('转折') || u.includes('总评') ? '这是关键点评' : '照常点评一句'
+    })
+    return new CE3({
+      llm, mem: new FM3(() => 0), cfg, now: () => 0,
+      emit: (l: any) => emitted.push(l), rng: () => 0.99,
+      repo: { getMoves: () => [] } as any,
+    })
+  }
+
+  it('3 条 move 刺激令旁观者刚发言后,turning_point 仍至少产出一条弹幕', async () => {
+    const emitted: any[] = []
+    const eng = mkKeyStimHarness(emitted)
+
+    for (let i = 0; i < 3; i++) {
+      await eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 0, moveZh: `第${i}步`, ply: i + 1, tension: 0.9 } as any)
+    }
+    // 前置条件:确实有旁观者说过话,"刚发言"惩罚场景才成立
+    expect(emitted.length).toBeGreaterThanOrEqual(1)
+
+    const before = emitted.length
+    await eng.onStimulus(
+      { kind: 'turning_point', gameId: 1, scoreCp: 260, moveZh: '车八进六', ply: 4, tension: 0.95 } as any)
+
+    expect(emitted.length).toBeGreaterThan(before)
+  })
+
+  it('3 条 move 刺激令旁观者刚发言后,phase_shift 仍至少产出一条弹幕', async () => {
+    const emitted: any[] = []
+    const eng = mkKeyStimHarness(emitted)
+
+    for (let i = 0; i < 3; i++) {
+      await eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 0, moveZh: `第${i}步`, ply: i + 1, tension: 0.9 } as any)
+    }
+    expect(emitted.length).toBeGreaterThanOrEqual(1)
+
+    const before = emitted.length
+    await eng.onStimulus(
+      { kind: 'phase_shift', gameId: 1, scoreCp: 80, ply: 10, phase: 'midgame', tension: 0.7 } as any)
+
+    expect(emitted.length).toBeGreaterThan(before)
   })
 })

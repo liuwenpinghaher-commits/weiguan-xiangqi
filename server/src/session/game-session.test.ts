@@ -467,6 +467,11 @@ test('AI 着阶段切换(opening→midgame)→ 追加 phase_shift 刺激', async
   const shift = captured.find((s: any) => s.kind === 'phase_shift')
   expect(shift.phase).toBe('midgame')
   expect(shift.tension).toBe(0.7)
+  // M2 回归:phase_shift 应与 turning_point 对称携带 moveZh 字段(供老黑 chime-in 分支——
+  // 该分支 gated on stim.moveZh != null——同样能在阶段切换时触发)。用 hasOwnProperty 而非
+  // 真值判断:fakePosition 不是合法 FEN,describeMoveZh 会失败降级为 undefined,但字段本身
+  // 必须存在(修复前 phase_shift 字面量根本不含 moveZh 这个 key)。
+  expect(Object.prototype.hasOwnProperty.call(shift, 'moveZh')).toBe(true)
 })
 
 test('同阶段内连续走子 → 不重复追加 phase_shift 刺激', async () => {

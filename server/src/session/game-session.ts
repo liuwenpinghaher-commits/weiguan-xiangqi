@@ -427,7 +427,7 @@ export class GameSession {
     if (prevPhase !== undefined && prevPhase !== aiPhase) {
       this.deps.onStimulus?.({
         kind: 'phase_shift', gameId, scoreCp: redCp,
-        side: aiSide, ply: aiPly, phase: aiPhase, tension: 0.7,
+        moveZh: aiZh, side: aiSide, ply: aiPly, phase: aiPhase, tension: 0.7,
       })
     }
     this.lastPhase.set(gameId, aiPhase)
