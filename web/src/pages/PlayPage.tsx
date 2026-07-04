@@ -516,7 +516,21 @@ export function PlayPage() {
               }}
             />
           </div>
-          <div style={{ width: '100%', maxWidth: boardSize, display: 'flex', flexDirection: 'column', ...(isNarrow ? { maxHeight: 300 } : { flex: 1, minHeight: 0 }) }}>
+        </div>
+
+        <div style={{ ...styles.chatCol, display: 'flex', flexDirection: 'column', gap: space.sm, height: isNarrow ? undefined : '100%', ...(isNarrow ? { width: '100%', maxWidth: 480 } : { maxHeight: '100%' }) }}>
+          {/* 语音/弹幕框:占右栏上部 */}
+          <div style={{ flex: 1, minHeight: isNarrow ? 380 : 0 }}>
+            <ChatPanel
+              key={gameId ?? 'idle'}
+              lines={lines}
+              enabled={spectatorsOn}
+              onSay={(t) => { if (status === 'playing' && gameId !== null) wsRef.current?.send({ type: 'say', gameId, text: t }) }}
+            />
+          </div>
+          {/* 行棋记录:填到语音框下方的空地 */}
+          <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={styles.moveListTitle}>行棋记录</div>
             <MoveList moves={moveHistory} currentPly={plyIndex} onNavigate={(ply) => {
               // 点到最新手(或更后)→ 退出回看,回到最新局面
               if (ply >= moveHistory.length) {
@@ -536,15 +550,6 @@ export function PlayPage() {
               }
             }} />
           </div>
-        </div>
-
-        <div style={{ ...styles.chatCol, height: isNarrow ? 420 : boardSize, ...(isNarrow ? { width: '100%', maxWidth: 480 } : { maxHeight: '100%' }) }}>
-          <ChatPanel
-            key={gameId ?? 'idle'}
-            lines={lines}
-            enabled={spectatorsOn}
-            onSay={(t) => { if (status === 'playing' && gameId !== null) wsRef.current?.send({ type: 'say', gameId, text: t }) }}
-          />
         </div>
       </div>
     </div>
@@ -583,8 +588,9 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
   },
   studioWide: { flex: 1, minHeight: 0, overflow: 'hidden' },
-  // 宽屏中列填满可用高度,棋盘定尺不动、走法记录在下方吃掉剩余高度并内部滚动
-  centerColWide: { height: '100%', minHeight: 0, overflow: 'hidden', gap: space.sm },
+  // 宽屏中列填满可用高度,棋盘定尺不动并在列内垂直居中(走法记录已移到右栏,这列只剩棋盘)
+  centerColWide: { height: '100%', minHeight: 0, overflow: 'hidden', gap: space.sm, justifyContent: 'center' },
+  moveListTitle: { fontSize: fontSize.xs, color: color.textMuted, letterSpacing: '0.08em', paddingLeft: 2 },
   rail: {
     width: 264,
     flexShrink: 0,

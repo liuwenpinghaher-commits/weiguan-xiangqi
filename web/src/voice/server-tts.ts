@@ -1,4 +1,4 @@
-import { ttsUrl } from '../api/config.js'
+import { ttsUrl, HTTP_BASE } from '../api/config.js'
 import { isMuted, speak as browserSpeak } from './browser-tts.js'
 
 /**
@@ -119,11 +119,13 @@ async function drain(): Promise<void> {
     }
     if (gen !== generation) break // await 期间 stopVoice 触发 → 不要再 play 这条残留
 
-    // 用后端返回的本地 /static/tts 相对 url 直接播放(同源静态文件,起播快)。
+    // 播放后端返回的 wav。后端返回相对路径 /static/tts/xxx.wav,dev 下前端(3420 Vite)
+    // 与后端(3410)不同源,必须补 HTTP_BASE 前缀:否则相对 url 会打到前端 dev server,
+    // 拿到 SPA fallback 的 index.html(200 text/html)→ 音频解码失败 → 静音。
     // 此刻起这条就是"正在播放的一句"→ fireStart 让 UI 同步揭示该气泡(文字随声音出现)。
     try {
       const a = getAudio()
-      a.src = url
+      a.src = url.startsWith('http') ? url : HTTP_BASE + url
       fireStart(item)
       let failed = false
       try {

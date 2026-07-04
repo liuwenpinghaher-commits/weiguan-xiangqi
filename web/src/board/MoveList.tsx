@@ -71,8 +71,8 @@ export function MoveList({ moves, currentPly, onNavigate }: MoveListProps) {
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    // 高度随外层伸缩(桌面固定视口下由父 flex 容器约束),内部滚动;窄屏由父层给 maxHeight 兜底
-    maxHeight: '100%',
+    // 置于右栏语音框下方:固定高度上限,内容多则内部滚动(自洽,不依赖父容器高度)
+    maxHeight: 200,
     minHeight: 0,
     width: '100%',
     boxSizing: 'border-box',
