@@ -59,6 +59,39 @@ function resolveReferenceAudio(profile: VoiceProfile, cfg: TtsCfg): string | nul
 const REF_AUDIO_MISSING_MSG =
   '缺参考音频:moss-tts-nano voice_clone 需要 prompt_audio。请确认 server/assets/tts/reference.wav 存在,或 persona 的 ttsVoice 指向有效 wav 路径'
 
+// ── 服务端串行化 ──────────────────────────────────────────────────────────
+// moss-tts-nano 是单线程(单 CPU 执行锁):同一时刻只能算一条。前端为每条弹幕都打
+// /tts,突发并发会在 moss 内部堆积,一旦某请求触发 60s 超时被 abort、又与有界音频
+// 队列相互作用,可能把整个 moss 拖入假死(0% CPU 死锁,连状态接口都不再应答,唯有
+// 重启才恢复——这正是"语音突然没声音"的根因)。故在服务端串行:同一时刻只放行 1 个
+// 合成,其余排队;排队过深直接拒绝,由调用方回退浏览器 TTS,避免把 moss 打垮。
+const TTS_MAX_PENDING = 3
+let ttsPending = 0
+let ttsChain: Promise<unknown> = Promise.resolve()
+
+/**
+ * 合成入口(串行化包装):并发调用会排队,队列满(>=TTS_MAX_PENDING)即抛错拒绝。
+ * 真正的合成逻辑在 synthesizeAudioInner。
+ */
+export async function synthesizeAudio(
+  text: string,
+  profile: VoiceProfile,
+  cfg: TtsCfg,
+): Promise<string> {
+  if (ttsPending >= TTS_MAX_PENDING) {
+    throw new Error('TTS 繁忙(合成队列已满,已跳过本次语音以保护 moss)')
+  }
+  ttsPending++
+  const run = ttsChain.then(() => synthesizeAudioInner(text, profile, cfg))
+  // 链不因单次失败而断裂:吞掉结果只保留"完成"信号,下一个请求接续执行
+  ttsChain = run.then(() => undefined, () => undefined)
+  try {
+    return await run
+  } finally {
+    ttsPending--
+  }
+}
+
 /**
  * 流式合成:调用 moss-tts-nano /api/generate-stream/start,
  * 轮询收集音频块,拼接成完整 WAV 写入 static/tts/,
@@ -66,7 +99,7 @@ const REF_AUDIO_MISSING_MSG =
  *
  * 失败时若 streaming=true 且流式失败,回退 /api/generate 一次性合成。
  */
-export async function synthesizeAudio(
+async function synthesizeAudioInner(
   text: string,
   profile: VoiceProfile,
   cfg: TtsCfg,

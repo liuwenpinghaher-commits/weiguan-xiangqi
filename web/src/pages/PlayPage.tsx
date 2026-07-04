@@ -25,7 +25,8 @@ export function PlayPage() {
   const [statusMsg, setStatusMsg] = useState('点「开始」开局')
   const [statusError, setStatusError] = useState(false) // 非法着法时用红字显示
   const [gameId, setGameId] = useState<number | null>(null)
-  const [lastAiMove, setLastAiMove] = useState<string | null>(null)
+  const [lastAiMove, setLastAiMove] = useState<string | null>(null) // UCI,供棋盘高亮 lastMove
+  const [lastAiMoveZh, setLastAiMoveZh] = useState<string | null>(null) // 中文注记,供文案展示
   const [lines, setLines] = useState<ChatLine[]>([])
   const [mode, setMode] = useState<GameMode>('coach')
   const [side, setSide] = useState<HumanSide>('red') // 人类执哪方
@@ -33,7 +34,7 @@ export function PlayPage() {
   const [gameResult, setGameResult] = useState<GameResult>(null)
   const [isSparring, setIsSparring] = useState(false) // 是否从陪练局面起手
   const [spectatorsOn, setSpectatorsOn] = useState(true) // 观众席(弹幕+语音)开关
-  const [moveHistory, setMoveHistory] = useState<{ply:number;move:string;side:'red'|'black'}[]>([])
+  const [moveHistory, setMoveHistory] = useState<{ply:number;move:string;side:'red'|'black';zh?:string}[]>([])
   const [fenHistory, setFenHistory] = useState<string[]>([START_FEN])
   const [plyIndex, setPlyIndex] = useState(0)
   const [undoRemaining, setUndoRemaining] = useState(3)
@@ -83,16 +84,32 @@ export function PlayPage() {
       setStatusError(false)
     } else if (msg.type === 'update') {
       setFen(msg.fen)
-      setFenKey(k => k + 1) // 刷新 key，确保 Board 与最新 fen 同步
+      // 不再每手 bump fenKey:Board 由 position(fen) 受控,改 prop 即平滑动画到新局面。
+      // 每手强制重挂会让棋盘整块闪烁/重刷(用户反馈问题2)。仅非法着回弹时才重挂(见 error 分支)。
       setViewingHistory(false) // 有新进展,回到最新局面
       setLastAiMove(msg.aiMove)
+      setLastAiMoveZh(msg.aiMoveZh ?? null)
       setAwaitingAi(false) // AI 已回应，解锁棋盘
       setStatusError(false)
       if (msg.clockState) setClockState(msg.clockState)
-      if (msg.aiMove) {
-        const aiSide = sideRef.current === 'red' ? 'black' : 'red'
-        setMoveHistory(prev => [...prev, { ply: prev.length + 1, move: msg.aiMove!, side: aiSide }])
-      }
+      // 中文棋谱回填:人手落地时前端只有 UCI,服务端 update 才带回 moveZh → 回填刚下的人手;
+      // 再把 AI 着(含 aiMoveZh)追加。人手直接终局(无 aiMove)时也要回填,故独立于 aiMove 判断。
+      setMoveHistory(prev => {
+        let next = prev
+        if (msg.moveZh && prev.length > 0) {
+          const last = prev[prev.length - 1]
+          if (last.zh === undefined && last.side === sideRef.current) {
+            next = prev.slice()
+            next[next.length - 1] = { ...last, zh: msg.moveZh }
+          }
+        }
+        if (msg.aiMove) {
+          const aiSide = sideRef.current === 'red' ? 'black' : 'red'
+          if (next === prev) next = prev.slice()
+          next.push({ ply: next.length + 1, move: msg.aiMove, side: aiSide, zh: msg.aiMoveZh })
+        }
+        return next
+      })
       if (msg.fen) {
         setFenHistory(prev => { const next = [...prev, msg.fen]; if (next.length > 200) next.shift(); return next })
       }
@@ -119,7 +136,8 @@ export function PlayPage() {
         setStatus('playing')
         // 教练模式:导演给的选着解释(如"你最近连败,我这手放缓一点")随播报展示
         const reason = msg.aiReason && modeRef.current === 'coach' ? ` · ${msg.aiReason}` : ''
-        setStatusMsg(msg.aiMove ? `AI 走了 ${msg.aiMove}${reason}，轮到您走` : '轮到您走棋')
+        const aiShown = msg.aiMoveZh ?? msg.aiMove
+        setStatusMsg(aiShown ? `AI 走了 ${aiShown}${reason}，轮到您走` : '轮到您走棋')
       }
     } else if (msg.type === 'error') {
       // 非法着法或其他错误：解锁棋盘并强制回弹到当前合法 fen
@@ -268,6 +286,7 @@ export function PlayPage() {
     setFenKey(k => k + 1)
     setGameId(null)
     setLastAiMove(null)
+    setLastAiMoveZh(null)
     setLines([])
     setStatus('connecting')
     setStatusMsg('正在连接服务器...')
@@ -387,7 +406,7 @@ export function PlayPage() {
         <span style={statusError ? styles.statusTextError : styles.statusText}>{statusMsg}</span>
         <div style={styles.statusMeta}>
           {awaitingAi && !statusError && <span style={styles.thinkingBadge}>AI 思考中…</span>}
-          {lastAiMove && !awaitingAi && <span style={styles.aiMove}>AI 上一手 {lastAiMove}</span>}
+          {lastAiMove && !awaitingAi && <span style={styles.aiMove}>AI 上一手 {lastAiMoveZh ?? lastAiMove}</span>}
         </div>
       </div>
 
@@ -474,11 +493,11 @@ export function PlayPage() {
   )
 
   return (
-    <div style={styles.page}>
-      <div style={{ ...styles.studio, flexDirection: isNarrow ? 'column' : 'row', alignItems: isNarrow ? 'center' : 'flex-start' }}>
+    <div style={{ ...styles.page, ...(isNarrow ? styles.pageNarrow : styles.pageWide) }}>
+      <div style={{ ...styles.studio, flexDirection: isNarrow ? 'column' : 'row', alignItems: isNarrow ? 'center' : 'flex-start', ...(isNarrow ? {} : styles.studioWide) }}>
         {sidebar}
 
-        <div style={styles.centerCol}>
+        <div style={{ ...styles.centerCol, ...(isNarrow ? {} : styles.centerColWide) }}>
           <button style={styles.flipBtn} onClick={() => setFlipped(f => !f)} aria-label="翻转棋盘">↻ 翻转棋盘</button>
           <div style={styles.boardWrapper}>
             <Board
@@ -497,27 +516,29 @@ export function PlayPage() {
               }}
             />
           </div>
-          <MoveList moves={moveHistory} currentPly={plyIndex} onNavigate={(ply) => {
-            // 点到最新手(或更后)→ 退出回看,回到最新局面
-            if (ply >= moveHistory.length) {
-              setViewingHistory(false)
-              setPlyIndex(moveHistory.length)
-              const latest = fenHistory[fenHistory.length - 1]
-              if (latest) { setFen(latest); setFenKey(k => k + 1) }
-              return
-            }
-            // 回看历史:映射到最近可用的 server 帧并锁盘
-            const f = fenHistory[plyToFrame(ply)]
-            if (f) {
-              setFen(f)
-              setFenKey(k => k + 1)
-              setPlyIndex(ply)
-              setViewingHistory(true)
-            }
-          }} />
+          <div style={{ width: '100%', maxWidth: boardSize, display: 'flex', flexDirection: 'column', ...(isNarrow ? { maxHeight: 300 } : { flex: 1, minHeight: 0 }) }}>
+            <MoveList moves={moveHistory} currentPly={plyIndex} onNavigate={(ply) => {
+              // 点到最新手(或更后)→ 退出回看,回到最新局面
+              if (ply >= moveHistory.length) {
+                setViewingHistory(false)
+                setPlyIndex(moveHistory.length)
+                const latest = fenHistory[fenHistory.length - 1]
+                if (latest) { setFen(latest); setFenKey(k => k + 1) }
+                return
+              }
+              // 回看历史:映射到最近可用的 server 帧并锁盘
+              const f = fenHistory[plyToFrame(ply)]
+              if (f) {
+                setFen(f)
+                setFenKey(k => k + 1)
+                setPlyIndex(ply)
+                setViewingHistory(true)
+              }
+            }} />
+          </div>
         </div>
 
-        <div style={{ ...styles.chatCol, height: isNarrow ? 420 : boardSize, ...(isNarrow ? { width: '100%', maxWidth: 480 } : {}) }}>
+        <div style={{ ...styles.chatCol, height: isNarrow ? 420 : boardSize, ...(isNarrow ? { width: '100%', maxWidth: 480 } : { maxHeight: '100%' }) }}>
           <ChatPanel
             key={gameId ?? 'idle'}
             lines={lines}
@@ -532,11 +553,24 @@ export function PlayPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: 'calc(100dvh - 52px)',
-    padding: `${space.xl}px ${space.lg}px`,
+    boxSizing: 'border-box',
+    padding: `${space.lg}px ${space.lg}px`,
     background: color.bg,
     color: color.text,
     fontFamily: font.sans,
+  },
+  // 宽屏:固定视口外壳——整页恰好占一屏高、不产生页面级滚动(问题2:窗口固定,非无限下拉)。
+  // 溢出由各列内部滚动消化(棋盘定尺居中不动,走法记录在其下方独立滚动)。
+  pageWide: {
+    height: 'calc(100dvh - 52px)',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  // 窄屏:回退为可纵向滚动的堆叠布局(移动端本就期望滚动)
+  pageNarrow: {
+    minHeight: 'calc(100dvh - 52px)',
+    overflowY: 'auto',
   },
   // 直播间三栏容器
   studio: {
@@ -548,6 +582,9 @@ const styles: Record<string, React.CSSProperties> = {
     margin: '0 auto',
     width: '100%',
   },
+  studioWide: { flex: 1, minHeight: 0, overflow: 'hidden' },
+  // 宽屏中列填满可用高度,棋盘定尺不动、走法记录在下方吃掉剩余高度并内部滚动
+  centerColWide: { height: '100%', minHeight: 0, overflow: 'hidden', gap: space.sm },
   rail: {
     width: 264,
     flexShrink: 0,
@@ -555,6 +592,8 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: space.md,
     alignSelf: 'stretch',
+    minHeight: 0,
+    overflowY: 'auto', // 固定视口下侧栏内容超高时自身滚动,不撑破整页
   },
   centerCol: {
     flexShrink: 0,

@@ -264,7 +264,7 @@ export class GameSession {
     return !!this.deps.repo.getGame(gameId)?.result
   }
 
-  async playHumanMove(gameId: number, move: string): Promise<{ aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; aiReason?: string }> {
+  async playHumanMove(gameId: number, move: string): Promise<{ aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; aiReason?: string; moveZh?: string; aiMoveZh?: string }> {
     // 完局守卫:对局已判负/和/超时后,拒绝任何后续走子(防复活僵尸局、写终局后脏着法)
     if (this.isFinished(gameId)) throw new Error('对局已结束')
     // 走子前先查超时:读秒已归零则直接判负(flag-fall),不再受理这手棋
@@ -321,7 +321,7 @@ export class GameSession {
         moveZh: humanZh, side: humanTurn, ply: humanPly, phase,
         tension: endTension,
       })
-      return { aiMove: null, fen: afterHuman.fen(), over: true, result }
+      return { aiMove: null, fen: afterHuman.fen(), over: true, result, moveZh: humanZh ?? undefined }
     }
 
     // 4. 计算 AI 回着(此处任何失败都抛出,且尚未写任何库、未改 position,可重试)
@@ -421,10 +421,10 @@ export class GameSession {
     if (aiOver.over || aiRepeat !== null) {
       const result = aiOver.over ? aiOver.result! : aiRepeat!.result
       this.finish(gameId, result)
-      return { aiMove: decision.move, fen: afterAI.fen(), over: true, result, aiReason: decision.reason }
+      return { aiMove: decision.move, fen: afterAI.fen(), over: true, result, aiReason: decision.reason, moveZh: humanZh ?? undefined, aiMoveZh: aiZh ?? undefined }
     }
     if (clock) this.startClockFor(clock, this.humanSides.get(gameId)!)
-    return { aiMove: decision.move, fen: afterAI.fen(), over: false, aiReason: decision.reason }
+    return { aiMove: decision.move, fen: afterAI.fen(), over: false, aiReason: decision.reason, moveZh: humanZh ?? undefined, aiMoveZh: aiZh ?? undefined }
   }
 
   /**
@@ -435,7 +435,7 @@ export class GameSession {
    * - 触发 byPlayerPersona 刺激（与 playHumanMove AI 段一致）。
    * - 返回 { aiMove, fen, over, result? }。
    */
-  async aiFirstMove(gameId: number): Promise<{ aiMove: string; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; aiReason?: string }> {
+  async aiFirstMove(gameId: number): Promise<{ aiMove: string; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; aiReason?: string; aiMoveZh?: string }> {
     if (this.isFinished(gameId)) throw new Error('对局已结束')
     this.ensureLoaded(gameId)
     const pos = this.positions.get(gameId)
@@ -500,12 +500,12 @@ export class GameSession {
     if (aiOver.over || aiRepeat !== null) {
       const result = aiOver.over ? aiOver.result! : aiRepeat!.result
       this.finish(gameId, result)
-      return { aiMove: decision.move, fen: afterAI.fen(), over: true, result, aiReason: decision.reason }
+      return { aiMove: decision.move, fen: afterAI.fen(), over: true, result, aiReason: decision.reason, aiMoveZh: aiZh ?? undefined }
     }
 
     // AI 先手落定后轮到人类,人类开始走钟
     if (clock) this.startClockFor(clock, humanSide)
-    return { aiMove: decision.move, fen: afterAI.fen(), over: false, aiReason: decision.reason }
+    return { aiMove: decision.move, fen: afterAI.fen(), over: false, aiReason: decision.reason, aiMoveZh: aiZh ?? undefined }
   }
 
   private buildContext(gameId: number): DirectorContext {
