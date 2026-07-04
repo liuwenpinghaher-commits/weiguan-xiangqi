@@ -108,7 +108,9 @@ export class ChatEngine {
 
         const plan = await this.plan(persona, stim, context)
         const text = (await this.deps.llm.chat(plan.messages, {
-          maxTokens: 70,
+          // 云思考模型(如 DeepSeek v4-flash)会先思考(reasoning~50token),给足容纳思考+弹幕正文,
+          // 否则正文被截空;本地/非思考模型此值仅作上限,不影响短弹幕。
+          maxTokens: 300,
         })).trim()
         if (!text) continue
 

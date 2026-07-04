@@ -73,7 +73,8 @@ export async function reflect(args: {
         + `请先列出 2-3 条关于这位棋手的具体事实(每行以 "- " 开头,如"- 爱走当头炮"、"- 残局易急躁"),`
         + `最后一行以"洞见: "开头,给一句更高层次的总括性洞见。全部用中文回答。`,
     },
-  ], { maxTokens: 200 })).trim()
+    // 反思提炼开 think 发挥推理(本地 qwen3.5)。maxTokens 是上限非目标:生成完即停,设大只防思考被截断
+  ], { maxTokens: 5000, think: true })).trim()
 
   if (!raw) return
 

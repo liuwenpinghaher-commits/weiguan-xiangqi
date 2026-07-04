@@ -102,7 +102,11 @@ export async function buildServer(opts: {
   // 嵌入构造容错:无凭据时不抛垮 boot——inner=null,embed 失败→SqliteMemoryStore 照存无向量(退 recency),
   // 记忆仍持久;控制台配上 key 后热更即恢复语义检索。
   const buildEmbedding = (l: { apiKey: string | null; baseURL: string | null }): DashscopeEmbedding | null => {
-    try { return new DashscopeEmbedding(undefined, undefined, undefined, l.apiKey ?? undefined, l.baseURL ?? undefined) }
+    // 嵌入端点可独立于 chat:EMBEDDING_BASE_URL/EMBEDDING_API_KEY 优先,未设则回退 llm 段。
+    // 用途:chat 走云(如 DeepSeek,无嵌入 API),嵌入固定走本地 Ollama bge-m3——两端解耦。
+    const base = process.env.EMBEDDING_BASE_URL ?? l.baseURL
+    const key = process.env.EMBEDDING_API_KEY ?? l.apiKey
+    try { return new DashscopeEmbedding(undefined, undefined, undefined, key ?? undefined, base ?? undefined) }
     catch { return null }
   }
   let innerEmbedding = buildEmbedding(cfg.getLlm())

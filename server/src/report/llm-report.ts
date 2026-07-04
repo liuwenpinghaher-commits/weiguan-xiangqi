@@ -29,7 +29,9 @@ export async function growthReport(
         { role: 'system', content: '你是专业的中国象棋教练，擅长用简洁中文点评棋手成长。' },
         { role: 'user', content: prompt },
       ],
-      { maxTokens: 300, temperature: 0.7 },
+      // 诊断点评开 think 发挥推理(本地 qwen3.5)。maxTokens 是上限非目标长度:生成到自然结束即停,
+      // 设大只为防"2B 思考没想完被截断→正文空",正常不浪费;低频异步,跑满才慢可接受。云忽略 think。
+      { maxTokens: 6000, temperature: 0.7, think: true },
     )
 
     const text = reply.trim()
