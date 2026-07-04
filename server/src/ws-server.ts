@@ -25,6 +25,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
 import fastifyStatic from '@fastify/static'
 import { synthesizeAudio } from './voice/moss-tts.js'
+import { synthesizeUrl, voiceForPersona } from './voice/dashscope-tts.js'
 import { DashscopeAsr } from './voice/dashscope-asr.js'
 import { SqliteMemoryStore } from './memory/sqlite-memory-store.js'
 import { DashscopeEmbedding } from './llm/dashscope-embedding.js'
@@ -855,15 +856,24 @@ export async function buildServer(opts: {
     const text = rawText.slice(0, 500)
     const profile = cfg.voiceProfileForPersona(personaId)
 
+    const ttsCfg = cfg.getTts()
     try {
-      const fileUrl = await synthesizeAudio(text, profile, cfg.getTts())
-      return reply.header('Content-Type', 'application/json').send({ url: fileUrl })
+      let url: string
+      if (ttsCfg.provider === 'moss') {
+        url = await synthesizeAudio(text, profile, ttsCfg)  // 本地 moss(CPU,慢)
+      } else {
+        // 云 qwen3-tts-flash:亚秒、情感音色。用 DashScope 凭据(env,独立于 chat 的 DeepSeek key)
+        url = await synthesizeUrl(text, voiceForPersona(personaId), {
+          endpoint: process.env.DASHSCOPE_TTS_ENDPOINT ?? '',
+          apiKey: process.env.DASHSCOPE_API_KEY ?? '',
+          model: process.env.DASHSCOPE_TTS_MODEL ?? 'qwen3-tts-flash',
+        })
+      }
+      return reply.header('Content-Type', 'application/json').send({ url })
     } catch (e) {
       req.log.error(e, 'TTS 合成失败')
-      // moss-tts-nano 进程可能已退出;检查并尝试重启
-      if (!mossProcess || mossProcess.killed) {
-        startMossTts()
-      }
+      // 仅本地 moss 需检查进程重启;云路径失败直接 503(前端回退浏览器 TTS)
+      if (ttsCfg.provider === 'moss' && (!mossProcess || mossProcess.killed)) startMossTts()
       return reply.code(503).send({ error: 'TTS 服务暂时不可用' })
     }
   })

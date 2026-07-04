@@ -52,7 +52,7 @@ const SCHEMA: Record<ConfigSection, Record<string, Cleaner>> = {
   engine: { pikafishPath: (v) => (typeof v === 'string' ? (v.trim() === '' ? null : v) : v === null ? null : undefined), multipv: intRange(1, 10), movetime: intRange(50, 5000), clockInitialSeconds: intRange(30, 3600), clockIncrementSeconds: intRange(0, 60) },
   diagnose: { depth: intRange(1, 30) },
   llm: { apiKey: strOrNull, model: str, baseURL: strOrNull },
-  tts: { mossNanoUrl: localHttpUrl, referenceAudio: str, streaming: (v) => (typeof v === 'boolean' ? v : undefined) },
+  tts: { provider: (v) => (v === 'moss' || v === 'qwen' ? v : undefined), mossNanoUrl: localHttpUrl, referenceAudio: str, streaming: (v) => (typeof v === 'boolean' ? v : undefined) },
 }
 
 export function validateSection(section: ConfigSection, patch: Record<string, unknown>): Record<string, unknown> {
