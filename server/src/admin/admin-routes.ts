@@ -130,7 +130,7 @@ function registerGamesRoutes(app: FastifyInstance, { games, messages, mem }: Adm
     const id = parseInt((req.params as { id: string }).id, 10)
     if (isNaN(id)) return reply.code(400).send({ error: 'invalid id' })
     games.deleteGame(id)
-    // 跨库级联:该局沉淀的记忆一并清除(尽力而为,Surreal 掉线时不阻塞删局)
+    // 该局沉淀的记忆一并清除(同库,失败不阻塞删局)
     try { await mem.removeByGame(id) } catch { /* 记忆清理失败不影响 SQLite 删除 */ }
     return { ok: true }
   })

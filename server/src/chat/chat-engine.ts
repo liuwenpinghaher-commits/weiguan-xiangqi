@@ -129,7 +129,7 @@ export class ChatEngine {
         this.lastText.set(id, text)
 
         // 先更新内存态(限流惩罚 + 上下文),再落库。落库属"尽力而为"的持久化,
-        // 不能因其失败(如 SurrealDB 断)而丢掉 lastSpokeAt/roundSoFar/recent——
+        // 不能因其失败(检索/落库异常)而丢掉 lastSpokeAt/roundSoFar/recent——
         // 否则该 speaker 最近发言惩罚失效(可能连说)、同回合后续 speaker 看不到他这句。
         this.lastSpokeAt.set(id, this.deps.now())
 
@@ -183,7 +183,7 @@ export class ChatEngine {
     const seen = viewScore(stim.scoreCp, p.skill, this.deps.rng)
     const qual = qualWord(seen)
 
-    // 记忆检索只是辅助背景("你对这位棋手的了解");检索失败(如 SurrealDB 连接断)
+    // 记忆检索只是辅助背景("你对这位棋手的了解");检索失败(嵌入异常等)
     // 必须降级为"还不了解",绝不能抛错——否则会被外层 per-speaker catch 吞掉,导致全场哑火。
     let facts = '(还不了解)'
     try {

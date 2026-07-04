@@ -26,8 +26,7 @@ import { join } from 'node:path'
 import fastifyStatic from '@fastify/static'
 import { synthesizeAudio } from './voice/moss-tts.js'
 import { DashscopeAsr } from './voice/dashscope-asr.js'
-import { SurrealMemoryStore } from './memory/surreal-memory-store.js'
-import { FakeMemoryStore } from './memory/fake-memory-store.js'
+import { SqliteMemoryStore } from './memory/sqlite-memory-store.js'
 import { DashscopeEmbedding } from './llm/dashscope-embedding.js'
 import { reflect } from './memory/reflection.js'
 import { describeMoveZh } from './rules/describe-move.js'
@@ -98,39 +97,26 @@ export async function buildServer(opts: {
     if (!cfg.getLlm().apiKey) console.warn('未配置 DASHSCOPE_API_KEY:观棋聊天功能不可用,对弈/诊断照常运行')
   }
 
-  // 记忆:优先 SurrealDB 语义记忆;连接/配置失败则降级为内存 store(聊天/反思照常,只是不持久、不语义)
-  let mem: import('./memory/store.js').MemoryStore
-  try {
-    // 嵌入凭据跟随控制台 llm 段(初始构造与热更都用 cfg.getLlm() ?? env,三套凭据行为一致):
-    // 修 R-3——原初始行只读 env,env 无 key 但控制台有 key 时会 boot 抛错→永久降级 Fake。
-    const l0 = cfg.getLlm()
-    let innerEmbedding = new DashscopeEmbedding(undefined, undefined, undefined, l0.apiKey ?? undefined, l0.baseURL ?? undefined)
-    const prevOnLlmChange = cfg.onLlmChange
-    cfg.onLlmChange = () => {
-      prevOnLlmChange?.()
-      const l = cfg.getLlm()
-      try { innerEmbedding = new DashscopeEmbedding(undefined, undefined, undefined, l.apiKey ?? undefined, l.baseURL ?? undefined) } catch { /* 缺凭据时保留旧实例 */ }
-    }
-    const embedding = {
-      embed: (texts: string[]) => innerEmbedding.embed(texts),
-      get dimension() { return innerEmbedding.dimension },
-    }
-    const surreal = new SurrealMemoryStore({
-      url: process.env.SURREAL_URL ?? 'ws://127.0.0.1:8000',
-      namespace: process.env.SURREAL_NS ?? 'weiguan',
-      database: process.env.SURREAL_DB ?? 'weiguan',
-      username: process.env.SURREAL_USER ?? 'root',
-      password: process.env.SURREAL_PASS ?? 'root',
-      embedding,
-      llm,
-      now: () => Date.now(),
-    })
-    await surreal.connect()
-    mem = surreal
-  } catch (err) {
-    console.warn('SurrealDB 记忆不可用,降级为内存记忆(不持久):', (err as Error).message)
-    mem = new FakeMemoryStore(() => Date.now())
+  // 记忆:SQLite 语义记忆(向量存 JSON,检索时 JS 算余弦)。始终持久,不再依赖独立 SurrealDB 进程,
+  // 也不再有"连接失败→内存降级"。嵌入凭据跟随控制台 llm 段热更(初始+热更都用 cfg.getLlm() ?? env)。
+  // 嵌入构造容错:无凭据时不抛垮 boot——inner=null,embed 失败→SqliteMemoryStore 照存无向量(退 recency),
+  // 记忆仍持久;控制台配上 key 后热更即恢复语义检索。
+  const buildEmbedding = (l: { apiKey: string | null; baseURL: string | null }): DashscopeEmbedding | null => {
+    try { return new DashscopeEmbedding(undefined, undefined, undefined, l.apiKey ?? undefined, l.baseURL ?? undefined) }
+    catch { return null }
   }
+  let innerEmbedding = buildEmbedding(cfg.getLlm())
+  const prevOnLlmChange = cfg.onLlmChange
+  cfg.onLlmChange = () => {
+    prevOnLlmChange?.()
+    const next = buildEmbedding(cfg.getLlm())
+    if (next) innerEmbedding = next  // 缺凭据时保留旧实例
+  }
+  const embedding = {
+    embed: (texts: string[]) => innerEmbedding ? innerEmbedding.embed(texts) : Promise.reject(new Error('嵌入未配置')),
+    get dimension() { return innerEmbedding?.dimension ?? 1024 },
+  }
+  const mem: import('./memory/store.js').MemoryStore = new SqliteMemoryStore({ db, embedding, llm, now: () => Date.now() })
 
   // 活跃 /play WebSocket 连接集合,用于广播聊天消息
   const sockets = new Set<any>()
@@ -407,7 +393,6 @@ export async function buildServer(opts: {
     stopMossTts()
     try { engine?.close?.() } catch {}
     try { db.close() } catch {}
-    try { if (mem instanceof SurrealMemoryStore) await mem.close() } catch {}
   })
 
   await app.register(fastifyWebsocket)

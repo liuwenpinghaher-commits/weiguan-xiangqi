@@ -35,7 +35,7 @@
 │       ├── analysis/       # 逐手诊断（cploss, elo, phase, tags, diagnose-game）
 │       ├── training/       # 训练题生成（generate-drills）
 │       ├── report/         # 历史对比（compare）
-│       ├── memory/         # 角色语义记忆(SurrealDB store + reflection + judge)
+│       ├── memory/         # 角色语义记忆(SQLite store,JS 算余弦 + reflection + judge)
 │       ├── chat/           # 聊天引擎（chat-engine, speaker-select, tempo）
 │       ├── personas/       # 角色定义与差异化引擎读数（personas, engine-view）
 │       ├── llm/            # LLM 抽象（dashscope, mutable, embedding, fake）

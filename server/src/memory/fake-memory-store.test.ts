@@ -55,9 +55,9 @@ describe('FakeMemoryStore', () => {
     expect(await store.retrieve('coach', '认知', 5, ['fact'])).toHaveLength(0)
   })
 
-  it('降级信号:isDegraded=true 且 degradedReason 指出"未连接"(L2)', () => {
+  it('降级信号:内存测试双 isDegraded=true 且 degradedReason 非空(L2)', () => {
     const { store } = freshStore()
     expect(store.isDegraded()).toBe(true)
-    expect(store.degradedReason()).toContain('未连接')
+    expect(store.degradedReason()).toContain('内存')
   })
 })

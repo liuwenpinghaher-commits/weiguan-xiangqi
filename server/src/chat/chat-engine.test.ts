@@ -495,7 +495,7 @@ describe('记忆检索失败不让全场哑火', () => {
     const llm = new FL2(() => '中炮稳')
     const mem = new FM2(() => 0)
     // 模拟 SurrealDB 连接断开:每次检索都抛错
-    mem.retrieve = async () => { throw new Error('surreal 连接断开') }
+    mem.retrieve = async () => { throw new Error('记忆检索失败') }
     const eng = new CE2({ llm, mem, cfg, now: () => 0, emit: (l: any) => emitted.push(l.personaId), rng: () => 0.1 })
     await eng.onStimulus({ kind: 'human_said', gameId: 1, scoreCp: null, humanText: '这步怎么样', tension: 0.9 } as any)
     // 检索失败不应导致 0 弹幕——背景降级为"还不了解",人照常说话

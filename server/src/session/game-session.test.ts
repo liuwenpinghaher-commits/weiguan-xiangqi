@@ -18,7 +18,7 @@ function fakePosition(fen: string) {
     fen: () => fen,
     sideToMove: () => (fen.includes(' w ') ? 'red' : 'black') as 'red' | 'black',
     legalMoves: () => ['h2e2', 'b0c2'],
-    applyMove: (m: string) => fakePosition(fen.includes(' w ') ? fen.replace(' w ', ' b ') : fen.replace(' b ', ' w ')),
+    applyMove: (_m: string) => fakePosition(fen.includes(' w ') ? fen.replace(' w ', ' b ') : fen.replace(' b ', ' w ')),
     isGameOver: () => ({ over: false as const }),
   }
 }

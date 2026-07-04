@@ -4,9 +4,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "concurrently -k -n surreal,server -c magenta,cyan \"npm:dev:surreal\" \"npm:dev:server\"",
-    "dev:surreal": "$HOME/.surrealdb/surreal start surrealkv://$HOME/.surrealdb/data/weiguan.db --bind 127.0.0.1:8000 --user root --pass root",
-    "dev:server": "tsx watch --env-file=.env src/index.ts",
+    "dev": "tsx watch --env-file=.env src/index.ts",
     "build": "tsc -p tsconfig.json && cp src/store/schema.sql dist/store/schema.sql",
     "start": "node dist/index.js"
   },
@@ -18,14 +16,12 @@
     "elephantops": "^0.1.1",
     "fastify": "^5.8.5",
     "openai": "^4.104.0",
-    "surrealdb": "^2.0.3",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^20.14.0",
     "@types/ws": "^8.5.0",
-    "concurrently": "^10.0.3",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",
     "vitest": "^4.1.9"

@@ -51,7 +51,22 @@ CREATE TABLE IF NOT EXISTS growth_metrics (
   result TEXT
 );
 
--- 注:角色长期记忆已迁至 SurrealDB 语义存储(SurrealMemoryStore),旧 persona_memory 表已移除。
+-- 角色长期记忆(语义 + recency 检索)。原用 SurrealDB(HNSW 向量),因实际数据量极小
+-- (每角色十来条 fact/insight),改回 SQLite:向量存 JSON,检索时在 JS 里暴力算余弦——毫秒级,
+-- 且去掉独立进程依赖与"没起 Surreal 就静默变不持久"的坑。见 SqliteMemoryStore。
+CREATE TABLE IF NOT EXISTS memory (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  persona_id    TEXT NOT NULL,
+  kind          TEXT NOT NULL,              -- episode | fact | insight
+  content       TEXT NOT NULL,
+  importance    INTEGER NOT NULL,
+  game_id       INTEGER,                    -- 关联对局(可空);删局级联清理
+  created_at    TEXT NOT NULL,
+  superseded_at TEXT,                       -- 被 judge 作废的时间(NULL=有效)
+  embedding     TEXT                        -- 向量 JSON(number[]);NULL=无向量(episode 或嵌入失败)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_persona_kind ON memory(persona_id, kind, superseded_at);
+CREATE INDEX IF NOT EXISTS idx_memory_game ON memory(game_id);
 
 -- 训练作答记录(做题结果持久化)
 CREATE TABLE IF NOT EXISTS drill_attempts (
