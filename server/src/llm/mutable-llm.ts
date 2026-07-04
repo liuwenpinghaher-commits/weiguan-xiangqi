@@ -1,5 +1,6 @@
 import type { LLMProvider, ChatMsg, LLMOpts } from './provider.js'
 import { DashscopeLLM } from './dashscope.js'
+import { OllamaLLM } from './ollama.js'
 import { FakeLLM } from './fake.js'
 import type { LlmCfg } from '../config/defaults.js'
 
@@ -10,8 +11,17 @@ export class MutableLLM implements LLMProvider {
   chat(messages: ChatMsg[], opts?: LLMOpts): Promise<string> { return this.inner.chat(messages, opts) }
 }
 
-/** 据 llm 配置造内层:有 apiKey+baseURL → DashscopeLLM;否则 FakeLLM(占位,不崩)。 */
+/** baseURL 指向本机 = 本地 Ollama(走 /api/chat,可开关 think);否则 OpenAI 兼容云端。 */
+function isLocalBase(url: string): boolean { return /localhost|127\.0\.0\.1|\[::1\]/.test(url) }
+
+/**
+ * 据 llm 配置造内层 provider:
+ * - baseURL 指向本机 → OllamaLLM(本地,思考型模型靠 /api/chat 的 think 开关;无需 apiKey)
+ * - 有 apiKey+baseURL(云) → DashscopeLLM(OpenAI 兼容 /v1)
+ * - 都没有 → FakeLLM(占位,不崩)
+ */
 export function buildInnerLlm(cfg: LlmCfg): LLMProvider {
+  if (cfg.baseURL && isLocalBase(cfg.baseURL)) return new OllamaLLM(cfg.model, cfg.baseURL)
   if (cfg.apiKey && cfg.baseURL) return new DashscopeLLM(cfg.model, cfg.apiKey, cfg.baseURL)
   return new FakeLLM([], '')
 }
