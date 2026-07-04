@@ -101,6 +101,12 @@ export class GameSession {
    * key=gameId, value=true/false。
    */
   private lastHumanBlunder = new Map<number, boolean>()
+  /**
+   * 每局最近一次记录的对局阶段(以 AI 着落定后的 aiPhase 为准)。
+   * 用于检测阶段切换（opening→midgame→endgame）以触发 phase_shift 叙事刺激。
+   * key=gameId, value=上一次 AI 着的 phase；undefined 表示该局尚无记录（首手不触发）。
+   */
+  private lastPhase = new Map<number, 'opening' | 'midgame' | 'endgame'>()
   private clockStates = new Map<number, { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null; startedAt: number | null }>()
   /** 每局已用悔棋次数(服务端权威;前端 undoRemaining 仅展示) */
   private undoCounts = new Map<number, number>()
@@ -410,6 +416,22 @@ export class GameSession {
       byPlayerPersona: true,
     })
 
+    // 叙事刺激:评分大摆动→转折点;阶段切换→局势总评。低频、chat-engine 里属"不丢"类。
+    if (aiSwing !== null && Math.abs(aiSwing) >= 250) {
+      this.deps.onStimulus?.({
+        kind: 'turning_point', gameId, scoreCp: redCp,
+        moveZh: aiZh, side: aiSide, ply: aiPly, phase: aiPhase, tension: 0.95,
+      })
+    }
+    const prevPhase = this.lastPhase.get(gameId)
+    if (prevPhase !== undefined && prevPhase !== aiPhase) {
+      this.deps.onStimulus?.({
+        kind: 'phase_shift', gameId, scoreCp: redCp,
+        side: aiSide, ply: aiPly, phase: aiPhase, tension: 0.7,
+      })
+    }
+    this.lastPhase.set(gameId, aiPhase)
+
     // 更新人方是否 blunder（用 aiSwing 反推：AI 走完后 swing 极正 = 对 AI 有利 = 人方走坏了）
     // 换言之：若 aiSwing >= 150（AI 捡到大便宜），说明人方上一手走出 blunder
     this.lastHumanBlunder.set(gameId, aiSwing !== null && aiSwing >= 150)
@@ -593,6 +615,7 @@ export class GameSession {
       || this.lastMoveAt.has(gameId) || this.lastMoveMs.has(gameId)
       || this.repeatHistories.has(gameId) || this.noCapturePlies.has(gameId)
       || this.prevRedCp.has(gameId) || this.lastHumanBlunder.has(gameId)
+      || this.lastPhase.has(gameId)
       || this.clockStates.has(gameId) || this.undoCounts.has(gameId)
   }
 
@@ -726,6 +749,7 @@ export class GameSession {
     this.noCapturePlies.delete(gameId)
     this.prevRedCp.delete(gameId)
     this.lastHumanBlunder.delete(gameId)
+    this.lastPhase.delete(gameId)
     this.clockStates.delete(gameId)
     this.undoCounts.delete(gameId)
   }

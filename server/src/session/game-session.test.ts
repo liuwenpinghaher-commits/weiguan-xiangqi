@@ -377,3 +377,116 @@ test('aiFirstMove：humanSide=red 时（轮到人走），抛出错误', async (
 
   await expect(session.aiFirstMove(gameId)).rejects.toThrow(/not AI turn/i)
 })
+
+// ── 叙事刺激：turning_point / phase_shift ──────────────────────────────────
+// 覆盖 playHumanMove 里 AI 着 onStimulus 之后追加的两条低频"不丢"叙事刺激：
+// 评分大摆动(|aiSwing|>=250)→ turning_point；阶段切换(aiPhase 变化)→ phase_shift。
+
+/** 构造一个按调用顺序依次返回不同 scoreCp 的 fakeEngine(用于制造可控评分摆幅)。*/
+function makeEngineWithScoreSequence(scores: number[]) {
+  let i = 0
+  return {
+    analyze: vi.fn(async (): Promise<EngineLine[]> => {
+      const scoreCp = scores[Math.min(i, scores.length - 1)]
+      i++
+      return [{ multipv: 1, move: 'b0c2', scoreCp, mate: null, pv: ['b0c2'] }]
+    }),
+  }
+}
+
+test('AI 着评分大摆动(|aiSwing|>=250)→ 追加 turning_point 刺激', async () => {
+  // aiSide 全程为 black(fakePosition 每手翻转 w/b，human=red 恒定，AI 恒为 black)。
+  // 第一手：prevRedCp 尚无前值 → aiSwing=null，不触发。
+  // 第二手：aiCp 从 0 摆到 300 → redCp 从 0 摆到 -300 → aiSwing = -(-300-0) = 300，|aiSwing|=300>=250。
+  const repo = new GamesRepo(openDb(':memory:'))
+  const captured: any[] = []
+  const session = new GameSession({
+    repo,
+    engine: makeEngineWithScoreSequence([0, 300]) as any,
+    makePosition: fakePosition as any,
+    clock: () => 't',
+    onStimulus: (s) => captured.push(s),
+    cfg: makeCfg(),
+  })
+  const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
+
+  await session.playHumanMove(gameId, 'h2e2')
+  await session.playHumanMove(gameId, 'h2e2')
+
+  const kinds = captured.map((s: any) => s.kind)
+  expect(kinds).toContain('turning_point')
+
+  const tp = captured.find((s: any) => s.kind === 'turning_point')
+  expect(tp.scoreCp).toBe(-300)
+  expect(tp.tension).toBe(0.95)
+})
+
+test('AI 着评分摆幅不足(|aiSwing|<250)→ 不追加 turning_point 刺激', async () => {
+  // 第一手 aiCp=0，第二手 aiCp=100 → |aiSwing|=100 < 250，不应触发 turning_point。
+  const repo = new GamesRepo(openDb(':memory:'))
+  const captured: any[] = []
+  const session = new GameSession({
+    repo,
+    engine: makeEngineWithScoreSequence([0, 100]) as any,
+    makePosition: fakePosition as any,
+    clock: () => 't',
+    onStimulus: (s) => captured.push(s),
+    cfg: makeCfg(),
+  })
+  const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
+
+  await session.playHumanMove(gameId, 'h2e2')
+  await session.playHumanMove(gameId, 'h2e2')
+
+  const kinds = captured.map((s: any) => s.kind)
+  expect(kinds).not.toContain('turning_point')
+})
+
+test('AI 着阶段切换(opening→midgame)→ 追加 phase_shift 刺激', async () => {
+  // 每次 playHumanMove 落人着+AI着共 2 手，aiPly 依次为 2,4,...,16,18。
+  // calcPhase(16)='opening'，calcPhase(18)='midgame'：第 9 轮跨越边界，触发 phase_shift。
+  const repo = new GamesRepo(openDb(':memory:'))
+  const captured: any[] = []
+  const session = new GameSession({
+    repo,
+    engine: fakeEngine as any,
+    makePosition: fakePosition as any,
+    clock: () => 't',
+    onStimulus: (s) => captured.push(s),
+    cfg: makeCfg(),
+  })
+  const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
+
+  for (let i = 0; i < 9; i++) {
+    await session.playHumanMove(gameId, 'h2e2')
+  }
+
+  const kinds = captured.map((s: any) => s.kind)
+  expect(kinds).toContain('phase_shift')
+
+  const shift = captured.find((s: any) => s.kind === 'phase_shift')
+  expect(shift.phase).toBe('midgame')
+  expect(shift.tension).toBe(0.7)
+})
+
+test('同阶段内连续走子 → 不重复追加 phase_shift 刺激', async () => {
+  // 8 轮走子：aiPly 依次 2,4,...,16，全程停留在 opening 阶段，不应触发 phase_shift。
+  const repo = new GamesRepo(openDb(':memory:'))
+  const captured: any[] = []
+  const session = new GameSession({
+    repo,
+    engine: fakeEngine as any,
+    makePosition: fakePosition as any,
+    clock: () => 't',
+    onStimulus: (s) => captured.push(s),
+    cfg: makeCfg(),
+  })
+  const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
+
+  for (let i = 0; i < 8; i++) {
+    await session.playHumanMove(gameId, 'h2e2')
+  }
+
+  const kinds = captured.map((s: any) => s.kind)
+  expect(kinds).not.toContain('phase_shift')
+})
