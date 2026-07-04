@@ -5,7 +5,7 @@ import { Board } from '../board/Board.js'
 import { MoveList } from '../board/MoveList.js'
 import { ChatPanel, type ChatLine } from '../chat/ChatPanel.js'
 import { cancelSpeech } from '../voice/browser-tts.js'
-import { stopVoice } from '../voice/server-tts.js'
+import { stopVoice, dropQueued } from '../voice/server-tts.js'
 import { useIsNarrow } from '../hooks/use-viewport.js'
 import { color, space, radius, fontSize, font, shadow, pill } from '../ui/theme.js'
 
@@ -271,6 +271,7 @@ export function PlayPage() {
     }
     setPreMove(null)
     setLegalSquares([])
+    dropQueued()  // 走子:清掉没播的旧弹幕(点评的是上一步),语音直接接最新,不再一直滞后
     setMoveHistory(prev => [...prev, { ply: prev.length + 1, move, side }])
     wsRef.current?.send({ type: 'move', gameId, move })
     setAwaitingAi(true) // 等待 AI 响应，锁盘

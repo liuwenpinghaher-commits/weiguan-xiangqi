@@ -433,7 +433,7 @@ import { FakeLLM as FL2 } from '../llm/fake.js'
 import { FakeMemoryStore as FM2 } from '../memory/fake-memory-store.js'
 
 describe('系统 prompt 贴棋局', () => {
-  it('系统 prompt 强调谈这盘+扣局面棋识+别瞎编+把道理说透,且不再让"扯句闲篇"', async () => {
+  it('系统 prompt 强调点评这盘+多引经据典+扣局面别瞎编,不再让"扯句闲篇"', async () => {
     const caps: string[] = []
     const cfg = new RC2(new SR2(odb2(':memory:')), () => '2026-06-21T00:00:00.000Z')
     const llm = new FL2((msgs) => { const s = msgs.find(m => m.role === 'system'); if (s) caps.push(s.content); return '稳' })
@@ -441,7 +441,7 @@ describe('系统 prompt 贴棋局', () => {
     await eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 20, moveZh: '炮二平五', ply: 3, tension: 0.95 } as any)
     expect(caps.length).toBeGreaterThan(0)
     expect(caps.some(s => s.includes('扣') && s.includes('别瞎编'))).toBe(true)
-    expect(caps.some(s => s.includes('把道理说透'))).toBe(true)
+    expect(caps.some(s => s.includes('引经据典'))).toBe(true)
     expect(caps.every(s => !s.includes('扯句闲篇'))).toBe(true)
   })
 })

@@ -64,6 +64,9 @@ export class ChatEngine {
   /** 串行化 onStimulus:fire-and-forget 的刺激重叠时,保证同一时刻只处理一个,
    *  避免 lastSpokeAt/lastText 在 await llm 之后才更新导致并发读到旧态、同角色重复说话。 */
   private queue: Promise<void> = Promise.resolve()
+  /** 按 gameId 保留"最新待处理刺激":走子快时排队的旧刺激会被最新取代并跳过,
+   *  避免生成一堆已过时(说的是几步前)的弹幕、让语音永远滞后于当前局面。 */
+  private latestStim = new Map<number, Stimulus>()
 
   constructor(private deps: ChatEngineDeps) {
     this.guard = new TempoGuard({
@@ -76,12 +79,20 @@ export class ChatEngine {
   forgetGame(gameId: number): void {
     this.recent.delete(gameId)
     this.lastCtx.delete(gameId)
+    this.latestStim.delete(gameId)
   }
 
   /** 串行入口:把每个刺激挂到 queue 链尾,确保前一个处理完才开始下一个。
    *  await 它会等到「自己这条」处理结束(单刺激下与旧行为一致)。 */
   onStimulus(stim: Stimulus): Promise<void> {
-    const run = this.queue.then(() => this.handleStimulus(stim)).catch((err) => {
+    // 限积压丢旧:登记为该局最新刺激;轮到处理时若已被更新的刺激取代(用户又走了),则跳过——
+    // 不生成过时弹幕。走快时中间步会被略过,只点评最新局面,语音不再一直补播上一步。
+    this.latestStim.set(stim.gameId, stim)
+    const run = this.queue.then(() => {
+      if (this.latestStim.get(stim.gameId) !== stim) return  // 已被后续走子取代 → 丢弃
+      this.latestStim.delete(stim.gameId)
+      return this.handleStimulus(stim)
+    }).catch((err) => {
       console.warn('[chat] onStimulus 处理失败:', (err as Error).message)
     })
     // queue 只串行化、不在某条失败时断链(catch 已吞错)
