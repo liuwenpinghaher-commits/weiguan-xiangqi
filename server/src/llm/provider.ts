@@ -4,8 +4,8 @@ export interface LLMOpts {
   /** 生成 token 上限。高频弹幕用小值省 token;诊断/反思可放大 */
   maxTokens?: number
   temperature?: number
-  /** 仅本地 Ollama(OllamaLLM)识别:开/关 Qwen3 系思考。默认关(弹幕快);
-   *  诊断/反思传 true 发挥推理。云 provider(DashscopeLLM)忽略此项。 */
+  /** 开/关思考。默认关(弹幕快、省延时);诊断/反思传 true 发挥推理。
+   *  OllamaLLM 走 /api/chat 的 think;DeepSeek 走 thinking:{type:enabled|disabled};其他云忽略。 */
   think?: boolean
 }
 

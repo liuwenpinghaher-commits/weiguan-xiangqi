@@ -55,7 +55,9 @@ export class DashscopeLLM implements LLMProvider {
       max_tokens: opts.maxTokens ?? 200,
     }
     if (opts.temperature != null) body.temperature = opts.temperature
-    // qwen 兼容端(flash/plus 等)默认不思考,不传 thinking 字段
+    // DeepSeek v4-flash 双模式:think===true 开思考(诊断/反思提质),否则关思考(弹幕提速:实测 1.4s vs 思考数秒)。
+    // 仅对 DeepSeek 端点传此扩展字段;其他 OpenAI 兼容云(如 qwen-plus)不认 thinking,不传。
+    if (this.model.includes('deepseek')) body.thinking = { type: opts.think ? 'enabled' : 'disabled' }
     const resp: any = await withLLMRetry(() => this.client.chat.completions.create(body))
     return resp.choices?.[0]?.message?.content ?? ''
   }

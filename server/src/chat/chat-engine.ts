@@ -29,6 +29,20 @@ function normalize(s: string): string {
   return s.replace(/[，。！？,!?.、：:；;\s]/g, '').toLowerCase()
 }
 
+/**
+ * 兜底清洗旁白/动作描写。prompt 已要求"不加旁白",但部分模型(尤其 DeepSeek v4-flash)
+ * 爱加"（眯眼打量棋盘）""*抿一口二锅头*"这类角色扮演描写,不听 prompt。这里硬去掉——
+ * 弹幕只保留角色说出口的话,动作既不显示也不进 TTS 朗读。
+ */
+function stripStageDirections(s: string): string {
+  return s
+    .replace(/[（(][^）)]*[）)]/g, '')   // 中/英文圆括号内的动作:（…）(…)
+    .replace(/【[^】]*】/g, '')            // 方括号旁白:【…】
+    .replace(/\*[^*]*\*/g, '')             // markdown 星号动作:*…*
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
 /** 平实的局势定性(刻意不夸张,避免动不动"大优"催生满屏感叹) */
 function qualWord(seen: number | null): string {
   if (seen === null) return '还看不准'
@@ -107,11 +121,11 @@ export class ChatEngine {
         const context: RecentEntry[] = [...gameRecent, ...roundSoFar]
 
         const plan = await this.plan(persona, stim, context)
-        const text = (await this.deps.llm.chat(plan.messages, {
-          // 云思考模型(如 DeepSeek v4-flash)会先思考(reasoning~50token),给足容纳思考+弹幕正文,
-          // 否则正文被截空;本地/非思考模型此值仅作上限,不影响短弹幕。
-          maxTokens: 300,
+        const raw = (await this.deps.llm.chat(plan.messages, {
+          maxTokens: 150,  // 弹幕默认非思考(见 DashscopeLLM:think 未置真→thinking disabled),短句足够
         })).trim()
+        // 兜底清洗:模型(尤其 DeepSeek)不听 prompt 硬塞的"(动作)"旁白去掉——既不显示也不进 TTS
+        const text = stripStageDirections(raw)
         if (!text) continue
 
         // 去重护栏:与上次发言去标点后完全相同才跳过(只杀逐字复读,不误杀近似不同句)
