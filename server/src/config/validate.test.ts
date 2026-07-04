@@ -43,16 +43,4 @@ describe('validateSection', () => {
   it('engine: pikafishPath=null 透传(用于清空路径)', () => {
     expect(validateSection('engine', { pikafishPath: null })).toEqual({ pikafishPath: null })
   })
-  it('tts: mossNanoUrl 仅接受本地 http URL(127.0.0.1 或 localhost)', () => {
-    expect(validateSection('tts', { mossNanoUrl: 'http://127.0.0.1:18083' }))
-      .toEqual({ mossNanoUrl: 'http://127.0.0.1:18083' })
-    expect(validateSection('tts', { mossNanoUrl: 'http://localhost:18083' }))
-      .toEqual({ mossNanoUrl: 'http://localhost:18083' })
-    expect(validateSection('tts', { mossNanoUrl: 'http://evil.example.com/steal' })).toEqual({})
-    expect(validateSection('tts', { mossNanoUrl: 'https://127.0.0.1:443' })).toEqual({})
-    expect(validateSection('tts', { mossNanoUrl: 'not-a-url' })).toEqual({})
-    expect(validateSection('tts', { referenceAudio: 'assets/tts/ref.wav' }))
-      .toEqual({ referenceAudio: 'assets/tts/ref.wav' })
-    expect(validateSection('tts', { streaming: false })).toEqual({ streaming: false })
-  })
 })

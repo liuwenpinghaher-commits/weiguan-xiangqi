@@ -13,16 +13,6 @@ const strOrNull: Cleaner = (v) => {
   if (typeof v === 'string') return v.trim() === '' ? null : v
   return undefined
 }
-// TTS endpoint:仅允许本地 moss-tts-nano URL(http://127.0.0.1 或 http://localhost,任意端口)
-const localHttpUrl: Cleaner = (v) => {
-  if (typeof v !== 'string' || v.trim() === '') return undefined
-  try {
-    const u = new URL(v)
-    if (u.protocol !== 'http:') return undefined
-    if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') return undefined
-    return v
-  } catch { return undefined }
-}
 const intRange = (lo: number, hi: number): Cleaner => (v) => (typeof v === 'number' && isFinite(v) ? clamp(Math.round(v), lo, hi) : undefined)
 const numRange = (lo: number, hi: number): Cleaner => (v) => (typeof v === 'number' && isFinite(v) ? clamp(v, lo, hi) : undefined)
 
@@ -52,7 +42,6 @@ const SCHEMA: Record<ConfigSection, Record<string, Cleaner>> = {
   engine: { pikafishPath: (v) => (typeof v === 'string' ? (v.trim() === '' ? null : v) : v === null ? null : undefined), multipv: intRange(1, 10), movetime: intRange(50, 5000), clockInitialSeconds: intRange(30, 3600), clockIncrementSeconds: intRange(0, 60) },
   diagnose: { depth: intRange(1, 30) },
   llm: { apiKey: strOrNull, model: str, baseURL: strOrNull },
-  tts: { provider: (v) => (v === 'moss' || v === 'qwen' ? v : undefined), mossNanoUrl: localHttpUrl, referenceAudio: str, streaming: (v) => (typeof v === 'boolean' ? v : undefined) },
 }
 
 export function validateSection(section: ConfigSection, patch: Record<string, unknown>): Record<string, unknown> {

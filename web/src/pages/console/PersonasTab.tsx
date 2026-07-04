@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { cardStyle } from '../../ui/PageShell.js'
 import { color, space, radius, fontSize, btn } from '../../ui/theme.js'
 import { putPersona, resetPersona, type PersonaConfig } from '../../api/admin.js'
-import { VOICES } from './console-data.js'
 
 export function PersonasTab({ personas, onChanged }: { personas: PersonaConfig[]; onChanged: () => void }) {
   return (
@@ -44,11 +43,7 @@ function PersonaCard({ p, onChanged }: { p: PersonaConfig; onChanged: () => void
       <label style={lbl}>背景<textarea style={{ ...inp, minHeight: 56, resize: 'vertical' }} value={background} onChange={e => setBackground(e.target.value)} /></label>
       <label style={lbl}>口吻脾气<input style={inp} value={voiceStyle} onChange={e => setVoiceStyle(e.target.value)} /></label>
       <label style={lbl}>帮踩倾向<input style={inp} value={leaning} onChange={e => setLeaning(e.target.value)} /></label>
-      <label style={lbl}>音色
-        <select style={inp} value={ttsVoice} onChange={e => setTtsVoice(e.target.value)}>
-          {VOICES.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
-        </select>
-      </label>
+      <label style={lbl}>音色<input style={inp} value={ttsVoice} onChange={e => setTtsVoice(e.target.value)} /></label>
       <div style={{ display: 'flex', gap: space.sm, alignItems: 'center' }}>
         <button style={btn('primary')} onClick={save}>保存</button>
         <button style={btn('secondary')} onClick={reset}>恢复默认</button>

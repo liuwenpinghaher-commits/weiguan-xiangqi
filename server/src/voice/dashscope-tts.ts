@@ -16,7 +16,7 @@ export function voiceForPersona(personaId: string): string {
   return map[personaId] ?? 'Cherry'
 }
 
-/** qwen-tts 云合成所需凭据(与 config 的 moss TtsCfg 区分命名) */
+/** qwen-tts 云合成所需凭据 */
 export interface QwenTtsCfg {
   endpoint: string
   apiKey: string

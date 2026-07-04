@@ -36,7 +36,6 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
       engine: cfg.getEngineParams(),
       diagnose: cfg.getDiagnose(),
       llm: { ...llm, apiKey: maskKey(llm.apiKey) },
-      tts: cfg.getTts(),
       personas: cfg.personaConfigs(),
     }
   })

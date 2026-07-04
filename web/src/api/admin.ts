@@ -21,12 +21,11 @@ export interface DirectorCfg { coach: DirectorModeCfg; humanlike: DirectorModeCf
 export interface EngineCfg { pikafishPath: string | null; multipv: number; movetime: number; clockInitialSeconds: number; clockIncrementSeconds: number }
 export interface DiagnoseCfg { depth: number }
 export interface LlmCfg { apiKey: string | null; model: string; baseURL: string | null }
-export interface TtsCfg { mossNanoUrl: string; referenceAudio: string; streaming: boolean }
 export interface ConfigPayload {
   chat: ChatCfg; director: DirectorCfg; engine: EngineCfg; diagnose: DiagnoseCfg
-  llm: LlmCfg; tts: TtsCfg; personas: PersonaConfig[]
+  llm: LlmCfg; personas: PersonaConfig[]
 }
-export type ConfigSection = 'chat' | 'director' | 'engine' | 'diagnose' | 'llm' | 'tts'
+export type ConfigSection = 'chat' | 'director' | 'engine' | 'diagnose' | 'llm'
 export interface GameDetail { game: GameRow; moves: any[]; messages: any[] }
 
 async function jget(path: string): Promise<any> {

@@ -11,7 +11,7 @@
 | 后端 | Node.js + Fastify + `@fastify/websocket`、SQLite (`better-sqlite3`)、Pikafish（UCI 象棋引擎，可选）、`elephantops`（规则库） |
 | 前端 | Vite + React 18 + TypeScript、`react-xiangqiboard`（棋盘组件）、recharts（图表） |
 | LLM | 阿里云百炼 DashScope（`qwen-plus-latest`,控制台可换模型/热重载;无 key 时 FakeLLM 占位） |
-| 语音 | 服务端 TTS：本地 `moss-tts-nano`（见 [docs/moss-tts-local-setup.md](docs/moss-tts-local-setup.md)，不可用时回退浏览器 Web Speech）；服务端 STT：百炼 `qwen3-asr-flash`；浏览器 Web Speech 作兜底 |
+| 语音 | 服务端 TTS：百炼云 `qwen3-tts-flash`（`DASHSCOPE_TTS_*` 环境变量，不可用时回退浏览器 Web Speech）；服务端 STT：百炼 `qwen3-asr-flash`；浏览器 Web Speech 作兜底 |
 
 ---
 
@@ -354,5 +354,5 @@ DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 
 ## M3b：语音
 
-服务端 TTS 走本地 moss-tts-nano(见 docs/moss-tts-local-setup.md),不可用时回退浏览器 Web Speech;
+服务端 TTS 走百炼云 qwen3-tts-flash(GET /tts,DASHSCOPE_TTS_* 环境变量),不可用时回退浏览器 Web Speech;
 STT 走百炼 qwen3-asr-flash(POST /asr),浏览器 Web Speech 兜底。

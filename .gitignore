@@ -8,8 +8,5 @@ dist
 /engine/
 .codegraph
 
-# 第三方 TTS 引擎源码包(引擎解压在已忽略的 /engine/;避免 14MB 二进制进 git 历史)
-MOSS-TTS-Nano-main.zip
-
-# TTS 运行时产物(合成的 wav,播完即弃,由 moss-tts 自动清理;不入库)
+# 服务端静态产物目录(fastifyStatic 运行时生成,不入库)
 /server/static/

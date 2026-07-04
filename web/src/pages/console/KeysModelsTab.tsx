@@ -1,17 +1,14 @@
 import { useEffect, useState } from 'react'
 import { cardStyle } from '../../ui/PageShell.js'
 import { color, space, radius, fontSize, btn as btnStyle } from '../../ui/theme.js'
-import { putSection, revealLlmKey, type LlmCfg, type TtsCfg } from '../../api/admin.js'
+import { putSection, revealLlmKey, type LlmCfg } from '../../api/admin.js'
 import { displayMaskedKey } from './console-data.js'
 
-export function KeysModelsTab({ llm, tts, onChanged }: { llm: LlmCfg; tts: TtsCfg; onChanged: () => void }) {
+export function KeysModelsTab({ llm, onChanged }: { llm: LlmCfg; onChanged: () => void }) {
   const [apiKey, setApiKey] = useState('')          // 留空=不改 key
   const [revealed, setRevealed] = useState<string | null>(null)
   const [model, setModel] = useState(llm.model)
   const [baseURL, setBaseURL] = useState(llm.baseURL ?? '')
-  const [mossNanoUrl, setMossNanoUrl] = useState(tts.mossNanoUrl)
-  const [referenceAudio, setReferenceAudio] = useState(tts.referenceAudio)
-  const [streaming, setStreaming] = useState(tts.streaming)
   const [msg, setMsg] = useState<string | null>(null)
 
   // 明文 key 揭示后 20s 自动清除,组件卸载也清,避免长期留屏被旁观或截图泄露。
@@ -26,11 +23,6 @@ export function KeysModelsTab({ llm, tts, onChanged }: { llm: LlmCfg; tts: TtsCf
     const patch: Record<string, unknown> = { model, baseURL }
     if (apiKey.trim() !== '') patch.apiKey = apiKey.trim()
     try { await putSection('llm', patch); setMsg('已保存 LLM 配置'); setApiKey(''); setRevealed(null); onChanged() }
-    catch (e) { setMsg('保存失败:' + (e as Error).message) }
-  }
-  const saveTts = async () => {
-    setMsg(null)
-    try { await putSection('tts', { mossNanoUrl, referenceAudio, streaming }); setMsg('已保存 TTS 配置'); onChanged() }
     catch (e) { setMsg('保存失败:' + (e as Error).message) }
   }
   const doReveal = async () => {
@@ -51,16 +43,6 @@ export function KeysModelsTab({ llm, tts, onChanged }: { llm: LlmCfg; tts: TtsCf
         <label style={lbl}>模型<input style={inp} value={model} onChange={e => setModel(e.target.value)} /></label>
         <label style={lbl}>Base URL<input style={inp} value={baseURL} onChange={e => setBaseURL(e.target.value)} /></label>
         <button style={btnStyle('primary')} onClick={saveLlm}>保存 LLM</button>
-      </div>
-
-      <div style={{ ...cardStyle, marginTop: space.lg }}>
-        <h3 style={h3}>TTS(moss-tts-nano 本地)</h3>
-        <label style={lbl}>服务地址<input style={inp} value={mossNanoUrl} onChange={e => setMossNanoUrl(e.target.value)} placeholder="http://127.0.0.1:18083" /></label>
-        <label style={lbl}>默认参考音频<input style={inp} value={referenceAudio} onChange={e => setReferenceAudio(e.target.value)} placeholder="assets/tts/reference.wav" /></label>
-        <label style={{ ...lbl, display: 'flex', alignItems: 'center', gap: space.sm }}>
-          <input type="checkbox" checked={streaming} onChange={e => setStreaming(e.target.checked)} /> 流式合成(失败自动回退一次性生成)
-        </label>
-        <button style={btnStyle('primary')} onClick={saveTts}>保存 TTS</button>
       </div>
 
       {msg && <p style={{ color: msg.includes('失败') ? color.danger : color.success, marginTop: space.md }}>{msg}</p>}

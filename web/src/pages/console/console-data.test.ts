@@ -1,15 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { VOICES, PARAM_FIELDS, displayMaskedKey } from './console-data.js'
+import { PARAM_FIELDS, displayMaskedKey } from './console-data.js'
 
 describe('console-data', () => {
-  it('VOICES 是 moss 参考音频路径(含默认 reference.wav)', () => {
-    const ids = VOICES.map(v => v.id)
-    expect(ids).toContain('assets/tts/reference.wav')
-    for (const v of VOICES) {
-      expect(v.id).toMatch(/^assets\/tts\/[\w-]+\.wav$/)
-      expect(v.label.length).toBeGreaterThan(0)
-    }
-  })
   it('PARAM_FIELDS 覆盖 chat/engine/diagnose 段,每字段有 label/min/max', () => {
     expect(PARAM_FIELDS.chat.length).toBeGreaterThan(0)
     expect(PARAM_FIELDS.engine.length).toBeGreaterThan(0)

@@ -1,13 +1,3 @@
-/** moss-tts-nano 参考音频(音色克隆源)。id 是相对 server/ 根的 wav 路径,
- *  与 persona.ttsVoice 直接对应;文件在 server/assets/tts/(源自 moss 官方样本库)。 */
-export const VOICES: { id: string; label: string }[] = [
-  { id: 'assets/tts/reference.wav', label: '京味茶馆(老炮儿默认)' },
-  { id: 'assets/tts/biaozhun.wav', label: '标准口播(老黑默认)' },
-  { id: 'assets/tts/jiangtang.wav', label: '讲堂主播(教练默认)' },
-  { id: 'assets/tts/taiwanqiang.wav', label: '台湾腔·活泼(网友默认)' },
-  { id: 'assets/tts/wanfeng.wav', label: '电台晚风·温柔' },
-]
-
 export interface ParamField { key: string; label: string; min: number; max: number; step: number; help?: string }
 
 /** 各数值参数段的字段定义(范围与后端 validateSection 钳制范围一致) */

@@ -21,10 +21,8 @@ import { RuntimeConfig } from './config/runtime-config.js'
 import { SettingsRepo } from './store/settings-repo.js'
 import { MutableLLM, buildInnerLlm } from './llm/mutable-llm.js'
 import { registerAdminRoutes } from './admin/admin-routes.js'
-import { spawn, type ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
 import fastifyStatic from '@fastify/static'
-import { synthesizeAudio } from './voice/moss-tts.js'
 import { synthesizeUrl, voiceForPersona } from './voice/dashscope-tts.js'
 import { DashscopeAsr } from './voice/dashscope-asr.js'
 import { SqliteMemoryStore } from './memory/sqlite-memory-store.js'
@@ -320,64 +318,6 @@ export async function buildServer(opts: {
     reply.code(sc).send({ error: msg })
   })
 
-  // ── moss-tts-nano 进程管理 ──────────────────────────────────────────────────
-  let mossProcess: ChildProcess | null = null
-  // 重启定时器句柄与关闭标志:防止关闭后 exit handler 仍调度重启,泄漏定时器/复活子进程
-  let mossRestartTimer: ReturnType<typeof setTimeout> | null = null
-  let mossShuttingDown = false
-
-  function startMossTts(): void {
-    if (mossProcess && !mossProcess.killed) return
-    const ttsCfg = cfg.getTts()
-    const url = new URL(ttsCfg.mossNanoUrl)
-    const port = url.port || '18083'
-    // 二进制路径:优先 MOSS_TTS_BIN(指向 venv 内的 moss-tts-nano),回退 PATH 查找。
-    // moss-tts-nano 装在独立 Python venv 里,通常不在全局 PATH,故用 env 显式指定。
-    const mossBin = process.env.MOSS_TTS_BIN || 'moss-tts-nano'
-    // 推理设备:默认 cpu;有 CUDA 的机器可设 MOSS_TTS_DEVICE=auto(上游仅支持 cpu/auto,auto=有 cuda 用 cuda)
-    const mossDevice = process.env.MOSS_TTS_DEVICE || 'cpu'
-    try {
-      mossProcess = spawn(mossBin, ['serve', '--device', mossDevice, '--port', port], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: false,
-      })
-    } catch {
-      app.log.warn(`moss-tts-nano 未安装或不在 PATH 中(MOSS_TTS_BIN=${process.env.MOSS_TTS_BIN ?? '未设置'}),TTS 功能不可用`)
-      mossProcess = null
-      return
-    }
-    mossProcess.on('error', () => {
-      app.log.warn('moss-tts-nano 启动失败,TTS 功能不可用')
-      mossProcess = null
-    })
-    mossProcess.stdout?.on('data', (d: Buffer) => { app.log.info(`[moss-tts-nano] ${d.toString().trim()}`) })
-    mossProcess.stderr?.on('data', (d: Buffer) => { app.log.warn(`[moss-tts-nano] ${d.toString().trim()}`) })
-    mossProcess.on('exit', (code) => {
-      mossProcess = null
-      // 关闭中:不重启,避免泄漏定时器并复活子进程
-      if (mossShuttingDown) return
-      if (code !== 0) {
-        app.log.warn(`moss-tts-nano 退出(code=${code}),5s 后自动重启`)
-        mossRestartTimer = setTimeout(() => { mossRestartTimer = null; startMossTts() }, 5000)
-        mossRestartTimer.unref?.()
-      } else {
-        app.log.warn(`moss-tts-nano 退出(code=${code})`)
-      }
-    })
-  }
-
-  function stopMossTts(): void {
-    mossShuttingDown = true
-    if (mossRestartTimer) { clearTimeout(mossRestartTimer); mossRestartTimer = null }
-    if (!mossProcess) return
-    try { mossProcess.kill('SIGTERM') } catch { /* already dead */ }
-    setTimeout(() => {
-      try { mossProcess?.kill('SIGKILL') } catch { /* ignore */ }
-    }, 5000).unref()
-  }
-
-  startMossTts()
-
   // 跨域:仅允许本地前端(:3420)读取响应。原先 origin:true 反射任意来源——意味着你浏览器里
   // 打开的任何网页都能跨域 fetch 本服务,读到 /admin/.../reveal 的明文 key 或 PUT 篡改配置。
   // 收紧到固定前端来源即可堵住(非浏览器客户端如 curl 不受 CORS 约束,正常工作)。
@@ -395,7 +335,6 @@ export async function buildServer(opts: {
   app.addHook('onClose', async () => {
     if (idleTimer) clearTimeout(idleTimer)
     clearInterval(clockSweeper)
-    stopMossTts()
     try { engine?.close?.() } catch {}
     try { db.close() } catch {}
   })
@@ -842,38 +781,24 @@ export async function buildServer(opts: {
     return { gameId }
   })
 
-  // ── 本地 TTS 合成(moss-tts-nano) ────────────────────────────────────────────
+  // ── 云 TTS 合成(qwen3-tts-flash) ────────────────────────────────────────────
   // GET /tts?personaId=xxx&text=xxx
-  // moss-tts-nano 不可用 → 503(前端回退浏览器 TTS)
-  // 成功 → JSON { url } (本地静态 WAV 文件路径)
+  // 成功 → JSON { url }(OSS 公网音频 URL);失败 → 503(前端回退浏览器 TTS)
   app.get('/tts', async (req, reply) => {
     const query = req.query as { personaId?: string; text?: string }
     const personaId = String(query.personaId ?? '')
     const rawText = String(query.text ?? '').trim()
-    if (!rawText) {
-      return reply.code(400).send({ error: 'text 参数不能为空' })
-    }
+    if (!rawText) return reply.code(400).send({ error: 'text 参数不能为空' })
     const text = rawText.slice(0, 500)
-    const profile = cfg.voiceProfileForPersona(personaId)
-
-    const ttsCfg = cfg.getTts()
     try {
-      let url: string
-      if (ttsCfg.provider === 'moss') {
-        url = await synthesizeAudio(text, profile, ttsCfg)  // 本地 moss(CPU,慢)
-      } else {
-        // 云 qwen3-tts-flash:亚秒、情感音色。用 DashScope 凭据(env,独立于 chat 的 DeepSeek key)
-        url = await synthesizeUrl(text, voiceForPersona(personaId), {
-          endpoint: process.env.DASHSCOPE_TTS_ENDPOINT ?? '',
-          apiKey: process.env.DASHSCOPE_API_KEY ?? '',
-          model: process.env.DASHSCOPE_TTS_MODEL ?? 'qwen3-tts-flash',
-        })
-      }
+      const url = await synthesizeUrl(text, voiceForPersona(personaId), {
+        endpoint: process.env.DASHSCOPE_TTS_ENDPOINT ?? '',
+        apiKey: process.env.DASHSCOPE_API_KEY ?? '',
+        model: process.env.DASHSCOPE_TTS_MODEL ?? 'qwen3-tts-flash',
+      })
       return reply.header('Content-Type', 'application/json').send({ url })
     } catch (e) {
       req.log.error(e, 'TTS 合成失败')
-      // 仅本地 moss 需检查进程重启;云路径失败直接 503(前端回退浏览器 TTS)
-      if (ttsCfg.provider === 'moss' && (!mossProcess || mossProcess.killed)) startMossTts()
       return reply.code(503).send({ error: 'TTS 服务暂时不可用' })
     }
   })

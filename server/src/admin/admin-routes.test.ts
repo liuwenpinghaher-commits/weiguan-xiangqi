@@ -61,7 +61,6 @@ describe('admin personas 路由', () => {
     const { app, cfg } = makeApp()
     const put = await app.inject({ method: 'PUT', url: '/admin/personas/coach', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ name: '林老师', ttsVoice: 'Cherry' }) })
     expect(put.statusCode).toBe(200)
-    expect(cfg.voiceProfileForPersona('coach').referenceAudio).toBe('Cherry')
     expect(cfg.personas().find(p => p.id === 'coach')!.name).toBe('林老师')
   })
   it('POST /admin/personas/:id/reset 恢复默认', async () => {

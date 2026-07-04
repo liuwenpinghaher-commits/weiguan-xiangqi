@@ -51,7 +51,7 @@ export function ConsolePage() {
         {!loading && !err && cfg && (
           <div style={{ marginTop: space.lg }}>
             {tab === 'personas' && <PersonasTab key={version} personas={cfg.personas} onChanged={reload} />}
-            {tab === 'keys' && <KeysModelsTab key={version} llm={cfg.llm} tts={cfg.tts} onChanged={reload} />}
+            {tab === 'keys' && <KeysModelsTab key={version} llm={cfg.llm} onChanged={reload} />}
             {tab === 'params' && <ParamsTab key={version} chat={cfg.chat} director={cfg.director} engine={cfg.engine} diagnose={cfg.diagnose} onChanged={reload} />}
             {tab === 'memory' && <MemoryTab personas={cfg.personas} />}
             {tab === 'games' && <GamesTab />}

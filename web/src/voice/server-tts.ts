@@ -2,8 +2,8 @@ import { ttsUrl, HTTP_BASE } from '../api/config.js'
 import { isMuted, speak as browserSpeak } from './browser-tts.js'
 
 /**
- * 服务端本地 TTS(moss-tts-nano)语音播放,流水线预合成以降低时延。
- * 后端 /tts 路由调用本地 moss-tts-nano 合成 WAV;不可用时前端回退浏览器 Web Speech。
+ * 服务端云 TTS(qwen3-tts-flash)语音播放,流水线预合成以降低时延。
+ * 后端 /tts 路由调用云 qwen3-tts-flash 合成音频;不可用时前端回退浏览器 Web Speech。
  *
  * 关键设计:
  * 1. 手势解锁(保留原逻辑):复用单个 <audio> 元素,首次用户手势播放静音 WAV 解锁。
