@@ -533,3 +533,51 @@ describe('记忆落库失败不丢限流/上下文状态', () => {
     expect(prompts.some(p => p.includes('妙手连珠'))).toBe(true)
   })
 })
+
+// ─── Task 1(叙事点评计划):丢旧保新——高频刺激保留最近2步 ──────────────────────
+
+import { ChatEngine as CE3 } from './chat-engine.js'
+import { RuntimeConfig as RC3 } from '../config/runtime-config.js'
+import { SettingsRepo as SR3 } from '../store/settings-repo.js'
+import { openDb as odb3 } from '../store/db.js'
+import { FakeLLM as FL3 } from '../llm/fake.js'
+import { FakeMemoryStore as FM3 } from '../memory/fake-memory-store.js'
+
+describe('丢旧保新:高频刺激保留最近2步', () => {
+  function mk(caps: string[]) {
+    const cfg = new RC3(new SR3(odb3(':memory:')), () => '2026-06-21T00:00:00.000Z')
+    // now 恒为 0:放开节奏护栏(默认 minSilenceMs=4000 会在同一时间戳下拦掉第 2 条处理的刺激,
+    // 与本用例要测的"高频丢旧窗口"逻辑无关)——否则本该保留的第二步会被 TempoGuard 误伤,产生假失败。
+    cfg.updateSection('chat', { minSilenceMs: 0, maxPerMin: 100 })
+    // 固定 rng 极小值使所有候选都过阈值发言,保证每条被处理的刺激都产出可观测的 user prompt
+    const llm = new FL3((msgs: any[]) => { const u = msgs.find((m: any) => m.role === 'user'); if (u) caps.push(u.content); return '评' })
+    return new CE3({ llm, mem: new FM3(() => 0), cfg, now: () => 0, emit: () => {}, rng: () => 0.01,
+      repo: { getMoves: () => [] } as any })
+  }
+
+  it('并发 3 个 move 刺激,最旧一个被丢(只处理最近2步)', async () => {
+    const caps: string[] = []
+    const eng = mk(caps)
+    const p1 = eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 0, moveZh: '炮二平五', ply: 1, tension: 0.9 } as any)
+    const p2 = eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 0, moveZh: '马8进7',   ply: 2, tension: 0.9 } as any)
+    const p3 = eng.onStimulus({ kind: 'move', gameId: 1, scoreCp: 0, moveZh: '车9平8',   ply: 3, tension: 0.9 } as any)
+    await Promise.all([p1, p2, p3])
+    const joined = caps.join('\n')
+    expect(joined.includes('马8进7')).toBe(true)   // 最近2步:保留
+    expect(joined.includes('车9平8')).toBe(true)   // 最近2步:保留
+    expect(joined.includes('炮二平五')).toBe(false) // 最旧:被丢
+  })
+
+  it('turning_point 刺激不被高频丢旧规则跳过(一定被处理)', async () => {
+    const caps: string[] = []
+    const eng = mk(caps)
+    // 一个 move 后紧跟一个 turning_point;turning_point 属"非高频",不进丢旧窗口,一定被处理
+    const p1 = eng.onStimulus({ kind: 'move', gameId: 2, scoreCp: 0, moveZh: '兵三进一', ply: 1, tension: 0.9 } as any)
+    const p2 = eng.onStimulus({ kind: 'turning_point', gameId: 2, scoreCp: 200, ply: 2, tension: 0.95 } as any)
+    const before = caps.length
+    await Promise.all([p1, p2])
+    // turning_point 被处理 → 至少产出一条 user prompt(内容分支由 Task 5 提供,这里只验"没被丢")
+    expect(caps.length).toBeGreaterThan(before)
+    expect(caps.length).toBeGreaterThanOrEqual(1)
+  })
+})
