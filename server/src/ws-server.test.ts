@@ -478,7 +478,7 @@ describe('ws-server 集成测试', () => {
 
   it('玩家 say → 触发 coach_query,教练结合局面回答(addressee=human)', async () => {
     const engine = { analyze: async () => [{ multipv: 1, move: 'h2e2', scoreCp: 40, mate: null, pv: ['h2e2'] }] }
-    app = await buildServer({ dbPath: ':memory:', engine: engine as any, llm: new FakeLLM(() => '教练:这步稳,先出直车') })
+    app = await buildServer({ dbPath: ':memory:', engine, llm: new FakeLLM(() => '教练:这步稳,先出直车') })
     await app.listen({ port: 0, host: '127.0.0.1' })
     const addr = app.server.address()
     if (!addr || typeof addr === 'string') throw new Error('unexpected address type')

@@ -474,9 +474,8 @@ export async function buildServer(opts: {
           // 观众席关闭 = 观棋者闭嘴;开启时:玩家提问 → 取当前局面引擎洞察 → coach_query(教练结合棋局作答,旁观让路)
           const cfg2 = cfg.getChat()
           if (!spectatorsOffGames.has(gid)) {
-            const movesNow = (() => { try { return repo.getMoves(gid) } catch { return [] } })()
-            const game2 = repo.getGame(gid)
-            const curFen = movesNow.length ? movesNow[movesNow.length - 1].fenAfter : (game2?.startFen ?? '')
+            // 复用 session.getFen(内部 ensureLoaded + 兜底):新局→起始 FEN、进行中→当前局面 FEN、不存在→''
+            const curFen = session.getFen(gid)
             void (async () => {
               const insight = engine && curFen ? await buildPositionInsight(engine, curFen, cfg.getEngineParams().movetime) : null
               chat.onStimulus({ kind: 'coach_query', gameId: gid, scoreCp: insight?.evalCp ?? null, humanText: text, engineInsight: insight, tension: cfg2.humanSaidTension })

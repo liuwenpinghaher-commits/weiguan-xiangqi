@@ -716,4 +716,17 @@ test('coach_query:engineInsight=null 时降级(不含引擎数据,仍作答)', a
   expect(out.length).toBe(1)
   expect(out[0].personaId).toBe('coach')
   expect(prompts.some(p => p.includes('现在谁占优?'))).toBe(true)
+  // 降级文案真出现:引擎不可用时提示"凭棋力判断",而非静默丢引擎段
+  expect(prompts.some(p => p.includes('引擎暂不可用'))).toBe(true)
+})
+
+test('coach_query:mate 正负分别显示红方/黑方杀棋', async () => {
+  const prompts: string[] = []
+  const llm = new FakeLLM((msgs) => { msgs.forEach(m => prompts.push(m.content)); return 'x' })
+  const { engine } = setup(llm)
+  await engine.onStimulus({ kind: 'coach_query', gameId: 1, scoreCp: 30000, humanText: '有杀吗?', engineInsight: { evalCp: 30000, bestMoveZh: '红车一平四', pvZh: [], mate: 3 }, tension: 0.9 } as any)
+  expect(prompts.some(p => p.includes('红方有3步杀'))).toBe(true)
+  prompts.length = 0
+  await engine.onStimulus({ kind: 'coach_query', gameId: 2, scoreCp: -30000, humanText: '危险吗?', engineInsight: { evalCp: -30000, bestMoveZh: '黑车9平6', pvZh: [], mate: -3 }, tension: 0.9 } as any)
+  expect(prompts.some(p => p.includes('黑方有3步杀'))).toBe(true)
 })
