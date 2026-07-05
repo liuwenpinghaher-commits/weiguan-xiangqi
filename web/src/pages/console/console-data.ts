@@ -12,7 +12,7 @@ export const PARAM_FIELDS: Record<'chat' | 'engine' | 'diagnose', ParamField[]> 
     { key: 'reactProb', label: '互相搭话概率', min: 0, max: 1, step: 0.05 },
     { key: 'lenShortP', label: '短句档概率上界', min: 0, max: 1, step: 0.05, help: '<此值出短句' },
     { key: 'lenLongP', label: '中句档概率上界', min: 0, max: 1, step: 0.05, help: '>此值出稍长句' },
-    { key: 'humanSaidTension', label: '玩家发言张力', min: 0, max: 1, step: 0.05, help: '越高越必有人接话' },
+    { key: 'coachQueryTension', label: '玩家提问张力', min: 0, max: 1, step: 0.05, help: '玩家提问时的刺激强度(教练必答)' },
     { key: 'idleTension', label: '冷场张力', min: 0, max: 1, step: 0.05 },
     { key: 'playerSelfProb', label: '老黑自评概率', min: 0, max: 1, step: 0.05 },
     { key: 'playerChimeProb', label: '老黑插话概率', min: 0, max: 1, step: 0.05 },

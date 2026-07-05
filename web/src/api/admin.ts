@@ -14,7 +14,7 @@ export interface GameRow {
 export interface ChatCfg {
   minSilenceMs: number; maxPerMin: number; speakThreshold: number; jitterWidth: number
   idleProb: number; idleIntervalMs: number; reactProb: number; lenShortP: number; lenLongP: number
-  humanSaidTension: number; idleTension: number; playerSelfProb: number; playerChimeProb: number
+  coachQueryTension: number; idleTension: number; playerSelfProb: number; playerChimeProb: number
 }
 export interface DirectorModeCfg { maxDropCp: number; targetBand: { low: number; high: number }; strength: number }
 export interface DirectorCfg { coach: DirectorModeCfg; humanlike: DirectorModeCfg }

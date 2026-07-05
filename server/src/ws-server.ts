@@ -478,7 +478,7 @@ export async function buildServer(opts: {
             const curFen = session.getFen(gid)
             void (async () => {
               const insight = engine && curFen ? await buildPositionInsight(engine, curFen, cfg.getEngineParams().movetime) : null
-              chat.onStimulus({ kind: 'coach_query', gameId: gid, scoreCp: insight?.evalCp ?? null, humanText: text, engineInsight: insight, tension: cfg2.humanSaidTension })
+              chat.onStimulus({ kind: 'coach_query', gameId: gid, scoreCp: insight?.evalCp ?? null, humanText: text, engineInsight: insight, tension: cfg2.coachQueryTension })
             })().catch(() => { /* 洞察/生成失败静默,不影响对局 */ })
           }
         } else if (msg.type === 'pause') {

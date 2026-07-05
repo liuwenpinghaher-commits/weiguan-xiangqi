@@ -36,7 +36,7 @@ const SCHEMA: Record<ConfigSection, Record<string, Cleaner>> = {
   chat: {
     minSilenceMs: intMin0, maxPerMin: intMin0, speakThreshold: prob, jitterWidth: numRange(0, 2),
     idleProb: prob, idleIntervalMs: intMin0, reactProb: prob, lenShortP: prob, lenLongP: prob,
-    humanSaidTension: prob, idleTension: prob, playerSelfProb: prob, playerChimeProb: prob,
+    coachQueryTension: prob, idleTension: prob, playerSelfProb: prob, playerChimeProb: prob,
     maxSpeakers: intRange(1, 3),
   },
   director: { coach: modeCleaner, humanlike: modeCleaner },
