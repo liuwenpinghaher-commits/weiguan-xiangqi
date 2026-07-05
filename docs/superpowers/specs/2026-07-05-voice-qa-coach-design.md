@@ -57,7 +57,7 @@
   - `evalCp`:`line.scoreCp` 是**走子方视角**,转为**红方视角**(与 Stimulus.scoreCp 口径一致):currentFen 走子方为 black 时取 `-scoreCp`。⚠ 此视角转换是重点(buildNarrative 曾在此踩坑)。
   - `bestMoveZh`:`describeMoveZh(currentFen, line.move)`。
   - `pvZh`:沿 `line.pv` 逐手 `Position.applyMove` 推进 FEN 并 `describeMoveZh`,取前 3 手(失败即止,可空)。
-  - `mate`:`line.mate`。
+  - `mate`:红方视角——黑方走子时取 `-line.mate`(与 evalCp 一致:正=红方可杀,负=黑方可杀)。
 - 超时/异常 → 返回 `null`(降级)。
 
 ### 组件 3:coach_query 刺激类型 — server
@@ -89,7 +89,7 @@
 - `handleStimulus`:`kind==='coach_query'` 时,**speakers 固定为 `['coach']`**(跳过 pickSpeakers 与 player 附和逻辑)——实现"旁观让路"。若 coach persona 不存在则回退取第一个非 player 角色。
 - coach_query 须纳入"重要刺激不丢弃"(不进 onStimulus:96 的高频丢旧窗口),保证玩家提问必被处理;且**不触发 player(老黑)插话**(不进 136 的 playerChime 条件)。
 - `plan()` 新增 `coach_query` 分支,prompt(coach persona):
-  > 玩家问你:"{humanText}"。当前局面引擎判断:红方{evalCp 转"领先/落后 N 分"或"均势"};最佳应着「{bestMoveZh}」;后续变例「{pvZh join}」{mate 时补"存在 N 步杀"}。结合这些针对性回答他的问题,要专业、有据、口语,别长篇,可引一句棋理。
+  > 玩家问你:"{humanText}"。当前局面引擎判断:红方{evalCp 转"领先/落后 N 分"或"均势"};最佳应着「{bestMoveZh}」;后续变例「{pvZh join}」{mate 时按正负补"红方 N 步杀"或"黑方 N 步杀"}。结合这些针对性回答他的问题,要专业、有据、口语,别长篇,可引一句棋理。
   - `engineInsight` 为 null(降级):prompt 去掉引擎段,改"就当前局面凭你的棋力回答"。
   - `addressee='human'`。
 - token 上限沿用现有(coach 回答可略长于弹幕,但仍受 maxTokens 约束;具体值 plan 阶段定)。
