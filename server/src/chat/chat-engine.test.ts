@@ -497,16 +497,16 @@ describe('老黑参与 + 张力分级', () => {
 })
 
 describe('记忆检索失败不让全场哑火', () => {
-  it('mem.retrieve 抛错时旁观者仍能发言(降级为无背景,而非全员被跳过)', async () => {
+  it('coach_query 时 mem.retrieve 抛错,教练仍能作答(降级为无背景,而非被跳过)', async () => {
     const cfg = new RC2(new SR2(odb2(':memory:')), () => '2026-06-21T00:00:00.000Z')
     const emitted: string[] = []
     const llm = new FL2(() => '中炮稳')
     const mem = new FM2(() => 0)
-    // 模拟 SurrealDB 连接断开:每次检索都抛错
+    // 模拟记忆存储连接断开:每次检索都抛错
     mem.retrieve = async () => { throw new Error('记忆检索失败') }
     const eng = new CE2({ llm, mem, cfg, now: () => 0, emit: (l: any) => emitted.push(l.personaId), rng: () => 0.1, repo: { getMoves: () => [] } })
-    await eng.onStimulus({ kind: 'human_said', gameId: 1, scoreCp: null, humanText: '这步怎么样', tension: 0.9 } as any)
-    // 检索失败不应导致 0 弹幕——背景降级为"还不了解",人照常说话
+    await eng.onStimulus({ kind: 'coach_query', gameId: 1, scoreCp: null, humanText: '这步怎么样', engineInsight: null, tension: 0.9 } as any)
+    // 检索失败不应导致 0 弹幕——背景降级为"还不了解",教练照常作答
     expect(emitted.length).toBeGreaterThan(0)
   })
 })
@@ -688,4 +688,32 @@ describe('关键刺激绕过最近发言惩罚(I1)', () => {
 
     expect(emitted.length).toBeGreaterThan(before)
   })
+})
+
+// ─── voice-qa-coach:coach_query——玩家提问只让教练结合引擎洞察作答(旁观让路) ──────────
+
+test('coach_query:只教练发言(旁观让路),prompt 含问题与引擎洞察', async () => {
+  const prompts: string[] = []
+  const llm = new FakeLLM((msgs) => { msgs.forEach(m => prompts.push(m.content)); return '中路稳一手,先走马二进三' })
+  const { engine, out } = setup(llm)
+  await engine.onStimulus({
+    kind: 'coach_query', gameId: 7, scoreCp: 40, humanText: '我这步该走哪?',
+    engineInsight: { evalCp: 40, bestMoveZh: '红马二进三', pvZh: ['红马二进三', '黑炮8平5'], mate: null },
+    tension: 0.9,
+  } as any)
+  expect(out.length).toBe(1)
+  expect(out[0].personaId).toBe('coach')
+  expect(out[0].addressee).toBe('human')
+  expect(prompts.some(p => p.includes('我这步该走哪?'))).toBe(true)
+  expect(prompts.some(p => p.includes('红马二进三'))).toBe(true)
+})
+
+test('coach_query:engineInsight=null 时降级(不含引擎数据,仍作答)', async () => {
+  const prompts: string[] = []
+  const llm = new FakeLLM((msgs) => { msgs.forEach(m => prompts.push(m.content)); return '凭手感,先稳住中路' })
+  const { engine, out } = setup(llm)
+  await engine.onStimulus({ kind: 'coach_query', gameId: 8, scoreCp: null, humanText: '现在谁占优?', engineInsight: null, tension: 0.9 } as any)
+  expect(out.length).toBe(1)
+  expect(out[0].personaId).toBe('coach')
+  expect(prompts.some(p => p.includes('现在谁占优?'))).toBe(true)
 })

@@ -112,7 +112,7 @@ export interface ChatLine {
 /** 触发聊天的刺激 */
 export type StimulusKind =
   | 'move' | 'blunder' | 'brilliant' | 'long_think'
-  | 'lose_streak' | 'idle' | 'human_said' | 'coach_query' | 'topic_open'
+  | 'lose_streak' | 'idle' | 'coach_query' | 'topic_open'
   | 'turning_point' | 'phase_shift'
 
 /** 当前局面的引擎洞察(coach_query 用);评分统一为红方视角 */
@@ -136,7 +136,7 @@ export interface Stimulus {
   ply?: number
   /** 对局阶段 */
   phase?: 'opening' | 'midgame' | 'endgame'
-  /** 玩家提问/发言文本(kind=coach_query 或 human_said 时) */
+  /** 玩家提问文本(kind=coach_query 时) */
   humanText?: string
   /** 张力 0..1:越高越该有人说话 */
   tension: number

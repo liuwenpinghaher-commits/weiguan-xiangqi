@@ -93,7 +93,7 @@ export class ChatEngine {
   onStimulus(stim: Stimulus): Promise<void> {
     // 限积压丢旧,但只丢高频的:逐手 move/blunder/brilliant 按 gameId 保留最近 HIGH_FREQ_KEEP 条,
     // 超出丢最旧——走子快时中间步会被略过,语音不再一直补播上一步。turning_point/phase_shift/idle/
-    // human_said 等低频但重要的刺激不进这个窗口,一律不丢,保证转折/阶段/停顿类深度点评不漏。
+    // coach_query 等低频但重要的刺激不进这个窗口,一律不丢,保证转折/阶段/停顿类深度点评不漏。
     const isHighFreq = ChatEngine.HIGH_FREQ_KINDS.has(stim.kind)
     if (isHighFreq) {
       const win = this.highFreqPending.get(stim.gameId) ?? []
@@ -127,14 +127,21 @@ export class ChatEngine {
     const isKeyStim = stim.kind === 'turning_point' || stim.kind === 'phase_shift'
     const recentSecs = isKeyStim ? new Map<string, number>() : this.recentMap()
     const chat = this.deps.cfg.getChat()
-    const maxSpk = chat.maxSpeakers  // 每步发言人数(默认 1=只一个人说;控制台可调高)
-    const speakers = pickSpeakers(stim, this.deps.cfg.personas().filter(p => !p.isPlayer), recentSecs, this.deps.rng, chat.speakThreshold, chat.jitterWidth, maxSpk)
-
-    // 老黑(AI 棋手)参与:自己刚走→高概率自评;其余有看头时→中概率作为当事人插话
-    if (stim.byPlayerPersona) {
-      if (this.deps.rng() < chat.playerSelfProb) speakers.push('player')
-    } else if (this.deps.rng() < chat.playerChimeProb && (stim.moveZh != null || stim.kind === 'human_said' || stim.kind === 'idle')) {
-      speakers.push('player')
+    let speakers: PersonaId[]
+    if (stim.kind === 'coach_query') {
+      // 旁观让路:玩家提问只让教练结合棋局作答,不选其他旁观者、不让老黑插话
+      const spectators = this.deps.cfg.personas().filter(p => !p.isPlayer)
+      const coach = spectators.find(p => p.id === 'coach') ?? spectators[0]
+      speakers = coach ? [coach.id] : []
+    } else {
+      const maxSpk = chat.maxSpeakers  // 每步发言人数(默认 1=只一个人说;控制台可调高)
+      speakers = pickSpeakers(stim, this.deps.cfg.personas().filter(p => !p.isPlayer), recentSecs, this.deps.rng, chat.speakThreshold, chat.jitterWidth, maxSpk)
+      // 老黑(AI 棋手)参与:自己刚走→高概率自评;其余有看头时→中概率作为当事人插话
+      if (stim.byPlayerPersona) {
+        if (this.deps.rng() < chat.playerSelfProb) speakers.push('player')
+      } else if (this.deps.rng() < chat.playerChimeProb && (stim.moveZh != null || stim.kind === 'idle')) {
+        speakers.push('player')
+      }
     }
 
     if (speakers.length === 0) return
@@ -276,8 +283,18 @@ export class ChatEngine {
       const pctx = this.lastCtx.get(stim.gameId)
       const psit = pctx ? `眼下「${pctx.moveZh}」,${pctx.qual}` : `局面${qual}`
       user = `你是正在下这盘的老黑,沉稳、闷、偶尔得意,这是你的对局、有立场。${psit}。${len},就眼前局面/对手这步/接刚才那句说一句,带你的脾气,别长篇:`
-    } else if (stim.kind === 'human_said') {
-      user = `玩家刚冲你们说:"${stim.humanText}"。${len},回他一句,口语自然:`
+    } else if (stim.kind === 'coach_query') {
+      const ei = stim.engineInsight
+      const mateStr = ei && ei.mate != null
+        ? (ei.mate > 0 ? `;红方有${ei.mate}步杀` : `;黑方有${-ei.mate}步杀`)
+        : ''
+      const insightLine = ei
+        ? `引擎判断:${qualWord(ei.evalCp)}(红方${ei.evalCp ?? '?'}分)`
+          + (ei.bestMoveZh ? `,最佳应着「${ei.bestMoveZh}」` : '')
+          + (ei.pvZh.length ? `,后续「${ei.pvZh.join('、')}」` : '')
+          + mateStr + '。'
+        : '(引擎暂不可用,凭你的棋力判断。)'
+      user = `棋手问你:"${stim.humanText}"。${insightLine}结合眼前局面针对性回答他的问题,专业、有据、口语,别长篇,可引一句棋理:`
       addressee = 'human'
     } else if (stim.kind === 'long_think') {
       user = `对方这步想了很久还没落子。${len},用你的脾气随口催两句/调侃/安慰,别太冲:`

@@ -475,4 +475,27 @@ describe('ws-server 集成测试', () => {
     await new Promise((r) => setTimeout(r, 500))
     expect(chats.some((m) => m.personaId === 'human' && m.text === '又开了')).toBe(true)
   }, 10_000)
+
+  it('玩家 say → 触发 coach_query,教练结合局面回答(addressee=human)', async () => {
+    const engine = { analyze: async () => [{ multipv: 1, move: 'h2e2', scoreCp: 40, mate: null, pv: ['h2e2'] }] }
+    app = await buildServer({ dbPath: ':memory:', engine: engine as any, llm: new FakeLLM(() => '教练:这步稳,先出直车') })
+    await app.listen({ port: 0, host: '127.0.0.1' })
+    const addr = app.server.address()
+    if (!addr || typeof addr === 'string') throw new Error('unexpected address type')
+    const port = addr.port
+    const got: any[] = []
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/play`)
+      wsClient = ws
+      ws.on('open', () => ws.send(JSON.stringify({ type: 'new', mode: 'coach', humanSide: 'red' })))
+      ws.on('message', (raw: any) => {
+        const m = JSON.parse(raw.toString())
+        if (m.type === 'started') ws.send(JSON.stringify({ type: 'say', gameId: m.gameId, text: '我这步该走哪?' }))
+        else if (m.type === 'chat' && m.addressee === 'human' && m.personaId === 'coach') { got.push(m); ws.close(); resolve() }
+      })
+      ws.on('error', reject)
+      setTimeout(() => reject(new Error('超时:未收到教练回答')), 8000)
+    })
+    expect(got.length).toBeGreaterThanOrEqual(1)
+  }, 12_000)
 })
