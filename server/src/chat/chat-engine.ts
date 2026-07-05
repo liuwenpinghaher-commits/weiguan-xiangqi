@@ -117,7 +117,8 @@ export class ChatEngine {
   }
 
   private async handleStimulus(stim: Stimulus): Promise<void> {
-    if (!this.guard.allow()) return
+    // coach_query 是玩家主动提问,必答:跳过静默/限流闸(仍会 record 计配额),不静默丢弃
+    if (stim.kind !== 'coach_query' && !this.guard.allow()) return
     if (stim.moveZh) {
       this.lastCtx.set(stim.gameId, { moveZh: stim.moveZh, qual: qualWord(stim.scoreCp ?? null), ply: stim.ply ?? 0 })
     }
@@ -289,7 +290,7 @@ export class ChatEngine {
         ? (ei.mate > 0 ? `;红方有${ei.mate}步杀` : `;黑方有${-ei.mate}步杀`)
         : ''
       const insightLine = ei
-        ? `引擎判断:${qualWord(ei.evalCp)}(红方${ei.evalCp ?? '?'}分)`
+        ? `引擎判断:${qualWord(ei.evalCp)}` + (ei.mate == null ? `(红方${ei.evalCp ?? '?'}分)` : '')
           + (ei.bestMoveZh ? `,最佳应着「${ei.bestMoveZh}」` : '')
           + (ei.pvZh.length ? `,后续「${ei.pvZh.join('、')}」` : '')
           + mateStr + '。'

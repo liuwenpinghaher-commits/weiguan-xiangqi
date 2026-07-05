@@ -730,3 +730,22 @@ test('coach_query:mate 正负分别显示红方/黑方杀棋', async () => {
   await engine.onStimulus({ kind: 'coach_query', gameId: 2, scoreCp: -30000, humanText: '危险吗?', engineInsight: { evalCp: -30000, bestMoveZh: '黑车9平6', pvZh: [], mate: -3 }, tension: 0.9 } as any)
   expect(prompts.some(p => p.includes('黑方有3步杀'))).toBe(true)
 })
+
+test('coach_query 不受静默限流闸拦截(玩家提问必答)', async () => {
+  const now = () => 0
+  // 两次刺激返回不同文本:否则若首条刺激恰好也选中 coach,coach_query 的同文本回答会被去重护栏
+  // 吞掉(与限流闸无关),掩盖本用例要验证的"必答"行为。
+  let n = 0
+  const llm = new FakeLLM(() => (n++ === 0 ? '这步凶险' : '该走中路'))
+  const mem = new FakeMemoryStore(now)
+  const out: any[] = []
+  const cfg = makeCfg({ minSilenceMs: 4000, maxPerMin: 12 })  // 生产默认限流(非 setup 的 0)
+  const engine = new ChatEngine({ llm, mem, cfg, now, emit: (l) => out.push(l), rng: () => 0.9, repo: { getMoves: () => [] } })
+  // 先发一条普通刺激占用静默窗(并 record 计配额)
+  await engine.onStimulus({ kind: 'blunder', gameId: 1, scoreCp: -300, moveZh: '红炮二平五', tension: 0.95 })
+  const afterFirst = out.length
+  // 静默窗内(now 不变,距上条 < minSilenceMs)立刻提问 → coach_query 跳过限流闸,仍必答
+  await engine.onStimulus({ kind: 'coach_query', gameId: 1, scoreCp: 40, humanText: '该走哪?', engineInsight: null, tension: 0.9 } as any)
+  const replies = out.slice(afterFirst).filter((l: any) => l.personaId === 'coach' && l.addressee === 'human')
+  expect(replies.length).toBe(1)
+})
