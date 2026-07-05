@@ -526,7 +526,12 @@ export function PlayPage() {
               key={gameId ?? 'idle'}
               lines={lines}
               enabled={spectatorsOn}
-              onSay={(t) => { if (status === 'playing' && gameId !== null) wsRef.current?.send({ type: 'say', gameId, text: t }) }}
+              onSay={(t) => {
+                if (status === 'playing' && gameId !== null) {
+                  dropQueued()  // 让路:清掉在途旧弹幕,教练回答优先
+                  wsRef.current?.send({ type: 'say', gameId, text: t })
+                }
+              }}
             />
           </div>
           {/* 行棋记录:填到语音框下方的空地 */}

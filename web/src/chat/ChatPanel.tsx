@@ -215,8 +215,8 @@ export function ChatPanel({ lines, onSay, enabled = true }: Props) {
           <button
             style={{
               ...styles.micBtn,
-              background: stt.listening ? color.warning : color.surfaceAlt,
-              border: stt.listening ? `1px solid ${color.warning}` : `1px solid ${color.border}`,
+              background: stt.listening ? color.warning : color.gold,
+              border: stt.listening ? `1px solid ${color.warning}` : `1px solid ${color.gold}`,
             }}
             onClick={stt.listening ? stt.stop : stt.start}
             title={stt.listening ? '聆听中，点击停止' : '点击语音输入'}
@@ -240,7 +240,7 @@ export function ChatPanel({ lines, onSay, enabled = true }: Props) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="说点什么…"
+          placeholder="点麦克风说话,或打字提问…"
           maxLength={200}
           aria-label="弹幕输入框"
         />
