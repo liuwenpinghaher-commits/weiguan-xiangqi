@@ -112,8 +112,16 @@ export interface ChatLine {
 /** 触发聊天的刺激 */
 export type StimulusKind =
   | 'move' | 'blunder' | 'brilliant' | 'long_think'
-  | 'lose_streak' | 'idle' | 'human_said' | 'topic_open'
+  | 'lose_streak' | 'idle' | 'human_said' | 'coach_query' | 'topic_open'
   | 'turning_point' | 'phase_shift'
+
+/** 当前局面的引擎洞察(coach_query 用);评分统一为红方视角 */
+export interface EngineInsight {
+  evalCp: number | null      // 红方视角厘兵分(正=红优)
+  bestMoveZh: string | null  // 最佳应着中文,如 "红马二进三"
+  pvZh: string[]             // 后续变例中文,最多 3 手,可空
+  mate: number | null        // n 步杀(正=当前走子方可杀),非杀为 null
+}
 
 export interface Stimulus {
   kind: StimulusKind
@@ -128,10 +136,12 @@ export interface Stimulus {
   ply?: number
   /** 对局阶段 */
   phase?: 'opening' | 'midgame' | 'endgame'
-  /** 人类刚说的话(kind=human_said 时) */
+  /** 玩家提问/发言文本(kind=coach_query 或 human_said 时) */
   humanText?: string
   /** 张力 0..1:越高越该有人说话 */
   tension: number
   /** true = 这步是 AI 棋手"老黑"走的,允许 player 自评 */
   byPlayerPersona?: boolean
+  /** coach_query 时:当前局面的引擎洞察(降级时为 null) */
+  engineInsight?: EngineInsight | null
 }
