@@ -11,6 +11,7 @@ import type { GameMode, Side } from './types.js'
 import { AnalysisRepo } from './store/analysis-repo.js'
 import { TrainingRepo } from './store/training-repo.js'
 import { diagnoseGame } from './analysis/diagnose-game.js'
+import { buildPositionInsight } from './analysis/position-insight.js'
 import { generateDrills } from './training/generate-drills.js'
 import { compareWindows } from './report/compare.js'
 import { growthReport } from './report/llm-report.js'
@@ -450,7 +451,7 @@ export async function buildServer(opts: {
             void Promise.allSettled([reflectP, diagP]).then(() => forgetGuards(gameId))
           }
         } else if (msg.type === 'say') {
-          // 玩家发言 → human_said 刺激,高张力必有人接
+          // 玩家发言 → coach_query 刺激(结合当前局面引擎洞察,教练结合棋局作答),高张力必有人接
           const gid = msg.gameId
           if (typeof gid !== 'number') return
           if (pausedGames.has(gid)) return // 整局暂停:前端已禁输入,这里兜底
@@ -470,10 +471,16 @@ export async function buildServer(opts: {
             try { s.send(echo) } catch { /* 单连接发送失败忽略 */ }
           }
           lastChatAt = Date.now()
-          // 观众席关闭 = 观棋者闭嘴(不产生 AI 回应刺激),但玩家自己的话照常回显+落库
+          // 观众席关闭 = 观棋者闭嘴;开启时:玩家提问 → 取当前局面引擎洞察 → coach_query(教练结合棋局作答,旁观让路)
           const cfg2 = cfg.getChat()
           if (!spectatorsOffGames.has(gid)) {
-            void chat.onStimulus({ kind: 'human_said', gameId: gid, scoreCp: null, humanText: text, tension: cfg2.humanSaidTension })
+            const movesNow = (() => { try { return repo.getMoves(gid) } catch { return [] } })()
+            const game2 = repo.getGame(gid)
+            const curFen = movesNow.length ? movesNow[movesNow.length - 1].fenAfter : (game2?.startFen ?? '')
+            void (async () => {
+              const insight = engine && curFen ? await buildPositionInsight(engine, curFen, cfg.getEngineParams().movetime) : null
+              chat.onStimulus({ kind: 'coach_query', gameId: gid, scoreCp: insight?.evalCp ?? null, humanText: text, engineInsight: insight, tension: cfg2.humanSaidTension })
+            })().catch(() => { /* 洞察/生成失败静默,不影响对局 */ })
           }
         } else if (msg.type === 'pause') {
           const gid = msg.gameId
