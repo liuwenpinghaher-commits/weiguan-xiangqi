@@ -1,6 +1,14 @@
 import OpenAI from 'openai'
 import type { AsrProvider } from './asr.js'
 
+/** ASR 凭据:只读 DASHSCOPE env,与 chat 模型(可换 DeepSeek 等)彻底解耦。
+ *  ASR/TTS 都是百炼专有模型,凭据必须独立;两者缺一返回 null(端点据此 503)。 */
+export function dashscopeAsrCreds(): { apiKey: string; baseURL: string } | null {
+  const apiKey = process.env.DASHSCOPE_API_KEY
+  const baseURL = process.env.DASHSCOPE_BASE_URL
+  return apiKey && baseURL ? { apiKey, baseURL } : null
+}
+
 /** 阿里云百炼 qwen3-asr-flash(OpenAI 兼容 chat/completions + input_audio)。
  *  client 可注入以便测试不打网络;复用与 LLM 相同的 compatible-mode/v1 baseURL。 */
 export class DashscopeAsr implements AsrProvider {

@@ -24,7 +24,7 @@ import { registerAdminRoutes } from './admin/admin-routes.js'
 import { join } from 'node:path'
 import fastifyStatic from '@fastify/static'
 import { synthesizeUrl, voiceForPersona } from './voice/dashscope-tts.js'
-import { DashscopeAsr } from './voice/dashscope-asr.js'
+import { DashscopeAsr, dashscopeAsrCreds } from './voice/dashscope-asr.js'
 import { SqliteMemoryStore } from './memory/sqlite-memory-store.js'
 import { DashscopeEmbedding } from './llm/dashscope-embedding.js'
 import { reflect } from './memory/reflection.js'
@@ -813,9 +813,9 @@ export async function buildServer(opts: {
     if (!Buffer.isBuffer(audio) || audio.length === 0) return reply.code(400).send({ error: '音频为空' })
     let asr = opts.asr
     if (!asr) {
-      const llm = cfg.getLlm()
-      if (!llm.apiKey || !llm.baseURL) return reply.code(503).send({ error: '未配置 DASHSCOPE,语音识别不可用' })
-      asr = new DashscopeAsr(process.env.ASR_MODEL ?? 'qwen3-asr-flash', llm.apiKey, llm.baseURL)
+      const creds = dashscopeAsrCreds()
+      if (!creds) return reply.code(503).send({ error: '未配置 DASHSCOPE,语音识别不可用' })
+      asr = new DashscopeAsr(process.env.ASR_MODEL ?? 'qwen3-asr-flash', creds.apiKey, creds.baseURL)
     }
     try {
       const text = await asr.transcribe(audio, mime)

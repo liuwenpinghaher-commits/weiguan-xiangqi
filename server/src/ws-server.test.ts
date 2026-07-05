@@ -335,6 +335,32 @@ describe('ws-server 集成测试', () => {
     expect(res.statusCode).toBe(503)
   })
 
+  it('POST /asr:chat 模型配了 key 但无 DASHSCOPE env → 仍 503(凭据不复用 chat)', async () => {
+    const savedKey = process.env.DASHSCOPE_API_KEY
+    delete process.env.DASHSCOPE_API_KEY
+    try {
+      app = await buildServer({ dbPath: ':memory:', engine: fakeEngine, llm: new FakeLLM(() => 'x') })
+      // 模拟控制台把 chat 模型换成与 DASHSCOPE 无关的凭据(如 DeepSeek):cfg.getLlm() 会返回这组值,
+      // 但 /asr 现在只认 dashscopeAsrCreds()(纯读 DASHSCOPE env),不会读到这里 —— 这正是本用例要证明的。
+      const put = await app.inject({
+        method: 'PUT', url: '/admin/config/llm',
+        headers: { 'content-type': 'application/json' },
+        payload: JSON.stringify({ apiKey: 'sk-fake-deepseek', model: 'deepseek-chat', baseURL: 'https://api.deepseek.example.invalid/v1' }),
+      })
+      expect(put.statusCode).toBe(200)
+      const res = await app.inject({
+        method: 'POST', url: '/asr?mime=audio/wav',
+        headers: { 'content-type': 'application/octet-stream' },
+        payload: Buffer.from('x'),
+      })
+      expect(res.statusCode).toBe(503)
+    } finally {
+      // savedKey 为 undefined 时必须 delete;直接赋值会把 env 设成字符串 "undefined"(真值),毒化后续测试。
+      if (savedKey === undefined) delete process.env.DASHSCOPE_API_KEY
+      else process.env.DASHSCOPE_API_KEY = savedKey
+    }
+  })
+
   it('POST /asr 非法 mime → 400', async () => {
     const { FakeAsr } = await import('./voice/asr.js')
     app = await buildServer({ dbPath: ':memory:', engine: fakeEngine, llm: new FakeLLM(() => 'x'), asr: new FakeAsr('当头炮') })
