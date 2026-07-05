@@ -120,7 +120,7 @@ export interface EngineInsight {
   evalCp: number | null      // 红方视角厘兵分(正=红优)
   bestMoveZh: string | null  // 最佳应着中文,如 "红马二进三"
   pvZh: string[]             // 后续变例中文,最多 3 手,可空
-  mate: number | null        // n 步杀(正=当前走子方可杀),非杀为 null
+  mate: number | null        // n 步杀,红方视角(正=红方可杀,负=黑方可杀),非杀为 null
 }
 
 export interface Stimulus {
