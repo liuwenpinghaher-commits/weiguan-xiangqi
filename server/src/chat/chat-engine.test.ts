@@ -14,10 +14,10 @@ function makeCfg(chatOverride?: Record<string, unknown>): RuntimeConfig {
   return cfg
 }
 
-function setup(llm: FakeLLM, now = () => 1000) {
+function setup(llm: FakeLLM, now = () => 1000, chatOverride: Record<string, unknown> = {}) {
   const mem = new FakeMemoryStore(now)
   const out: any[] = []
-  const cfg = makeCfg({ minSilenceMs: 0, maxPerMin: 100 })
+  const cfg = makeCfg({ minSilenceMs: 0, maxPerMin: 100, ...chatOverride })
   const engine = new ChatEngine({
     llm, mem, cfg, now,
     emit: (line) => out.push(line),
@@ -301,7 +301,8 @@ test('同回合上下文注入:第 2 个 speaker 的 prompt 含第 1 个 speaker
   })
 
   // rng 固定 0.9 → jitter = (0.9-0.5)*0.3=0.12 → 所有 spectator 分数均 > 0.45
-  const { engine, out } = setup(llm)
+  // 本用例专门验证"同回合多 speaker 上下文注入",需放开发言人数上限(默认 1)
+  const { engine, out } = setup(llm, undefined, { maxSpeakers: 2 })
 
   const stim: Stimulus = {
     kind: 'blunder', gameId: 42, scoreCp: -400, tension: 0.95,
@@ -513,6 +514,8 @@ describe('记忆检索失败不让全场哑火', () => {
 describe('记忆落库失败不丢限流/上下文状态', () => {
   it('mem.record 抛错时仍 emit,且后续 speaker 的 prompt 含前一 speaker 的发言(roundSoFar 仍被填充)', async () => {
     const cfg = new RC2(new SR2(odb2(':memory:')), () => '2026-06-21T00:00:00.000Z')
+    // 放开发言人数上限(默认 1),以验证同回合第 2 个 speaker 的 roundSoFar 上下文注入
+    cfg.updateSection('chat', { maxSpeakers: 2 })
     const emitted: any[] = []
     const prompts: string[] = []
     let callIdx = 0

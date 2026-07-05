@@ -9,6 +9,8 @@ export interface ChatCfg {
   playerSelfProb: number
   /** 老黑作为当事人对他人刺激的插话概率(原硬编码 0.3) */
   playerChimeProb: number
+  /** 同一刺激最多几人发言(默认 1=每步只一个人,避免刷屏;控制台可调高) */
+  maxSpeakers: number
 }
 export interface DirectorModeCfg { maxDropCp: number; targetBand: { low: number; high: number }; strength: number }
 export interface DirectorCfg { coach: DirectorModeCfg; humanlike: DirectorModeCfg }
@@ -19,8 +21,8 @@ export interface LlmCfg { apiKey: string | null; model: string; baseURL: string 
 export const DEFAULTS = {
   chat: {
     minSilenceMs: 4000, maxPerMin: 12, speakThreshold: 0.6, jitterWidth: 0.4,
-    idleProb: 0.35, idleIntervalMs: 20000, reactProb: 0.3, lenShortP: 0.55, lenLongP: 0.85,
-    humanSaidTension: 0.9, idleTension: 0.7, playerSelfProb: 0.6, playerChimeProb: 0.3,
+    idleProb: 0.35, idleIntervalMs: 20000, reactProb: 0.3, lenShortP: 0.55, lenLongP: 0.92,
+    humanSaidTension: 0.9, idleTension: 0.7, playerSelfProb: 0.6, playerChimeProb: 0.15, maxSpeakers: 1,
   } as ChatCfg,
   director: {
     coach: { maxDropCp: 320, targetBand: { low: -50, high: 80 }, strength: 0.6 },

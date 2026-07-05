@@ -127,7 +127,7 @@ export class ChatEngine {
     const isKeyStim = stim.kind === 'turning_point' || stim.kind === 'phase_shift'
     const recentSecs = isKeyStim ? new Map<string, number>() : this.recentMap()
     const chat = this.deps.cfg.getChat()
-    const maxSpk = stim.tension >= 0.8 ? 3 : stim.tension >= 0.5 ? 2 : 1
+    const maxSpk = chat.maxSpeakers  // 每步发言人数(默认 1=只一个人说;控制台可调高)
     const speakers = pickSpeakers(stim, this.deps.cfg.personas().filter(p => !p.isPlayer), recentSecs, this.deps.rng, chat.speakThreshold, chat.jitterWidth, maxSpk)
 
     // 老黑(AI 棋手)参与:自己刚走→高概率自评;其余有看头时→中概率作为当事人插话
@@ -153,7 +153,7 @@ export class ChatEngine {
 
         const plan = await this.plan(persona, stim, context)
         const raw = (await this.deps.llm.chat(plan.messages, {
-          maxTokens: 150,  // 弹幕默认非思考(见 DashscopeLLM:think 未置真→thinking disabled),短句足够
+          maxTokens: 100,  // 弹幕默认非思考;压到 100 杜绝长篇刷屏,一句话点评(引一典)足够
         })).trim()
         // 兜底清洗:模型(尤其 DeepSeek)不听 prompt 硬塞的"(动作)"旁白去掉——既不显示也不进 TTS
         const text = stripStageDirections(raw)
