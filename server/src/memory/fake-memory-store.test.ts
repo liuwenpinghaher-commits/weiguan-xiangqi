@@ -55,6 +55,14 @@ describe('FakeMemoryStore', () => {
     expect(await store.retrieve('coach', '认知', 5, ['fact'])).toHaveLength(0)
   })
 
+  it('retrieve 不传 kinds 时缺省过滤 fact/insight(与接口注释/SqliteMemoryStore 一致)', async () => {
+    const { store, iso } = freshStore()
+    await store.record({ personaId: 'coach', kind: 'episode', content: '这步软了', importance: 1, gameId: 1, createdAt: iso() })
+    await store.record({ personaId: 'coach', kind: 'fact', content: '残局易急躁', importance: 3, gameId: 1, createdAt: iso() })
+    const got = await store.retrieve('coach', '残局', 5) // 不传 kinds
+    expect(got.map(r => r.kind)).toEqual(['fact'])
+  })
+
   it('降级信号:内存测试双 isDegraded=true 且 degradedReason 非空(L2)', () => {
     const { store } = freshStore()
     expect(store.isDegraded()).toBe(true)

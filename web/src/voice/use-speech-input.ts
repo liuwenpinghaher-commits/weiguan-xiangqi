@@ -14,7 +14,8 @@ export function isSttSupported(): boolean {
 /**
  * 点击开始录音(start),再点停止(stop)→ 录到的音频编码为 16k 单声道 WAV,
  * POST 给 /asr,识别出的文字回调 onResult(text)。
- * error 取值:'not-allowed'(麦克风权限)/'asr-failed'/'asr-unconfigured'/'no-speech'/'unsupported'。
+ * error 取值:'not-allowed'(权限被拒)/'no-device'(无麦克风设备)/'device-busy'(设备被占用)/
+ *   'asr-failed'/'asr-unconfigured'/'no-speech'/'unsupported'。
  */
 export function useSpeechInput(onResult: (text: string) => void) {
   const [listening, setListening] = useState(false)
@@ -36,8 +37,13 @@ export function useSpeechInput(onResult: (text: string) => void) {
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    } catch {
-      setError('not-allowed'); return
+    } catch (e) {
+      // 按 DOMException.name 区分:无设备 / 被占用 / 权限被拒,给不同文案,别一律归"权限被拒"。
+      const name = (e as { name?: string } | null)?.name
+      if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError') setError('no-device')
+      else if (name === 'NotReadableError' || name === 'TrackStartError') setError('device-busy')
+      else setError('not-allowed') // NotAllowedError / SecurityError / 其余
+      return
     }
     streamRef.current = stream
     chunksRef.current = []

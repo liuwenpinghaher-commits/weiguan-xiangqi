@@ -33,4 +33,29 @@ describe('buildNarrative', () => {
     expect(s).toContain('红方占优')
     expect(s).not.toContain('黑方占优')
   })
+
+  // ── P2-13 回归护栏:mate 裸分脱敏 ─────────────────────────────────────────
+  // mate 被 uci-parse 映射为约 ±30000 厘兵分并原值落库(game-session.ts:356)。narrative 若直接
+  // 打印相邻差值,会产出"评分骤变29700"这类裸厘兵分注入 LLM prompt。杀棋级评分须用文字描述。
+  it('杀棋级评分(mate≈±30000)不泄露裸数字,改用文字描述"杀势/杀棋"', () => {
+    const s = buildNarrative([
+      { ply: 2, scoreCp: 40, side: 'red' },
+      { ply: 4, scoreCp: 29997, side: 'red' }, // 引擎报出杀棋线
+    ])
+    // 不得出现裸的杀棋级数字
+    expect(s).not.toMatch(/299\d\d|300\d\d|2\d{4}/)
+    // 应有文字化的杀棋描述与胜势判断
+    expect(s).toContain('杀')
+    expect(s).toContain('红')
+  })
+  it('转折进入杀棋级时,转折句不打印裸厘兵分', () => {
+    const s = buildNarrative([
+      { ply: 2, scoreCp: 10, side: 'red' },
+      { ply: 4, scoreCp: 20, side: 'red' },
+      { ply: 6, scoreCp: -29995, side: 'red' }, // 黑方成杀
+    ])
+    expect(s).toContain('第6手')
+    expect(s).toContain('转折')
+    expect(s).not.toMatch(/299\d\d|300\d\d|2\d{4}/)
+  })
 })

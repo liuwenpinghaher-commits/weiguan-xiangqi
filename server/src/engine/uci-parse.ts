@@ -1,6 +1,6 @@
 import type { EngineLine } from '../types.js'
 
-const MATE_BASE = 30000
+export const MATE_BASE = 30000
 
 /** 解析一行 `info ... multipv ... score ... pv ...`;非候选行返回 null */
 export function parseInfoLine(line: string): EngineLine | null {

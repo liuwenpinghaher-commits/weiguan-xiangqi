@@ -276,8 +276,6 @@ export class GameSession {
     // 走子前先查超时:读秒已归零则直接判负(flag-fall),不再受理这手棋
     const timedOut = this.checkTimeout(gameId)
     if (timedOut) return { aiMove: null, ...timedOut }
-    const clock = this.clockStates.get(gameId)
-    if (clock) this.settleActive(clock, true)
     this.ensureLoaded(gameId)
     const pos = this.positions.get(gameId)
     if (!pos) throw new Error('game not found')
@@ -289,6 +287,13 @@ export class GameSession {
 
     // 1. 校验人着合法(非法则抛,不写库不改状态)
     if (!pos.legalMoves().includes(move)) throw new Error(`illegal move: ${move}`)
+
+    // 校验通过、这手确定受理后,才结算走子方时钟并加增秒。
+    // (必须在轮次/合法性守卫之后:否则非法或非轮次的着法会冻结时钟 activeSide=null、
+    //  让清扫器对该局失效,且走子方白得一次增秒 → 可重复蹭时。ensureLoaded 后再取 clock,
+    //  以覆盖续局时钟刚被重建的情形。)
+    const clock = this.clockStates.get(gameId)
+    if (clock) this.settleActive(clock, true)
 
     // 记录本次人着时间戳并计算用时(NaN clock 时忽略,防假 clock 破坏状态)
     const nowMs = Date.parse(this.deps.clock())
@@ -479,6 +484,10 @@ export class GameSession {
     } finally {
       if (clock) this.settleActive(clock, true)
     }
+    // 完局二次守卫(与 playHumanMove 同款):analyze 是唯一 await 点,期间并发的 resign/求和/
+    // 超时清扫可能已 finish 并删净内存态。若已终局则中止,不把这手写进已结束的对局
+    // (否则追加脏 by_ai 着法 + 复活内存态永不回收 + applyRepeatState 读到已删的 repeatHistories)。
+    if (this.isFinished(gameId)) throw new Error('对局已结束')
     const ctx = this.buildContext(gameId)
     const decision = selectMove(lines, ctx)
     const aiSide = currentSide
@@ -651,12 +660,25 @@ export class GameSession {
 
   /** 公开只读取 fen，避免调用方穿透私有 positions（不存在时返回空串）。 */
   getFen(gameId: number): string {
+    // 内存中已有活跃局面直接返回。
+    const live = this.positions.get(gameId)
+    if (live) return live.fen()
+    // 已终局对局:从 DB 直读末局面(末手 fenAfter,无手则 startFen),不经 ensureLoaded 重建
+    // 全套内存态——否则终局后一次只读提问(say→getFen)就会永久复活并驻留该局状态(泄漏)。
+    const g = this.deps.repo.getGame(gameId)
+    if (g?.result) {
+      const moves = this.deps.repo.getMoves(gameId)
+      return moves.length > 0 ? moves[moves.length - 1].fenAfter : g.startFen
+    }
+    // 进行中但内存态未加载(续局):按原路径重建。
     this.ensureLoaded(gameId)
     const pos = this.positions.get(gameId)
     return pos ? pos.fen() : ''
   }
 
   resign(gameId: number): { success: boolean; result: string; fen: string } {
+    // 完局守卫:已终局对局不可再被 resign 覆写结果(防迟到帧/重复点击/多标签页把已赢的局改判负)
+    if (this.isFinished(gameId)) return { success: false, result: '', fen: '' }
     this.ensureLoaded(gameId)
     const humanSide = this.humanSides.get(gameId)
     if (!humanSide) return { success: false, result: '', fen: '' }
@@ -669,6 +691,8 @@ export class GameSession {
   }
 
   offerDraw(gameId: number): { accepted: boolean; fen: string } {
+    // 完局守卫:已终局对局不可再被求和改判为和
+    if (this.isFinished(gameId)) return { accepted: false, fen: '' }
     this.ensureLoaded(gameId)
     const mode = this.modes.get(gameId)
     // 看局面应答(用最近一手 AI 落定后的红方视角评分),无评分时退回旧概率:

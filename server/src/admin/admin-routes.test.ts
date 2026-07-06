@@ -75,6 +75,20 @@ describe('admin personas 路由', () => {
     const res = await app.inject({ method: 'PUT', url: '/admin/personas/nope', headers: { 'content-type': 'application/json' }, payload: '{}' })
     expect(res.statusCode).toBe(400)
   })
+  it('非法 skill 档位 → 400(白名单 strong/medium/weak,防 viewScore NaN)', async () => {
+    const { app, cfg } = makeApp()
+    const before = cfg.personas().find(p => p.id === 'coach')!.skill
+    const res = await app.inject({ method: 'PUT', url: '/admin/personas/coach', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ skill: 'godlike' }) })
+    expect(res.statusCode).toBe(400)
+    // 非法值不得落库
+    expect(cfg.personas().find(p => p.id === 'coach')!.skill).toBe(before)
+  })
+  it('合法 skill 档位 → 200 并落库', async () => {
+    const { app, cfg } = makeApp()
+    const res = await app.inject({ method: 'PUT', url: '/admin/personas/coach', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ skill: 'weak' }) })
+    expect(res.statusCode).toBe(200)
+    expect(cfg.personas().find(p => p.id === 'coach')!.skill).toBe('weak')
+  })
 })
 
 describe('admin memory 路由(经 MemoryStore)', () => {
@@ -106,6 +120,20 @@ describe('admin memory 路由(经 MemoryStore)', () => {
     const res = await app.inject({ method: 'GET', url: '/admin/memory' })
     expect(res.statusCode).toBe(200)
     expect(res.json<any>().items).toHaveLength(2)
+  })
+  it('PUT /admin/memory/:id 不存在(含非数字 id)→ 404,不虚假成功', async () => {
+    const { app } = makeApp()
+    const put = await app.inject({ method: 'PUT', url: '/admin/memory/not-a-number', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ content: 'x' }) })
+    expect(put.statusCode).toBe(404)
+    const putNum = await app.inject({ method: 'PUT', url: '/admin/memory/999999', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ content: 'x' }) })
+    expect(putNum.statusCode).toBe(404)
+  })
+  it('DELETE /admin/memory/:id 不存在(含非数字 id)→ 404', async () => {
+    const { app } = makeApp()
+    const del = await app.inject({ method: 'DELETE', url: '/admin/memory/not-a-number' })
+    expect(del.statusCode).toBe(404)
+    const delNum = await app.inject({ method: 'DELETE', url: '/admin/memory/999999' })
+    expect(delNum.statusCode).toBe(404)
   })
   it('GET /admin/memory?kind=fact 过滤', async () => {
     const { app, mem } = makeApp()

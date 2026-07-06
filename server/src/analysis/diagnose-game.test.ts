@@ -43,22 +43,59 @@ test('标注双方每手并聚合人方成长指标', async () => {
   db.close()
 })
 
-test('引擎某局面返回空数组 → 抛清晰错误,不崩在下游 scoreCp', async () => {
+test('中局某局面返回空数组(非终局)→ 抛清晰错误,不崩在下游 scoreCp', async () => {
   const db = openDb(':memory:')
   const games = new GamesRepo(db)
   const analysis = new AnalysisRepo(db)
   const gameId = games.createGame({ mode: 'coach', humanSide: 'red', startFen: `${F}/s0 w`, startedAt: 't' })
   games.addMove({ gameId, side: 'red', move: 'm1', fenAfter: `${F}/s1 b`, scoreCp: null, byAi: false })
+  games.addMove({ gameId, side: 'black', move: 'm2', fenAfter: `${F}/s2 w`, scoreCp: 30, byAi: true })
   games.finishGame(gameId, 'black', 't2')
 
   const evals: Record<string, EngineLine[]> = {
     [`${F}/s0 w`]: line('b0c2', 50),
-    [`${F}/s1 b`]: [], // 引擎对此局面返回空主变
+    [`${F}/s1 b`]: [], // 中间局面引擎返回空主变(真·引擎故障,非终局)
+    [`${F}/s2 w`]: line('y', 40),
   }
   const engine = { analyze: vi.fn(async (fen: string) => evals[fen]) }
   await expect(
     diagnoseGame({ games, analysis, engine, clock: () => 't' }, gameId),
   ).rejects.toThrow(/引擎分析返回空/)
+  db.close()
+})
+
+test('终局将死局面(末 FEN 无主变/bestmove none)→ 合成终局评分,诊断成功产出成长指标', async () => {
+  // 将死取胜:红方末手 m3 将死黑方,末 FEN(s3,轮黑走)引擎返回空(mate 0 无 pv)。
+  // 期望:不抛错;末手 after 合成为"走子方(黑)被将死"= -MATE_BASE,红方将杀手 cpLoss=0。
+  const db = openDb(':memory:')
+  const games = new GamesRepo(db)
+  const analysis = new AnalysisRepo(db)
+  const gameId = games.createGame({ mode: 'coach', humanSide: 'red', startFen: `${F}/s0 w`, startedAt: 't' })
+  games.addMove({ gameId, side: 'red', move: 'm1', fenAfter: `${F}/s1 b`, scoreCp: null, byAi: false })
+  games.addMove({ gameId, side: 'black', move: 'm2', fenAfter: `${F}/s2 w`, scoreCp: 30, byAi: true })
+  games.addMove({ gameId, side: 'red', move: 'kill', fenAfter: `${F}/s3 b`, scoreCp: null, byAi: false })
+  games.finishGame(gameId, 'red', 't2')
+
+  const evals: Record<string, EngineLine[]> = {
+    [`${F}/s0 w`]: line('b0c2', 50),
+    [`${F}/s1 b`]: line('x', -30),
+    // 红走前:引擎发现红有 1 步杀,最佳着 = kill
+    [`${F}/s2 w`]: [{ multipv: 1, move: 'kill', scoreCp: 29999, mate: 1, pv: ['kill'] }],
+    [`${F}/s3 b`]: [], // 终局:黑被将死,引擎无主变
+  }
+  const engine = { analyze: vi.fn(async (fen: string) => evals[fen]) }
+
+  const sum = await diagnoseGame({ games, analysis, engine, clock: () => 'tA' }, gameId)
+
+  const ann = analysis.getAnnotations(gameId)
+  expect(ann.map((a) => a.ply)).toEqual([1, 2, 3])
+  // 红方将杀手(ply3):before=29999(红有杀),after=终局黑被将死=-30000 → cpLoss=max(0,-1)=0
+  const kill = ann.find((a) => a.ply === 3)!
+  expect(kill.cpLoss).toBe(0)
+  // 成长指标真实产出(不再因末 FEN 空而整局失败)
+  const g = analysis.getGrowthMetric(gameId)!
+  expect(g.result).toBe('red')
+  expect(sum.annotated).toBe(3)
   db.close()
 })
 

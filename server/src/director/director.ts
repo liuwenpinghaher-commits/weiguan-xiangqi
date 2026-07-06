@@ -1,7 +1,5 @@
 import type { EngineLine, DirectorContext, DirectorDecision } from '../types.js'
 
-const MATE_THRESHOLD = 29000
-
 export function selectMove(lines: EngineLine[], ctx: DirectorContext): DirectorDecision {
   if (lines.length === 0) throw new Error('no candidate moves')
   const sorted = [...lines].sort((a, b) => b.scoreCp - a.scoreCp)
@@ -60,5 +58,3 @@ function selectHumanlike(sorted: EngineLine[], _best: EngineLine, ctx: DirectorC
     chosenLine: chosen,
   }
 }
-
-export { MATE_THRESHOLD }

@@ -60,6 +60,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
 }
 
 const PERSONA_IDS: readonly string[] = PERSONAS.map(p => p.id)
+// engine-view 的 NOISE_CP 仅认这三档;未知档位会让 viewScore 取到 undefined→NaN 注入聊天,故在此把关。
+const SKILL_TIERS: readonly string[] = ['strong', 'medium', 'weak']
 function registerPersonaRoutes(app: FastifyInstance, { cfg }: AdminDeps): void {
   app.get('/admin/personas', async () => cfg.personaConfigs())
 
@@ -72,6 +74,9 @@ function registerPersonaRoutes(app: FastifyInstance, { cfg }: AdminDeps): void {
       if (typeof b[k] === 'string' && (b[k] as string).trim() !== '') patch[k] = b[k]
     }
     if (typeof b.enabled === 'boolean') patch.enabled = b.enabled
+    if (patch.skill !== undefined && !SKILL_TIERS.includes(patch.skill as string)) {
+      return reply.code(400).send({ error: `invalid skill tier: ${patch.skill}(仅允许 ${SKILL_TIERS.join('/')})` })
+    }
     cfg.updatePersona(id as any, patch)
     return { ok: true }
   })
@@ -84,6 +89,11 @@ function registerPersonaRoutes(app: FastifyInstance, { cfg }: AdminDeps): void {
   })
 }
 function registerMemoryRoutes(app: FastifyInstance, { mem }: AdminDeps): void {
+  // 写路径需先确认记录存在:否则非数字 id(sqlite 内部 Number(id)=NaN)匹配零行仍虚假返回 ok:true。
+  // 用存在性检查而非 numeric 校验,兼容 sqlite 数字 id 与测试双的字符串 id,不把存储 id 格式泄进路由层。
+  const exists = async (id: string): Promise<boolean> =>
+    (await mem.list({ includeSuperseded: true })).some(r => r.id === id)
+
   app.get('/admin/memory', async (req, reply) => {
     const q = req.query as { personaId?: string; kind?: string; includeSuperseded?: string }
     const filter: MemoryListFilter = {}
@@ -104,12 +114,14 @@ function registerMemoryRoutes(app: FastifyInstance, { mem }: AdminDeps): void {
     if (typeof b.content === 'string' && b.content.trim() !== '') patch.content = b.content
     if (typeof b.importance === 'number') patch.importance = Math.max(1, Math.min(5, Math.round(b.importance)))
     if (!('content' in patch) && !('importance' in patch)) return reply.code(400).send({ error: 'nothing to update' })
+    if (!(await exists(id))) return reply.code(404).send({ error: 'memory not found' })
     await mem.update(id, patch)
     return { ok: true }
   })
 
-  app.delete('/admin/memory/:id', async (req) => {
+  app.delete('/admin/memory/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
+    if (!(await exists(id))) return reply.code(404).send({ error: 'memory not found' })
     await mem.remove(id)
     return { ok: true }
   })

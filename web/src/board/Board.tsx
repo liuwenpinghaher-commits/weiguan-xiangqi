@@ -113,7 +113,6 @@ export interface BoardProps {
   disabled?: boolean
   orientation?: 'red' | 'black'
   legalSquares?: string[]
-  preMove?: { from: string; to: string } | null
   onSquareSelect?: (square: string) => void
 }
 
@@ -131,7 +130,7 @@ export function pikafishToSquare(pika: string): Square {
   return col + String(row + 1)
 }
 
-export function Board({ fen, onMove, size = 480, lastMove, disabled = false, orientation = 'red', legalSquares, preMove, onSquareSelect }: BoardProps) {
+export function Board({ fen, onMove, size = 480, lastMove, disabled = false, orientation = 'red', legalSquares, onSquareSelect }: BoardProps) {
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null)
 
   // 落子回调：用户拖拽落子
@@ -205,13 +204,6 @@ export function Board({ fen, onMove, size = 480, lastMove, disabled = false, ori
         }
       }
     }
-  }
-
-  if (preMove) {
-    const fromSq = pikafishToSquare(preMove.from)
-    const toSq = pikafishToSquare(preMove.to)
-    squareStyles[fromSq] = { background: 'rgba(255,200,0,0.25)', outline: '3px dashed rgba(255,180,0,0.6)' }
-    squareStyles[toSq] = { background: 'rgba(255,200,0,0.15)', outline: '3px dashed rgba(255,180,0,0.4)' }
   }
 
   // react-xiangqiboard 只识别棋盘段:其 isValidFen 要求 FEN 第 3 段是数字,

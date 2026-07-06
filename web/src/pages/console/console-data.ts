@@ -16,6 +16,7 @@ export const PARAM_FIELDS: Record<'chat' | 'engine' | 'diagnose', ParamField[]> 
     { key: 'idleTension', label: '冷场张力', min: 0, max: 1, step: 0.05 },
     { key: 'playerSelfProb', label: '老黑自评概率', min: 0, max: 1, step: 0.05 },
     { key: 'playerChimeProb', label: '老黑插话概率', min: 0, max: 1, step: 0.05 },
+    { key: 'maxSpeakers', label: '每步发言人数', min: 1, max: 3, step: 1, help: '每步最多几个人说话(1=只一人)' },
   ],
   engine: [
     { key: 'multipv', label: '候选着法数(MultiPV)', min: 1, max: 10, step: 1 },

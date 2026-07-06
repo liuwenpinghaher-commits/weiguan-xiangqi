@@ -88,6 +88,77 @@ test('轮次守卫:不是 human 一方时拒绝,不入库不改状态', async ()
   expect(repo.getMoves(gameId)).toHaveLength(0)
 })
 
+test('非法着被拒时不结算走子方时钟(时钟只在合法着受理后才结算,防冻结/白蹭增秒)', async () => {
+  const repo = new GamesRepo(openDb(':memory:'))
+  let t = 1000
+  const session = new GameSession({
+    repo, engine: fakeEngine as any, makePosition: fakePosition as any,
+    clock: () => new Date(t++).toISOString(), cfg: makeCfg(),
+  })
+  const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
+  // 一手成功后轮到人类,红钟开始走(activeSide='red')
+  await session.playHumanMove(gameId, 'h2e2')
+  expect(session.getClockState(gameId)?.activeSide).toBe('red')
+  // 一手非法着到达并被拒
+  await expect(session.playHumanMove(gameId, 'z9z9')).rejects.toThrow(/illegal/i)
+  // 被拒的着法不得结算/冻结时钟(activeSide 应仍为 red,而非被 settleActive 置 null)
+  expect(session.getClockState(gameId)?.activeSide).toBe('red')
+})
+
+test('getFen 对已终局对局从 DB 直读末局面,不复活内存态(防泄漏)', () => {
+  const repo = new GamesRepo(openDb(':memory:'))
+  const session = new GameSession({ repo, engine: fakeEngine as any, makePosition: fakePosition as any, clock: () => 't', cfg: makeCfg() })
+  // 模拟"终局后内存态已被 finish 清净 / 重启后未加载"的真实状态:只有 DB 行,无内存 position
+  const gameId = repo.createGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1', startedAt: 't0' })
+  repo.addMove({ gameId, side: 'red', move: 'h2e2', fenAfter: 'AFTER b - - 0 1', scoreCp: null, byAi: false })
+  repo.finishGame(gameId, 'red', 't1')
+  // 终局后玩家提问会走 getFen(取当前局面给引擎洞察)
+  const fen = session.getFen(gameId)
+  expect(fen).toBe('AFTER b - - 0 1') // 末手 fenAfter
+  // 关键:不因一次只读查询就永久重建并驻留该局的全套内存态
+  expect(session.hasGameState(gameId)).toBe(false)
+})
+
+test('resign 完局守卫:已终局的对局不可被 resign 覆写结果', async () => {
+  const repo = new GamesRepo(openDb(':memory:'))
+  const session = new GameSession({ repo, engine: fakeEngine as any, makePosition: fakePosition as any, clock: () => 't', cfg: makeCfg() })
+  const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
+  // 该局已由(将死取胜等)终局判为红胜
+  repo.finishGame(gameId, 'red', 't1')
+  // 一条迟到的 resign 帧到达(重复点击/消息重放/多标签页)
+  const res = session.resign(gameId)
+  expect(res.success).toBe(false)
+  // 结果必须保持红胜,不被覆写为判负(black)
+  expect(repo.getGame(gameId)!.result).toBe('red')
+})
+
+test('offerDraw 完局守卫:已终局的对局不可被求和改判为和', async () => {
+  const repo = new GamesRepo(openDb(':memory:'))
+  const session = new GameSession({ repo, engine: fakeEngine as any, makePosition: fakePosition as any, clock: () => 't', cfg: makeCfg() })
+  const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
+  repo.finishGame(gameId, 'red', 't1')
+  const res = session.offerDraw(gameId)
+  expect(res.accepted).toBe(false)
+  expect(repo.getGame(gameId)!.result).toBe('red')
+})
+
+test('aiFirstMove 完局守卫:analyze 在途期间对局被 finish → 不追加脏着法、抛"对局已结束"', async () => {
+  const repo = new GamesRepo(openDb(':memory:'))
+  // 引擎在 analyze 的 await 窗口内模拟"并发 resign/超时把该局 finish 掉"
+  const racingEngine = {
+    analyze: vi.fn(async (): Promise<EngineLine[]> => {
+      repo.finishGame(gameId, 'red', 't-race')
+      return [{ multipv: 1, move: 'b0c2', scoreCp: 20, mate: null, pv: ['b0c2'] }]
+    }),
+  }
+  const session = new GameSession({ repo, engine: racingEngine as any, makePosition: fakePosition as any, clock: () => 't', cfg: makeCfg() })
+  // human=red,起始轮黑走 → AI(黑)先手
+  const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START b - - 0 1' })
+  await expect(session.aiFirstMove(gameId)).rejects.toThrow(/对局已结束/)
+  // 不应向已终局对局追加任何 by_ai 着法
+  expect(repo.getMoves(gameId)).toHaveLength(0)
+})
+
 test('finish 后清理该 gameId 的全部内存态(防泄漏/复用误判)', async () => {
   const repo = new GamesRepo(openDb(':memory:'))
   // 人着后即终局的 fakePosition:applyMove 得到的局面 isGameOver().over=true

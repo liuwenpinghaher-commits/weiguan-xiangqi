@@ -27,6 +27,9 @@ interface RecentEntry {
 
 const RECENT_CAPACITY = 8  // 每个 gameId 最多保留最近 8 条
 
+/** coach_query 必答降级话术:LLM 异常/空句/被去重时,至少给玩家一句回应,不让提问石沉大海。 */
+const COACH_QUERY_FALLBACK = '这一手我得再看看盘面,你先按你的思路走,回头我细说。'
+
 /** 去标点、转小写,用于去重比较 */
 function normalize(s: string): string {
   return s.replace(/[，。！？,!?.、：:；;\s]/g, '').toLowerCase()
@@ -70,6 +73,8 @@ export class ChatEngine {
   /** 高频刺激(逐手 move/blunder/brilliant)保留窗口大小:走快时最多滞后这么多步,超出丢最旧。 */
   private static readonly HIGH_FREQ_KEEP = 2
   private static readonly HIGH_FREQ_KINDS = new Set<StimulusKind>(['move', 'blunder', 'brilliant'])
+  /** 必答类刺激:玩家提问 + 低频关键时刻。跳过静默/限流闸,保证转折点/阶段总评/终局播报不被吞。 */
+  private static readonly MUST_SPEAK_KINDS = new Set<StimulusKind>(['coach_query', 'turning_point', 'phase_shift', 'game_end'])
   /** 按 gameId 的高频刺激待处理窗口(FIFO,最多 HIGH_FREQ_KEEP 条);其余刺激(转折/阶段/停顿等)
    *  不进此窗口、一律不丢——只有逐手级高频刺激才会因走子过快而被挤掉。 */
   private highFreqPending = new Map<number, Stimulus[]>()
@@ -117,15 +122,18 @@ export class ChatEngine {
   }
 
   private async handleStimulus(stim: Stimulus): Promise<void> {
-    // coach_query 是玩家主动提问,必答:跳过静默/限流闸(仍会 record 计配额),不静默丢弃
-    if (stim.kind !== 'coach_query' && !this.guard.allow()) return
+    // 必答类刺激:玩家提问(coach_query)与低频关键时刻(turning_point/phase_shift/game_end)。
+    // 它们跳过静默/限流闸(仍会 record 计配额)——turning_point/phase_shift 常在同一手的
+    // move/blunder/brilliant 之后 ~1.5s 到达,若受静默闸约束会被"上一条刚发言"刷新的 lastAt 吞掉,
+    // 导致招牌的"转折点/阶段总评"在生产参数(minSilenceMs=4000)下几乎从不发声。
+    const mustSpeak = ChatEngine.MUST_SPEAK_KINDS.has(stim.kind)
+    if (!mustSpeak && !this.guard.allow()) return
     if (stim.moveZh) {
       this.lastCtx.set(stim.gameId, { moveZh: stim.moveZh, qual: qualWord(stim.scoreCp ?? null), ply: stim.ply ?? 0 })
     }
-    // turning_point/phase_shift 常紧跟在同一手的 move/blunder/brilliant 之后触发,而那条刺激
-    // 可能已让多个旁观者刚发言。若仍套用最近发言惩罚,他们的分数会被打压到阈值以下,导致这类
-    // 低频但重要的"关键时刻"反而选不出人、静默过去。故这两类刺激绕过惩罚(视为无人刚发言过)。
-    const isKeyStim = stim.kind === 'turning_point' || stim.kind === 'phase_shift'
+    // 关键时刻还需绕过"最近发言惩罚":前序刺激可能已让多个旁观者刚发言,若套用惩罚会把分数
+    // 压到阈值下、选不出人。coach_query 单独走硬选教练分支,不需此处。
+    const isKeyStim = stim.kind === 'turning_point' || stim.kind === 'phase_shift' || stim.kind === 'game_end'
     const recentSecs = isKeyStim ? new Map<string, number>() : this.recentMap()
     const chat = this.deps.cfg.getChat()
     let speakers: PersonaId[]
@@ -151,6 +159,9 @@ export class ChatEngine {
     /** 本回合已发言的条目,串行注入给下一个 speaker */
     const roundSoFar: RecentEntry[] = []
 
+    // coach_query 是玩家主动提问,必须给出回答:空句/复读/生成异常都要降级作答,不能静默吞掉
+    // (否则玩家的提问只有回显、永无回应,前端也无失败态)。
+    const isCoachQuery = stim.kind === 'coach_query'
     for (const id of speakers) {
       try {
         const persona = this.deps.cfg.getPersona(id)
@@ -164,12 +175,16 @@ export class ChatEngine {
           maxTokens: 100,  // 弹幕默认非思考;压到 100 杜绝长篇刷屏,一句话点评(引一典)足够
         })).trim()
         // 兜底清洗:模型(尤其 DeepSeek)不听 prompt 硬塞的"(动作)"旁白去掉——既不显示也不进 TTS
-        const text = stripStageDirections(raw)
-        if (!text) continue
+        let text = stripStageDirections(raw)
+        if (!text) {
+          if (!isCoachQuery) continue
+          text = COACH_QUERY_FALLBACK // 提问必答:清洗后空句 → 降级话术
+        }
 
-        // 去重护栏:与上次发言去标点后完全相同才跳过(只杀逐字复读,不误杀近似不同句)
+        // 去重护栏:与上次发言去标点后完全相同才跳过(只杀逐字复读,不误杀近似不同句)。
+        // coach_query 例外:同一问题拿到相同回答也要回给玩家,不能因去重而"石沉大海"。
         const prev = this.lastText.get(id)
-        if (prev !== undefined && normalize(text) === normalize(prev)) {
+        if (!isCoachQuery && prev !== undefined && normalize(text) === normalize(prev)) {
           continue
         }
 
@@ -212,6 +227,15 @@ export class ChatEngine {
         // 单个 speaker 生成失败:跳过该 speaker,不影响其他人。
         // 用 warn 记录而非静默吞——否则故障(如 LLM/记忆异常)无从排查。
         console.warn('[chat] speaker', id, '生成失败,跳过:', (err as Error).message)
+        // coach_query(玩家提问)例外:LLM 异常也要给玩家一句降级回答,不能让提问石沉大海。
+        if (isCoachQuery) {
+          const fallback: ChatLine = {
+            gameId: stim.gameId, personaId: id, text: COACH_QUERY_FALLBACK,
+            addressee: 'human', ts: new Date(this.deps.now()).toISOString(),
+          }
+          this.deps.emit(fallback)
+          this.lastText.set(id, COACH_QUERY_FALLBACK)
+        }
         continue
       }
     }
@@ -289,13 +313,17 @@ export class ChatEngine {
       const mateStr = ei && ei.mate != null
         ? (ei.mate > 0 ? `;红方有${ei.mate}步杀` : `;黑方有${-ei.mate}步杀`)
         : ''
+      // coachQueryTension(玩家提问张力)控制解答深度:高(≥0.5,默认 0.9)→ 附引擎后续变例,深讲透;
+      // 低 → 只给评判与最佳应着,简明作答。让这个控制台旋钮真正影响行为(此前是死旋钮)。
+      const deep = stim.tension >= 0.5
       const insightLine = ei
         ? `引擎判断:${qualWord(ei.evalCp)}` + (ei.mate == null ? `(红方${ei.evalCp ?? '?'}分)` : '')
           + (ei.bestMoveZh ? `,最佳应着「${ei.bestMoveZh}」` : '')
-          + (ei.pvZh.length ? `,后续「${ei.pvZh.join('、')}」` : '')
+          + (deep && ei.pvZh.length ? `,后续「${ei.pvZh.join('、')}」` : '')
           + mateStr + '。'
         : '(引擎暂不可用,凭你的棋力判断。)'
-      user = `棋手问你:"${stim.humanText}"。${insightLine}结合眼前局面针对性回答他的问题,专业、有据、口语,别长篇,可引一句棋理:`
+      const depthHint = deep ? '结合变例讲透' : '简明扼要'
+      user = `棋手问你:"${stim.humanText}"。${insightLine}结合眼前局面针对性回答他的问题,专业、有据、口语,${depthHint},别长篇,可引一句棋理:`
       addressee = 'human'
     } else if (stim.kind === 'long_think') {
       user = `对方这步想了很久还没落子。${len},用你的脾气随口催两句/调侃/安慰,别太冲:`
@@ -305,7 +333,10 @@ export class ChatEngine {
     } else if (stim.kind === 'phase_shift') {
       const pw = stim.phase === 'endgame' ? '残局' : stim.phase === 'midgame' ? '中盘' : '开局'
       user = `棋局进入${pw}。${len}。做个局势总评:盘面性质、谁占主动、双方战略方向;${narrative ? `参考走势:${narrative}。` : ''}引经据典,别流水账:`
-    } else if (stim.kind === 'idle' || (stim.kind === 'topic_open' && !stim.moveZh)) {
+    } else if (stim.kind === 'game_end') {
+      const ow = stim.outcome === 'draw' ? '和棋' : stim.outcome === 'red' ? '红方胜' : stim.outcome === 'black' ? '黑方胜' : '分出胜负'
+      user = `这盘棋结束了——${ow}。${len}。作为看棋的,收个尾:点评这盘的胜负手/关键转折、赢家赢在哪、输家输在哪;${narrative ? `全局走势:${narrative}。` : ''}引一句应景的棋谚,别客套:`
+    } else if (stim.kind === 'idle') {
       const dim = this.deps.rng()
       const ictx = this.lastCtx.get(stim.gameId)
       const sit = ictx ? `眼下第${ictx.ply}手「${ictx.moveZh}」,${ictx.qual}` : '这局还在走'

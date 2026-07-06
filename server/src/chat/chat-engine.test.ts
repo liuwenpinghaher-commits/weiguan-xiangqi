@@ -54,6 +54,34 @@ test('节奏护栏:静默期内的刺激不产出', async () => {
   expect(out.length).toBe(after)
 })
 
+test('game_end 终局播报:免限流必发声,prompt 含胜负', async () => {
+  const prompts: string[] = []
+  const llm = new FakeLLM((msgs) => { msgs.forEach(m => prompts.push(m.content)); return '这盘红方杀法凌厉' })
+  // 先让静默闸处于"刚发言"状态,验证 game_end 仍能突破
+  const { engine, out } = setup(llm, () => 1000, { minSilenceMs: 4000 })
+  await engine.onStimulus({ kind: 'game_end', gameId: 1, scoreCp: null, outcome: 'red', tension: 1 } as any)
+  expect(out.length).toBeGreaterThanOrEqual(1)
+  expect(prompts.some(p => p.includes('红方胜'))).toBe(true)
+})
+
+test('关键刺激(turning_point)紧跟同手 move 之后仍必发声,不被限流闸吞', async () => {
+  // 生产参数:minSilenceMs=4000。同一手先 move 让人发言(record 刷新 lastAt),
+  // ~1.5s 后 turning_point 到达——旧实现只 move 免闸,turning_point 撞静默闸被吞。
+  let now = 0
+  let n = 0
+  const llm = new FakeLLM(() => `第${n++}句点评`) // 每次不同,避免去重护栏干扰(只测限流闸)
+  const mem = new FakeMemoryStore(() => now)
+  const out: any[] = []
+  const cfg = makeCfg({ minSilenceMs: 4000, maxPerMin: 100 })
+  const engine = new ChatEngine({ llm, mem, cfg, now: () => now, emit: (l) => out.push(l), rng: () => 0.9, repo: { getMoves: () => [] } })
+  await engine.onStimulus({ kind: 'move', gameId: 1, scoreCp: 0, tension: 0.95, moveZh: '红炮二平五', side: 'red', ply: 1 })
+  const afterMove = out.length
+  expect(afterMove).toBeGreaterThanOrEqual(1)
+  now = 1500 // 距上次发言仅 1.5s < minSilenceMs
+  await engine.onStimulus({ kind: 'turning_point', gameId: 1, scoreCp: 200, tension: 0.9, moveZh: '红炮二平五', side: 'red', ply: 2 })
+  expect(out.length).toBeGreaterThan(afterMove) // 转折点必发声
+})
+
 test('低张力冷场 → 可能无人发言(out 可为空,不报错)', async () => {
   const llm = new FakeLLM(() => 'x')
   const { engine, out } = setup(llm, () => 1000)
@@ -718,6 +746,39 @@ test('coach_query:engineInsight=null 时降级(不含引擎数据,仍作答)', a
   expect(prompts.some(p => p.includes('现在谁占优?'))).toBe(true)
   // 降级文案真出现:引擎不可用时提示"凭棋力判断",而非静默丢引擎段
   expect(prompts.some(p => p.includes('引擎暂不可用'))).toBe(true)
+})
+
+test('coach_query 必答:LLM 抛错也给玩家一句降级回答,不静默吞', async () => {
+  const llm = new FakeLLM(() => { throw new Error('llm down') })
+  const { engine, out } = setup(llm)
+  await engine.onStimulus({ kind: 'coach_query', gameId: 9, scoreCp: null, humanText: '这步怎么样?', engineInsight: null, tension: 0.9 } as any)
+  expect(out.length).toBe(1)
+  expect(out[0].personaId).toBe('coach')
+  expect(out[0].addressee).toBe('human')
+  expect(out[0].text.length).toBeGreaterThan(0)
+})
+
+test('coach_query 必答:清洗后空句也降级作答(不因空句被跳过)', async () => {
+  const llm = new FakeLLM(() => '(挠头)') // 全是旁白动作,stripStageDirections 后为空
+  const { engine, out } = setup(llm)
+  await engine.onStimulus({ kind: 'coach_query', gameId: 10, scoreCp: null, humanText: '走哪?', engineInsight: null, tension: 0.9 } as any)
+  expect(out.length).toBe(1)
+  expect(out[0].addressee).toBe('human')
+  expect(out[0].text.length).toBeGreaterThan(0)
+})
+
+test('coachQueryTension 低 → 教练作答不附引擎后续变例(旋钮真正生效)', async () => {
+  const prompts: string[] = []
+  const llm = new FakeLLM((msgs) => { msgs.forEach(m => prompts.push(m.content)); return '简明作答' })
+  const { engine } = setup(llm)
+  const insight = { evalCp: 40, bestMoveZh: '红马二进三', pvZh: ['红马二进三', '黑炮8平5', '红车一平二'], mate: null }
+  // 低张力:不应把后续变例塞进 prompt
+  await engine.onStimulus({ kind: 'coach_query', gameId: 11, scoreCp: 40, humanText: '走哪?', engineInsight: insight, tension: 0.2 } as any)
+  expect(prompts.some(p => p.includes('后续「'))).toBe(false)
+  prompts.length = 0
+  // 高张力:附上后续变例
+  await engine.onStimulus({ kind: 'coach_query', gameId: 12, scoreCp: 40, humanText: '走哪?', engineInsight: insight, tension: 0.9 } as any)
+  expect(prompts.some(p => p.includes('后续「'))).toBe(true)
 })
 
 test('coach_query:mate 正负分别显示红方/黑方杀棋', async () => {

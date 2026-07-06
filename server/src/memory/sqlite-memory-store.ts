@@ -6,11 +6,20 @@ import type { PersonaId } from '../types.js'
 import { judgeMemory } from './memory-judge.js'
 
 const RECENCY_HALFLIFE_MS = 1000 * 60 * 60 * 24 * 14
-// 余弦相似度高于此阈值才对最近邻候选调用 judge(merge/supersede/keep)。0.6 已用真实
-// text-embedding-v3 标定(见 scripts/calibrate-sim-threshold.ts):无关对 ≤0.50,复述/矛盾更新 ≥0.69。
-const DEFAULT_SIM_THRESHOLD = 0.6
+// 余弦相似度高于此阈值才对最近邻候选调用 judge(merge/supersede/keep)。
+// 2026-07-05 按本地 Ollama bge-m3 重标定(见 scripts/calibrate-sim-threshold.ts,4 类各 5 组中文棋类对实测):
+//   复述/细化      min 0.707  mean 0.796
+//   相关不同事实   非矛盾项 ≤0.672;唯一 0.724 系"急躁→沉稳"矛盾更新,理应触发 judge
+//   同域相关       max 0.702
+//   无关           max 0.480
+// 0.7 卡在"复述(≥0.707)触发 judge"与"同域相关(≤0.702)/中性相关不同事实(≤0.672)跳过"之间,
+// 避免旧 0.6 阈把 ~0.63 的相关不同事实每写一次都多打一次 LLM judge。bge-m3 整体余弦比旧
+// text-embedding-v3 偏高,故阈值从 0.6 上调到 0.7。
+const DEFAULT_SIM_THRESHOLD = 0.7
 // 检索注入相关度地板:低于此 cosine sim 视为与当前话题无关,不注入(persona 记忆稀少时防低相关注入)。
-const DEFAULT_RETRIEVE_MIN_SIM = 0.3
+// 同上标定:无关对最高 0.480、同域相关最低 0.564,0.5 落在两者之间——滤掉无关闲话、保住同域相关。
+// 旧 0.3 是 text-embedding-v3 的地板,对 bge-m3 太低(无关对 ~0.465 会照样注入),故上调到 0.5。
+const DEFAULT_RETRIEVE_MIN_SIM = 0.5
 
 export interface SqliteMemoryDeps {
   db: DB
@@ -77,9 +86,14 @@ export class SqliteMemoryStore implements MemoryStore {
   }
 
   async record(e: MemoryInput): Promise<string> {
+    // episode 一律 append 无向量:当前无消费方(不参与检索/去重),纯写入空转,
+    // 保留供未来反思(reflection)素材;故不嵌入、不回填。
     if (e.kind === 'episode') return this.insert(e, null)
     const vec = await this.embedOne(e.content)
     if (!vec) return this.insert(e, null)
+
+    // 本次嵌入成功=服务健康 → 顺带回填该 persona 故障期遗留的 NULL 向量记忆(P2-19 开环)。
+    await this.backfillNullEmbeddings(e.personaId)
 
     // 最近邻:同 persona/kind、未作废、有向量的行里算余弦取 top-1
     const rows = this.deps.db.prepare(
@@ -125,10 +139,31 @@ export class SqliteMemoryStore implements MemoryStore {
     return String(info.lastInsertRowid)
   }
 
+  /**
+   * 回填故障期写入的 NULL 向量记忆(P2-19 开环):嵌入服务恢复后补算并回写向量。
+   * 只补 fact/insight——episode 设计上就是无向量(不参与检索),不染指。
+   * 单条嵌入失败=服务又掉线,立即停手(剩余留待下次),避免整轮阻塞。
+   */
+  private async backfillNullEmbeddings(personaId: PersonaId): Promise<void> {
+    const rows = this.deps.db.prepare(
+      "SELECT id, content FROM memory WHERE persona_id=? AND kind != 'episode' AND embedding IS NULL AND superseded_at IS NULL"
+    ).all(personaId) as Array<{ id: number; content: string }>
+    for (const r of rows) {
+      const vec = await this.embedOne(r.content)
+      if (!vec) return // 又掉线,余下留到下次
+      this.deps.db.prepare('UPDATE memory SET embedding=? WHERE id=? AND embedding IS NULL')
+        .run(JSON.stringify(vec), r.id)
+    }
+  }
+
   async retrieve(personaId: PersonaId, query: string, limit: number, kinds: MemoryKind[] = ['fact', 'insight']): Promise<MemoryRecord[]> {
     if (kinds.length === 0) return []
     const vec = await this.embedOne(query)
     const t = this.deps.now()
+
+    // 嵌入服务已恢复(query 成功嵌入)→ 顺带回填故障期写入的 NULL 向量记忆(P2-19 开环)。
+    // 否则那些记忆会被相关度地板永久过滤、也不参与去重最近邻,等于永久失踪。
+    if (vec) await this.backfillNullEmbeddings(personaId)
 
     const placeholders = kinds.map(() => '?').join(',')
     const all = this.deps.db.prepare(
@@ -174,7 +209,10 @@ export class SqliteMemoryStore implements MemoryStore {
     if (patch.content !== undefined) {
       sets.push('content=?'); vars.push(patch.content)
       const vec = await this.embedOne(patch.content)
-      sets.push('embedding=?'); vars.push(vec ? JSON.stringify(vec) : null)
+      // 重嵌入失败(Ollama 掉线)时不写 embedding 列,保留旧向量——与 merge 路径同策略。
+      // 若无条件写 NULL,则该记忆在健康态检索会被相关度地板永久过滤(P2-19)。
+      // 旧向量虽对新文本略微陈旧,但远胜于无向量;下次成功编辑会自动纠正。
+      if (vec) { sets.push('embedding=?'); vars.push(JSON.stringify(vec)) }
     }
     if (patch.importance !== undefined) { sets.push('importance=?'); vars.push(patch.importance) }
     if (!sets.length) return

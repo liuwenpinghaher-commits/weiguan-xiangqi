@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getDrills, postDrillAttempt, THEME_LABEL } from '../api/http-client.js'
+import { HTTP_BASE } from '../api/config.js'
 import { Board } from '../board/Board.js'
 import { PageShell, cardStyle, headingStyle, ErrorBanner } from '../ui/PageShell.js'
 import { color, space, radius, fontSize, btn } from '../ui/theme.js'
@@ -15,6 +16,16 @@ export function TrainingPage({ gameId }: { gameId: number }) {
   const [answering, setAnswering] = useState(false)
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [humanSide, setHumanSide] = useState<'red' | 'black'>('red')
+
+  // 取本局 humanSide 用于棋盘朝向:执黑训练时也让人类方朝下,不再倒着看棋。
+  // drills 接口不带 humanSide,故单独拉 /games/:id(失败不影响做题,默认红方朝下)。
+  useEffect(() => {
+    fetch(`${HTTP_BASE}/games/${gameId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.game?.humanSide === 'black') setHumanSide('black'); else setHumanSide('red') })
+      .catch(() => { /* 朝向降级为默认红方朝下 */ })
+  }, [gameId])
 
   useEffect(() => {
     setLoading(true)
@@ -104,7 +115,7 @@ export function TrainingPage({ gameId }: { gameId: number }) {
                 轮到你，走出最佳着：
               </p>
 
-              <Board fen={d.fen} onMove={answer} />
+              <Board fen={d.fen} onMove={answer} orientation={humanSide} />
 
               <p style={{
                 minHeight: 24,

@@ -39,7 +39,9 @@ export function PlayPage() {
   const [plyIndex, setPlyIndex] = useState(0)
   const [undoRemaining, setUndoRemaining] = useState(3)
   const [clockState, setClockState] = useState<{redRemaining:number;blackRemaining:number;activeSide:'red'|'black'|null}|null>(null)
-  const [preMove, setPreMove] = useState<{from:string;to:string}|null>(null)
+  // 每次收到"服务端权威时钟"都自增,作为本地补间 effect 的唯一重captured信号:
+  // 暂停后不再本地递减、悔棋(undo_result 带回权威 clockState)后以服务端值为准重置补间基准。
+  const [clockEpoch, setClockEpoch] = useState(0)
   const [legalSquares, setLegalSquares] = useState<string[]>([])
   const [flipped, setFlipped] = useState(false)
   const [viewingHistory, setViewingHistory] = useState(false) // 是否正在回看历史(回看时锁盘)
@@ -53,9 +55,9 @@ export function PlayPage() {
   sideRef.current = side
   const modeRef = useRef<GameMode>(mode)
   modeRef.current = mode
-  const preMoveRef = useRef<{from:string;to:string}|null>(null)
-  preMoveRef.current = preMove
-  const preMoveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null) // preMove 延时发送句柄,换局/卸载时清理
+  // 是否有一手"乐观 push 到 moveHistory 但服务端尚未确认"的人着。服务端 error(非法/未配置等)
+  // 拒绝时据此回滚那一条,避免 ply 错位、回看整体错位(P3-26)。update 确认后清零。
+  const pendingMoveRef = useRef(false)
   const isNarrow = useIsNarrow()
 
   // fenHistory 每个 server update 一帧(START + 每完整回合 1 帧),moveHistory 逐手。
@@ -83,6 +85,10 @@ export function PlayPage() {
       setStatusMsg('对局开始，请走棋')
       setStatusError(false)
     } else if (msg.type === 'update') {
+      // 只认本局的 update:旧局超时清扫广播的 update 帧现在也带 gameId,
+      // 不属当前局则忽略,避免旧局 flag-fall 顶替正在下的新局 UI(P1-7)。
+      if (msg.gameId != null && gameIdRef.current !== null && msg.gameId !== gameIdRef.current) return
+      pendingMoveRef.current = false // 服务端已确认,乐观着法转正,后续 error 不再回滚它
       setFen(msg.fen)
       // 不再每手 bump fenKey:Board 由 position(fen) 受控,改 prop 即平滑动画到新局面。
       // 每手强制重挂会让棋盘整块闪烁/重刷(用户反馈问题2)。仅非法着回弹时才重挂(见 error 分支)。
@@ -91,7 +97,7 @@ export function PlayPage() {
       setLastAiMoveZh(msg.aiMoveZh ?? null)
       setAwaitingAi(false) // AI 已回应，解锁棋盘
       setStatusError(false)
-      if (msg.clockState) setClockState(msg.clockState)
+      if (msg.clockState) { setClockState(msg.clockState); setClockEpoch(e => e + 1) }
       // 中文棋谱回填:人手落地时前端只有 UCI,服务端 update 才带回 moveZh → 回填刚下的人手;
       // 再把 AI 着(含 aiMoveZh)追加。人手直接终局(无 aiMove)时也要回填,故独立于 aiMove 判断。
       setMoveHistory(prev => {
@@ -113,17 +119,6 @@ export function PlayPage() {
       if (msg.fen) {
         setFenHistory(prev => { const next = [...prev, msg.fen]; if (next.length > 200) next.shift(); return next })
       }
-      const pm = preMoveRef.current
-      if (pm && msg.fen && !msg.over) {
-        setPreMove(null)
-        if (preMoveTimerRef.current) clearTimeout(preMoveTimerRef.current)
-        preMoveTimerRef.current = setTimeout(() => {
-          preMoveTimerRef.current = null
-          const gid = gameIdRef.current
-          // 仅当对局仍在进行(未认输/未结束/未换局)时才发出预走子,避免落到旧局或已结束局面
-          if (gid && statusRef.current === 'playing') wsRef.current?.send({ type: 'move', gameId: gid, move: pm.from + pm.to })
-        }, 100)
-      }
       if (statusRef.current === 'paused') {
         // 暂停期间到达的 AI 落子:棋盘已更新,但保持暂停态,不抢回 playing/over
       } else if (msg.over) {
@@ -140,12 +135,41 @@ export function PlayPage() {
         setStatusMsg(aiShown ? `AI 走了 ${aiShown}${reason}，轮到您走` : '轮到您走棋')
       }
     } else if (msg.type === 'error') {
-      // 非法着法或其他错误：解锁棋盘并强制回弹到当前合法 fen
       setAwaitingAi(false)
       setStatusError(true)
-      setStatusMsg(`非法着法：${msg.message}`)
-      // 修改 fenKey 强制 Board key 变化，使其重新 mount 并显示真实局面
+      const raw = msg.message
+      // 只有真的走子被拒才是"非法着法";"未配置引擎"/"AI先手失败"/"对局不存在"等直接展示服务端原文(P3-30)。
+      const isIllegal = raw.startsWith('illegal move') || raw.startsWith('not your turn')
+      const wasPending = pendingMoveRef.current
+      if (wasPending) {
+        // 乐观 push 的那一手被拒:回滚 moveHistory 那一条,避免 ply 错位/回看全错(P3-26)
+        setMoveHistory(prev => prev.slice(0, -1))
+        pendingMoveRef.current = false
+      }
+      // 走子被拒(有在途乐观着法)或明确非法时,重挂 Board 把库内乐观移动的棋子弹回真实 fen;
+      // 其余纯提示类错误不动棋盘,避免无谓闪烁。
+      if (wasPending || isIllegal) setFenKey(k => k + 1)
+      setStatusMsg(isIllegal ? '非法着法，已回退到当前局面' : raw)
+    } else if (msg.type === 'state') {
+      // 断线重连后 resync 拉回的权威状态:重挂棋盘、恢复时钟、解锁棋盘(修"AI 回帧在途断线致永久锁死")。
+      if (gameIdRef.current !== null && msg.gameId !== gameIdRef.current) return
+      pendingMoveRef.current = false
+      setAwaitingAi(false) // 无条件解锁:即便断线前在等 AI,重连后以服务端局面为准
+      setViewingHistory(false)
+      setFen(msg.fen)
       setFenKey(k => k + 1)
+      setStatusError(false)
+      if (msg.clockState) { setClockState(msg.clockState); setClockEpoch(e => e + 1) }
+      if (msg.over) {
+        const result = msg.result ?? null
+        setGameResult(result)
+        setStatus('over')
+        const txt = resultText(result)
+        setStatusMsg(txt ? `对局结束 — ${txt}` : '对局结束！')
+      } else {
+        setStatus('playing')
+        setStatusMsg('已重新连接，请继续走棋')
+      }
     } else if (msg.type === 'chat') {
       // 只收本局弹幕:换局瞬间旧局残留帧/多局并发时不串台
       if (gameIdRef.current !== null && msg.gameId !== gameIdRef.current) return
@@ -170,7 +194,8 @@ export function PlayPage() {
         setMoveHistory(prev => prev.slice(0, -2))
         // 撤回 2 手 = 回退 1 个 server 帧;保留开局帧
         setFenHistory(prev => prev.length > 1 ? prev.slice(0, -1) : prev)
-        if (msg.clockState) setClockState(msg.clockState)
+        // 悔棋以服务端权威时钟为准,并 bump epoch 让本地补间重置基准(否则同侧继续走会用旧基准覆盖)
+        if (msg.clockState) { setClockState(msg.clockState); setClockEpoch(e => e + 1) }
       } else {
         alert(typeof msg.undoRemaining === 'number' && msg.undoRemaining <= 0
           ? '悔棋次数已用完(每局 3 次)'
@@ -192,6 +217,10 @@ export function PlayPage() {
         setStatus((prev: GameStatus) => prev === 'connecting' ? 'playing' : prev)
         setStatusMsg((prev: string) => prev === '连接断开，正在重连…' ? '已重新连接，请继续走棋' : prev)
         setStatusError(false)
+        // 状态自愈:向服务端拉取权威 state,重挂棋盘/恢复时钟/解锁棋盘(修 update/state 在途丢失致死锁,P1-10)。
+        // 仅在已有对局时发;首连(gameId 尚为 null)由 new→started 走正常流程。
+        const gid = gameIdRef.current
+        if (gid !== null) wsRef.current?.send({ type: 'resync', gameId: gid })
       } else if (s === 'closed') {
         setStatus('error')
         setStatusMsg('连接断开，请重新开始')
@@ -231,14 +260,18 @@ export function PlayPage() {
   }, [])
 
   function handleStart() {
-    if (preMoveTimerRef.current) { clearTimeout(preMoveTimerRef.current); preMoveTimerRef.current = null }
+    // 与 handleRestart 对称:开新局前停掉上一局在播/排队的语音并清空旧弹幕,
+    // 否则 ChatPanel remount 后会从头重扫旧 lines 重播上一局收尾语音、串台显示(P1-9)。
+    stopVoice()
+    cancelSpeech()
+    setLines([])
+    pendingMoveRef.current = false
     setMoveHistory([])
     setFenHistory([START_FEN])
     setPlyIndex(0)
     setViewingHistory(false)
     setUndoRemaining(3)
     setClockState(null)
-    setPreMove(null)
     setLegalSquares([])
     setFlipped(false)
     startNewConnection(mode, side)
@@ -263,16 +296,11 @@ export function PlayPage() {
   }
 
   function handleMove(move: string) {
-    if (status !== 'playing' || gameId === null) {
-      if (awaitingAi && mode === 'humanlike') {
-        setPreMove({ from: move.slice(0,2), to: move.slice(2,4) })
-      }
-      return
-    }
-    setPreMove(null)
+    if (status !== 'playing' || gameId === null) return
     setLegalSquares([])
-    dropQueued()  // 走子:清掉没播的旧弹幕(点评的是上一步),语音直接接最新,不再一直滞后
+    dropQueued()  // 走子:清掉没播的旧弹幕(点评的是上一步),但保留教练必答回答;语音直接接最新
     setMoveHistory(prev => [...prev, { ply: prev.length + 1, move, side }])
+    pendingMoveRef.current = true // 标记这一手为"乐观未确认",若服务端拒绝则在 error 分支回滚(P3-26)
     wsRef.current?.send({ type: 'move', gameId, move })
     setAwaitingAi(true) // 等待 AI 响应，锁盘
     setStatusError(false)
@@ -282,7 +310,7 @@ export function PlayPage() {
   function handleRestart(activeMode?: GameMode, activeSide?: HumanSide) {
     stopVoice()   // 停掉上一局在播/排队的本地 TTS 语音,避免串台到新局
     cancelSpeech()
-    if (preMoveTimerRef.current) { clearTimeout(preMoveTimerRef.current); preMoveTimerRef.current = null }
+    pendingMoveRef.current = false
     setFen(START_FEN)
     setFenKey(k => k + 1)
     setGameId(null)
@@ -301,7 +329,6 @@ export function PlayPage() {
     setViewingHistory(false)
     setUndoRemaining(3)
     setClockState(null)
-    setPreMove(null)
     setLegalSquares([])
     setFlipped(false)
     startNewConnection(activeMode ?? mode, activeSide ?? side)
@@ -357,13 +384,12 @@ export function PlayPage() {
     if (!viewingHistory) setPlyIndex(moveHistory.length)
   }, [moveHistory.length, viewingHistory])
 
-  // 卸载时清理可能在途的 preMove 定时器,避免向已关闭连接发送
-  useEffect(() => () => { if (preMoveTimerRef.current) clearTimeout(preMoveTimerRef.current) }, [])
-
-  // 本地计时仅作视觉补间:捕获本轮基准(剩余值 + 起始时刻),按真实时间差递减,
-  // 避免 setInterval 间隔不精确导致的累积漂移。server 每手切换 activeSide 时本 effect
-  // 重启并重新捕获权威基准,故以服务端值为准。
+  // 本地计时仅作视觉补间:每次收到服务端权威时钟(clockEpoch 自增)就重新捕获基准(剩余值+起始时刻),
+  // 按真实时间差递减,避免 setInterval 间隔不精确导致的累积漂移。
+  //  - 仅在 status==='playing' 时补间:暂停(paused)/结束(over)/等待时不本地递减,以服务端为准(P3 时钟补间);
+  //  - 悔棋 undo_result 带回权威 clockState 时 clockEpoch 自增 → 本 effect 重跑、以服务端值重置基准。
   useEffect(() => {
+    if (status !== 'playing') return
     if (!clockState || clockState.activeSide === null) return
     const active = clockState.activeSide
     const startTime = Date.now()
@@ -379,7 +405,7 @@ export function PlayPage() {
     }, 200)
     return () => clearInterval(iv)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clockState?.activeSide])
+  }, [clockEpoch, status])
 
   const resultTxt = resultText(gameResult)
   const canStart = status === 'idle' || status === 'over' || status === 'error'
@@ -510,7 +536,6 @@ export function PlayPage() {
               disabled={awaitingAi || status !== 'playing' || viewingHistory}
               orientation={boardOrientation}
               legalSquares={legalSquares}
-              preMove={preMove}
               onSquareSelect={(sq) => {
                 fetch(`${HTTP_BASE}/legal-moves?fen=${encodeURIComponent(fen)}&square=${sq}`)
                   .then(r => r.json()).then(d => setLegalSquares(d.squares)).catch(() => setLegalSquares([]))

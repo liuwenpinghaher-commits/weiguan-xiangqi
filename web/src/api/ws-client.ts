@@ -2,7 +2,8 @@ import { WS_BASE } from './config.js'
 
 export type ServerMsg =
   | { type: 'started'; gameId: number }
-  | { type: 'update'; aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; aiReason?: string; moveZh?: string; aiMoveZh?: string; clockState?: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null } | null }
+  | { type: 'update'; gameId?: number; aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; aiReason?: string; moveZh?: string; aiMoveZh?: string; clockState?: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null } | null }
+  | { type: 'state'; gameId: number; fen: string; clockState: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null } | null; over: boolean; result?: 'red' | 'black' | 'draw' }
   | { type: 'error'; message: string }
   | { type: 'chat'; gameId: number; personaId: string; text: string; addressee: string; ts: string }
   | { type: 'draw_response'; gameId: number; accepted: boolean }
@@ -19,6 +20,7 @@ export type ClientMsg =
   | { type: 'resign'; gameId: number }
   | { type: 'draw_offer'; gameId: number }
   | { type: 'undo'; gameId: number }
+  | { type: 'resync'; gameId: number }
 
 export type ConnStatus = 'open' | 'closed' | 'error' | 'reconnecting'
 

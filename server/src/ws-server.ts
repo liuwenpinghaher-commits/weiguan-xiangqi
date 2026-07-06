@@ -6,6 +6,7 @@ import { openDb } from './store/db.js'
 import { GamesRepo } from './store/games-repo.js'
 import { UciEngine, spawnTransport } from './engine/engine.js'
 import { GameSession } from './session/game-session.js'
+import { createGameLock } from './session/game-lock.js'
 import { Position } from './rules/position.js'
 import type { GameMode, Side } from './types.js'
 import { AnalysisRepo } from './store/analysis-repo.js'
@@ -20,7 +21,7 @@ import { ChatEngine } from './chat/chat-engine.js'
 import { idleShouldFire } from './chat/idle-policy.js'
 import { RuntimeConfig } from './config/runtime-config.js'
 import { SettingsRepo } from './store/settings-repo.js'
-import { MutableLLM, buildInnerLlm } from './llm/mutable-llm.js'
+import { MutableLLM, buildInnerLlm, llmUsable } from './llm/mutable-llm.js'
 import { registerAdminRoutes } from './admin/admin-routes.js'
 import { join } from 'node:path'
 import fastifyStatic from '@fastify/static'
@@ -94,7 +95,11 @@ export async function buildServer(opts: {
     const mutable = new MutableLLM(buildInnerLlm(cfg.getLlm()))
     cfg.onLlmChange = () => mutable.replace(buildInnerLlm(cfg.getLlm()))
     llm = mutable
-    if (!cfg.getLlm().apiKey) console.warn('未配置 DASHSCOPE_API_KEY:观棋聊天功能不可用,对弈/诊断照常运行')
+    // 告警须与 buildInnerLlm 的真实判定一致:本地 Ollama 不需 apiKey(有 baseURL 即可用),
+    // 而有 apiKey 却缺 baseURL 会静默落 FakeLLM(chat 全空串)——旧告警只查 apiKey,两种都误判。
+    if (!llmUsable(cfg.getLlm())) {
+      console.warn('LLM 未就绪(缺 Base URL,或云端缺 API Key):观棋聊天/反思/成长报告将输出空,对弈/诊断照常。请在控制台或 .env 配置对话模型。')
+    }
   }
 
   // 记忆:SQLite 语义记忆(向量存 JSON,检索时 JS 算余弦)。始终持久,不再依赖独立 SurrealDB 进程,
@@ -147,8 +152,9 @@ export async function buildServer(opts: {
           addressee: line.addressee,
           ts: line.ts,
         })
-      } catch {
-        // 落库失败静默忽略,不影响 WS 推送
+      } catch (err) {
+        // 落库失败不影响 WS 推送,但要留痕(FK 违例等会让复盘 messages 缺这条,静默则无从排查)
+        console.warn('[chat] 角色消息落库失败:', (err as Error).message)
       }
     },
     rng: Math.random,
@@ -168,8 +174,12 @@ export async function buildServer(opts: {
   // ---- 抽取的反思 helper:对某局的所有旁观者触发 reflect ----
   // 仅在 reflect 全部成功后才标记 reflectedGames;任一失败则不标记 → 下次有机会重试,
   // 避免一次失败(LLM/写库异常)导致该局记忆永久不沉淀。
-  async function reflectGame(gameId: number): Promise<void> {
-    if (reflectedGames.has(gameId) || reflectingGames.has(gameId)) return
+  async function reflectGame(gameId: number, opts?: { force?: boolean }): Promise<void> {
+    // 防重入:正在反思中一律跳过。已反思标记默认拦截;但终局路径传 force=true 允许再反思一次——
+    // 中途关页(≥6 手)会先反思一版并标记 reflectedGames,若用户续局下完,终局的完整反思(含最终
+    // 胜负与后半盘)不能被这枚标记吞掉。重复写入由记忆 judge(merge/supersede)去重,不会污染。
+    if (reflectingGames.has(gameId)) return
+    if (!opts?.force && reflectedGames.has(gameId)) return
     reflectingGames.add(gameId)
     try {
       await doReflectGame(gameId)
@@ -257,12 +267,12 @@ export async function buildServer(opts: {
       if (pausedGames.has(gid)) continue
       const timedOut = session.checkTimeout(gid)
       if (!timedOut) continue
-      const frame = JSON.stringify({ type: 'update', aiMove: null, ...timedOut, clockState: null })
+      // 帧必须带 gameId:前端按 gameId 过滤 update,否则旧局 flag-fall 广播会顶替正在下的新局 UI。
+      const frame = JSON.stringify({ type: 'update', gameId: gid, aiMove: null, ...timedOut, clockState: null })
       for (const s of sockets) {
         try { s.send(frame) } catch { /* 单连接发送失败忽略 */ }
       }
-      cleanupFinishedGame(gid)
-      reflectThenForget(gid)
+      finalizeGame(gid, timedOut.result)
     }
   }, 2000)
   clockSweeper.unref?.()
@@ -282,6 +292,11 @@ export async function buildServer(opts: {
   // 暂停中的对局:整局总开关。暂停期间停冷场定时器、跳过 move/say/idle 刺激,不生成不广播。
   const pausedGames = new Set<number>()
 
+  // 按 gameId 串行化对局写操作(move/undo/resign/draw_offer/AI 先手)。WS handler 是 async,
+  // 同一局并发消息会在 await engine.analyze 窗口内交错 → 写坏棋谱 / 悔棋与在途走子互相污染 /
+  // 已终局被覆写。服务端级(跨 socket,双标签页共用同一 gid)串行是唯一权威兜底。
+  const withGameLock = createGameLock()
+
   // 关闭观众席的对局:用户可开/关旁观者(弹幕+语音)。关闭期间不生成任何 chat 刺激,
   // 不浪费 LLM/TTS,也不广播弹幕(与 pause 同构,但 pause 连棋也停、此处只停观众席)。
   const spectatorsOffGames = new Set<number>()
@@ -294,15 +309,38 @@ export async function buildServer(opts: {
     pausedGames.delete(gameId)
     spectatorsOffGames.delete(gameId)
     chat.forgetGame(gameId)
+    // 重置"当前活跃局":否则终局后 idle 定时器仍认为该局在进行(lastGameId 不变、pausedGames 已清
+    // → paused 恒 false),每周期对已结束的局投 idle 刺激,空烧 LLM 且 prompt 退化为"这局还在走"。
+    if (lastGameId === gameId) lastGameId = null
+  }
+  // 该 gid 是否为存在且未终局的对局(供 pause/spectators 等状态开关校验,防伪造 gid 撑爆内存 Set)
+  function isLiveGame(gameId: number): boolean {
+    const g = repo.getGame(gameId)
+    return !!g && !g.result
   }
   function forgetGuards(gameId: number): void {
     reflectedGames.delete(gameId)
     diagnosedGames.delete(gameId)
   }
-  // 终局(超时/认负/和棋)路径的反思:反思落定后清幂等闸,避免 reflectedGames 单调泄漏(修 R-10)。
-  // move-over 路径另有 reflect+diagnose 合并清理,不走这里。
-  function reflectThenForget(gameId: number): void {
-    void reflectGame(gameId).catch(() => { /* 反思失败静默 */ }).finally(() => forgetGuards(gameId))
+  // 统一终局收尾:认负/求和/超时/正常终局四条路径共用。
+  // ① cleanupFinishedGame 清本局态并重置 lastGameId;② 反思(force,含最终胜负);
+  // ③ 自动诊断(幂等,仅有引擎时)——修"诊断只挂 move-over 路径,认负/超时/求和局无成长指标";
+  // ④ 反思+诊断都落定后清幂等闸。fire-and-forget,失败静默不影响主流程。
+  function finalizeGame(gameId: number, outcome?: 'red' | 'black' | 'draw'): void {
+    // 终局播报:让茶馆对这盘胜负/绝杀收个尾(game_end 免限流、绕最近发言惩罚)。
+    // 必须在 cleanupFinishedGame(会 forgetGame 清上下文 + 重置 lastGameId)之前投,
+    // 让 buildNarrative 还能读到本局走势。spectatorsOff 时不投(用户已关观众席)。
+    if (outcome && !spectatorsOffGames.has(gameId)) {
+      void chat.onStimulus({ kind: 'game_end', gameId, scoreCp: null, outcome, tension: 1 })
+    }
+    cleanupFinishedGame(gameId)
+    const reflectP = reflectGame(gameId, { force: true }).catch(() => { /* 反思失败静默 */ })
+    let diagP: Promise<unknown> = Promise.resolve()
+    if (engine && !diagnosedGames.has(gameId)) {
+      diagnosedGames.add(gameId)
+      diagP = diagnoseGame(diagDeps, gameId).catch(() => { /* 诊断失败静默 */ })
+    }
+    void Promise.allSettled([reflectP, diagP]).then(() => forgetGuards(gameId))
   }
 
   const app = Fastify({ logger: true })
@@ -341,7 +379,19 @@ export async function buildServer(opts: {
     try { db.close() } catch {}
   })
 
-  await app.register(fastifyWebsocket)
+  // WS 的 Origin 校验(防 CSWSH):浏览器 WebSocket 不受 CORS 约束——不校验的话,用户浏览器里
+  // 打开的任意网页都能连 ws://本机/play 建局、灌 say(烧引擎+LLM+落库)、窃听全部广播。
+  // 无 Origin 头(curl/测试/非浏览器客户端)放行;浏览器发起的连接必须来自白名单前端。
+  const allowedWsOrigins = new Set(['http://localhost:3420', 'http://127.0.0.1:3420'])
+  await app.register(fastifyWebsocket, {
+    options: {
+      verifyClient: (info: { origin?: string }, next: (ok: boolean, code?: number, msg?: string) => void) => {
+        const origin = info.origin
+        if (!origin || allowedWsOrigins.has(origin)) return next(true)
+        next(false, 403, 'forbidden origin')
+      },
+    },
+  })
 
   // 二进制 body parser:让 POST /asr 的 application/octet-stream 请求体成为 Buffer
   app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_req, body, done) => done(null, body))
@@ -415,9 +465,9 @@ export async function buildServer(opts: {
             const sideToMove = session.getFen(gameId).split(' ')[1] === 'b' ? 'black' : 'red'
             if (sideToMove !== humanSide) {
               try {
-                const aiResult = await session.aiFirstMove(gameId)
+                const aiResult = await withGameLock(gameId, () => session.aiFirstMove(gameId))
                 const clockState = session.getClockState(gameId)
-                socket.send(JSON.stringify({ type: 'update', ...aiResult, clockState }))
+                socket.send(JSON.stringify({ type: 'update', gameId, ...aiResult, clockState }))
               } catch (e) {
                 socket.send(JSON.stringify({ type: 'error', message: `AI先手失败: ${(e as Error).message}` }))
               }
@@ -427,29 +477,17 @@ export async function buildServer(opts: {
           const gid = msg.gameId
           if (typeof gid !== 'number') { socket.send(JSON.stringify({ type: 'error', message: '非法 gameId' })); return }
           if (typeof msg.move !== 'string') { socket.send(JSON.stringify({ type: 'error', message: '非法 move' })); return }
+          const moveStr = msg.move
           if (pausedGames.has(gid)) return
           if (!engine) {
             socket.send(JSON.stringify({ type: 'error', message: '未配置象棋引擎,无法对弈(聊天/复盘仍可用)' }))
             return
           }
-          const result = await session.playHumanMove(gid, msg.move)
+          const result = await withGameLock(gid, () => session.playHumanMove(gid, moveStr))
           const clockState = session.getClockState(gid)
-          socket.send(JSON.stringify({ type: 'update', ...result, clockState }))
-          // 局末:对每个旁观者触发反思(异步,失败不影响主流程)
-          if (result.over) {
-            const gameId = gid
-            // 立即清理暂停态与聊天上下文(终局后不再有该局刺激)
-            cleanupFinishedGame(gameId)
-            const reflectP = reflectGame(gameId).catch(() => { /* 反思失败静默忽略 */ })
-            // 局末自动后台诊断(fire-and-forget,幂等;引擎未配置则跳过)
-            let diagP: Promise<unknown> = Promise.resolve()
-            if (engine && !diagnosedGames.has(gameId)) {
-              diagnosedGames.add(gameId)
-              diagP = diagnoseGame(diagDeps, gameId).catch(() => { /* 诊断失败静默忽略,不影响对局 */ })
-            }
-            // 反思+诊断都落定后,再清掉幂等闸,避免在途时丢去重标记
-            void Promise.allSettled([reflectP, diagP]).then(() => forgetGuards(gameId))
-          }
+          socket.send(JSON.stringify({ type: 'update', gameId: gid, ...result, clockState }))
+          // 局末:统一收尾(清本局态+反思+诊断+播报);认负/求和/超时走同一 finalizeGame
+          if (result.over) finalizeGame(gid, result.result)
         } else if (msg.type === 'say') {
           // 玩家发言 → coach_query 刺激(结合当前局面引擎洞察,教练结合棋局作答),高张力必有人接
           const gid = msg.gameId
@@ -461,8 +499,9 @@ export async function buildServer(opts: {
           // 玩家发言持久化
           try {
             messages.addMessage({ gameId: gid, personaId: 'human', role: 'human', text, addressee: 'all', ts })
-          } catch {
-            // 落库失败静默忽略
+          } catch (err) {
+            // 落库失败不影响回显,但留痕(否则玩家看见自己的话、复盘却没有,无从排查)
+            console.warn('[chat] 玩家发言落库失败:', (err as Error).message)
           }
           // 回显给所有客户端:角色消息走 chat.emit→sockets,人类消息此前漏了广播,
           // 导致用户自己说的话不显示在聊天框。这里补上,与角色消息同一 chat 帧格式。
@@ -483,7 +522,8 @@ export async function buildServer(opts: {
           }
         } else if (msg.type === 'pause') {
           const gid = msg.gameId
-          if (typeof gid === 'number') {
+          // 仅对存在且未终局的对局加暂停态(校验局存在,防任意 gid 让 pausedGames 无限膨胀)
+          if (typeof gid === 'number' && isLiveGame(gid)) {
             pausedGames.add(gid)
             session.pauseClock(gid)  // 暂停真停钟:不再把暂停的墙钟时间扣给玩家
           }
@@ -497,38 +537,49 @@ export async function buildServer(opts: {
           // 开/关观众席:关闭则停生成弹幕/语音(服务端不再产生 chat 刺激),开启则恢复
           const gid = msg.gameId
           if (typeof gid === 'number') {
-            if (msg.enabled === false) spectatorsOffGames.add(gid)
+            if (msg.enabled === false) { if (isLiveGame(gid)) spectatorsOffGames.add(gid) }
             else spectatorsOffGames.delete(gid)
           }
         } else if (msg.type === 'resign') {
           const gid = msg.gameId
           if (typeof gid !== 'number') { socket.send(JSON.stringify({ type: 'error', message: '非法 gameId' })); return }
           const clockState = session.getClockState(gid) // 在 resign 清内存态前取时钟快照
-          const { result, fen } = session.resign(gid)
-          socket.send(JSON.stringify({ type: 'update', aiMove: null, fen, over: true, result, clockState }))
-          cleanupFinishedGame(gid)
-          reflectThenForget(gid)
+          const { success, result, fen } = await withGameLock(gid, async () => session.resign(gid))
+          if (!success) return // 已终局(迟到帧/重复点击):不广播不重复收尾
+          socket.send(JSON.stringify({ type: 'update', gameId: gid, aiMove: null, fen, over: true, result, clockState }))
+          finalizeGame(gid, result as 'red' | 'black' | 'draw')
         } else if (msg.type === 'draw_offer') {
           const gid = msg.gameId
           if (typeof gid !== 'number') { socket.send(JSON.stringify({ type: 'error', message: '非法 gameId' })); return }
           const clockState = session.getClockState(gid) // 在 offerDraw 可能清内存态前取时钟快照
-          const { accepted, fen } = session.offerDraw(gid)
+          const { accepted, fen } = await withGameLock(gid, async () => session.offerDraw(gid))
           socket.send(JSON.stringify({ type: 'draw_response', gameId: gid, accepted }))
           if (accepted) {
-            socket.send(JSON.stringify({ type: 'update', aiMove: null, fen, over: true, result: 'draw', clockState }))
-            cleanupFinishedGame(gid)
-            reflectThenForget(gid)
+            socket.send(JSON.stringify({ type: 'update', gameId: gid, aiMove: null, fen, over: true, result: 'draw', clockState }))
+            finalizeGame(gid, 'draw')
           }
         } else if (msg.type === 'undo') {
           const gid = msg.gameId
           if (typeof gid !== 'number') { socket.send(JSON.stringify({ type: 'error', message: '非法 gameId' })); return }
-          const result = session.undoLastMoves(gid)
+          const result = await withGameLock(gid, async () => session.undoLastMoves(gid))
           if (result.success) {
             const clockState = session.getClockState(gid)
             socket.send(JSON.stringify({ type: 'undo_result', gameId: gid, success: true, fen: result.fen, clockState, undoRemaining: result.undoRemaining }))
           } else {
             socket.send(JSON.stringify({ type: 'undo_result', gameId: gid, success: false, undoRemaining: result.undoRemaining }))
           }
+        } else if (msg.type === 'resync') {
+          // 断线重连后前端拉取权威状态:回一帧 state。修"重连只自愈连接、不自愈状态"——
+          // 走子后 AI 回帧在途时断线会让棋盘永久锁死,前端收到 state 即可解锁并对齐局面。
+          const gid = msg.gameId
+          if (typeof gid !== 'number') { socket.send(JSON.stringify({ type: 'error', message: '非法 gameId' })); return }
+          const g = repo.getGame(gid)
+          if (!g) { socket.send(JSON.stringify({ type: 'error', message: '对局不存在' })); return }
+          socket.send(JSON.stringify({
+            type: 'state', gameId: gid, fen: session.getFen(gid),
+            clockState: session.getClockState(gid),
+            over: !!g.result, result: g.result ?? undefined,
+          }))
         } else {
           socket.send(JSON.stringify({ type: 'error', message: `unknown message type: ${msg.type}` }))
         }

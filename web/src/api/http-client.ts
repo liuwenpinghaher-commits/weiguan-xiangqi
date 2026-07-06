@@ -23,7 +23,12 @@ export interface SparringResult {
 }
 
 export const diagnoseGame = (id: number) =>
-  fetch(`${BASE}/games/${id}/diagnose`, { method: 'POST' }).then((r) => r.json())
+  fetch(`${BASE}/games/${id}/diagnose`, { method: 'POST' }).then((r) => {
+    // 503(引擎未配置)/500(诊断异常)等要抛错让上层进 catch 显示失败态,
+    // 否则会对空/错误响应错误地显示"诊断完成"。对齐 jget 的 res.ok 校验。
+    if (!r.ok) throw new Error(`/games/${id}/diagnose → ${r.status}`)
+    return r.json()
+  })
 export const getDiagnosis = (id: number) => jget(`/games/${id}/diagnosis`)
 export const getGrowth = () => jget('/growth')
 export const getWeakness = (side: 'red' | 'black') => jget(`/weakness?side=${side}`)

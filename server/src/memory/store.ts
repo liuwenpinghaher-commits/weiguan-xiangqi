@@ -32,7 +32,9 @@ export interface MemoryStore {
   /** 写入。episode 廉价 append;fact/insight 触发去重/作废。返回新记录 id */
   record(e: MemoryInput): Promise<string>
   /** 注入用检索。fact/insight 走语义+recency 融合;排除已作废。
-   *  kinds 为空数组 [] 表示零种类(返回空);不传则不按 kind 过滤。 */
+   *  kinds 语义(SqliteMemoryStore 与 FakeMemoryStore 统一):
+   *    不传 → 缺省过滤 ['fact','insight'](与唯一调用方 chat-engine 一致,episode 不注入);
+   *    空数组 [] → 零种类,返回空。 */
   retrieve(personaId: PersonaId, query: string, limit: number, kinds?: MemoryKind[]): Promise<MemoryRecord[]>
   /** 控制台浏览。默认排除已作废 */
   list(filter: MemoryListFilter): Promise<MemoryRecord[]>

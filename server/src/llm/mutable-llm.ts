@@ -12,7 +12,12 @@ export class MutableLLM implements LLMProvider {
 }
 
 /** baseURL 指向本机 = 本地 Ollama(走 /api/chat,可开关 think);否则 OpenAI 兼容云端。 */
-function isLocalBase(url: string): boolean { return /localhost|127\.0\.0\.1|\[::1\]/.test(url) }
+export function isLocalBase(url: string): boolean { return /localhost|127\.0\.0\.1|\[::1\]/.test(url) }
+
+/** 该 LLM 配置能否造出可用 provider(否则 buildInnerLlm 落 FakeLLM,chat 全空串)。 */
+export function llmUsable(cfg: LlmCfg): boolean {
+  return !!cfg.baseURL && (isLocalBase(cfg.baseURL) || !!cfg.apiKey)
+}
 
 /**
  * 据 llm 配置造内层 provider:

@@ -16,10 +16,11 @@ export class FakeMemoryStore implements MemoryStore {
     return id
   }
 
-  async retrieve(personaId: PersonaId, _query: string, limit: number, kinds?: MemoryKind[]): Promise<MemoryRecord[]> {
+  // kinds 缺省 ['fact','insight']:与接口注释、SqliteMemoryStore、唯一调用方(chat-engine)一致。
+  async retrieve(personaId: PersonaId, _query: string, limit: number, kinds: MemoryKind[] = ['fact', 'insight']): Promise<MemoryRecord[]> {
     const t = this.now()
     return this.rows
-      .filter(r => r.personaId === personaId && !r.supersededAt && (!kinds || kinds.includes(r.kind)))
+      .filter(r => r.personaId === personaId && !r.supersededAt && kinds.includes(r.kind))
       .map(r => {
         const recency = Math.pow(0.5, (t - Date.parse(r.createdAt)) / RECENCY_HALFLIFE_MS)
         return { r, score: recency + r.importance / 5 }

@@ -5,6 +5,7 @@ import { cpLoss } from './cploss.js'
 import { classifyPhase } from './phase.js'
 import { classifyTheme } from './tags.js'
 import { accuracyFromAcpl, estimateElo } from './elo.js'
+import { MATE_BASE } from '../engine/uci-parse.js'
 
 interface EngineLike {
   analyze(fen: string, opts?: { multipv: number; depth?: number; movetime?: number }): Promise<EngineLine[]>
@@ -49,11 +50,18 @@ export async function diagnoseGame(deps: DiagnoseDeps, gameId: number): Promise<
   const fens = [game.startFen, ...moves.map((m) => m.fenAfter)]
   const depth = deps.depth ?? 12
   const analyses: EngineLine[] = []
-  for (const fen of fens) {
+  for (let fi = 0; fi < fens.length; fi++) {
+    const fen = fens[fi]
     const lines = await deps.engine.analyze(fen, { multipv: 1, depth })
-    // 引擎返回空(无主变)时整局诊断会在后续 before.scoreCp 处崩——这里提前抛清晰错误,
-    // 不再把 undefined 压入 analyses 拖到下游报 "Cannot read properties of undefined"。
     if (!lines || lines.length === 0 || !lines[0]) {
+      // 末 FEN 是终局局面:将死/困毙时轮到走子的一方已无合法着,引擎输出 `mate 0` 无 pv /
+      // `bestmove (none)` → parseInfoLine 全返 null → lines 为空。这不是引擎故障,而是对局
+      // 正常结束。合成一条"走子方(=被将死/困毙方)已负"的终局评分(其视角 = -MATE_BASE),
+      // 使将杀手的 cpLoss≈0、整局诊断照常产出成长指标。中间局面返回空才是真故障 → 抛错。
+      if (fi === fens.length - 1) {
+        analyses.push({ multipv: 1, move: '', scoreCp: -MATE_BASE, mate: 0, pv: [] })
+        continue
+      }
       throw new Error(`引擎分析返回空: fen=${fen}`)
     }
     analyses.push(lines[0])

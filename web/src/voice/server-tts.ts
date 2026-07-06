@@ -18,10 +18,17 @@ import { isMuted, speak as browserSpeak } from './browser-tts.js'
 type QueueItem = {
   personaId: string
   text: string
+  /** 面向对象('human'=对玩家说)。教练对玩家的回答(coach + human)属"必答",让路时不丢弃。 */
+  addressee?: string
   urlPromise: Promise<string>
   /** 这条语音"开始播放"(或被丢弃/回退)时回调一次,供 UI 同步揭示对应气泡 */
   onStart?: () => void
   started?: boolean
+}
+
+/** 教练对玩家的必答回答:走子/提问让路时不能被砍掉(服务端 coach_query 一律不丢,前端须对齐)。 */
+function isMustKeep(item: QueueItem): boolean {
+  return item.personaId === 'coach' || item.addressee === 'human'
 }
 
 /** 触发 item.onStart 一次(幂等);用于文字-语音同步:气泡在声音起播的瞬间显示。 */
@@ -155,6 +162,8 @@ async function drain(): Promise<void> {
 /** 立即静音:停当前播放 + 清空预合成队列。暂停整局时调用,确保正在播/排队的语音立刻停。 */
 export function stopVoice(): void {
   generation++
+  // 被清掉的排队条目要 fireStart 揭示其气泡,否则 ChatPanel 的顺序揭示会卡在它们身上等 6s 兜底。
+  queue.forEach(fireStart)
   queue = []
   if (audioEl) {
     try { audioEl.pause() } catch { /* 忽略 */ }
@@ -168,11 +177,18 @@ export function stopVoice(): void {
 }
 
 /**
- * 清掉排队未播的弹幕,但不打断正在播的那一句。走子时调用:旧弹幕点评的是几步前的局面,
- * 别再补播;正在播的那句让它说完,之后直接接最新弹幕——避免语音一直滞后于当前棋步。
+ * 让路:清掉排队未播的弹幕,但不打断正在播的那一句,也不砍掉教练对玩家的必答回答。
+ * 走子/提问时调用:旧的旁观弹幕点评的是几步前的局面,别再补播;但教练回答(coach/对玩家)
+ * 必须保留(服务端承诺 coach_query 一律不丢,前端最后一环不能破功)。被丢弃的条目要 fireStart
+ * 揭示其气泡,否则 ChatPanel 顺序揭示会卡在它身上等 6s 兜底。
  */
 export function dropQueued(): void {
-  queue = []
+  const kept: QueueItem[] = []
+  for (const item of queue) {
+    if (isMustKeep(item)) kept.push(item)
+    else fireStart(item)
+  }
+  queue = kept
 }
 
 /**
@@ -180,7 +196,7 @@ export function dropQueued(): void {
  * 立即发起合成请求(预热),推入有序队列;drain 负责串行播放。
  * 积压 >3 时丢弃最旧只保留最新 3 条。
  */
-export function speakServer(personaId: string, text: string, onStart?: () => void): void {
+export function speakServer(personaId: string, text: string, onStart?: () => void, addressee?: string): void {
   // 静音/空文本不播,但仍要回调 onStart——同步模式下气泡靠它揭示,不能卡住。
   if (isMuted() || !text) { onStart?.(); return }
 
@@ -195,14 +211,19 @@ export function speakServer(personaId: string, text: string, onStart?: () => voi
       return j.url
     })
 
-  const newItem: QueueItem = { personaId, text, urlPromise, onStart }
+  const newItem: QueueItem = { personaId, text, addressee, urlPromise, onStart }
 
-  // 积压限制:超过 3 条时丢弃最旧,只保留最新 3 条 + 新增 1 条。
-  // 被丢弃的不播,但要 fireStart 揭示其气泡(否则同步模式下后续气泡永远等不到它)。
+  // 积压限制:超过 3 条时丢弃最旧,只保留最新 2 条 + 新增 1 条。
+  // 例外:教练必答/对玩家的回答(isMustKeep)一律保留,不因积压被丢——否则玩家提问的语音回答
+  // 可能被后续快速弹幕挤掉(与 dropQueued 让路口径一致)。被丢弃的要 fireStart 揭示其气泡。
   if (queue.length >= 3) {
-    const dropped = queue.slice(0, queue.length - 2)
-    dropped.forEach(fireStart)
-    queue = queue.slice(queue.length - 2) // 保留最近 2 条
+    const cutoff = queue.length - 2
+    const kept: QueueItem[] = []
+    queue.forEach((item, i) => {
+      if (i >= cutoff || isMustKeep(item)) kept.push(item)
+      else fireStart(item)
+    })
+    queue = kept
   }
   queue.push(newItem)
 

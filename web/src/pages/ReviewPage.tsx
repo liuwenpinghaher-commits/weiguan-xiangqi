@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Board } from '../board/Board.js'
 import { HTTP_BASE } from '../api/config.js'
+import { personaName } from '../chat/personas.js'
 import { PageShell, cardStyle, headingStyle, ErrorBanner } from '../ui/PageShell.js'
 import { color, radius, space, fontSize, btn } from '../ui/theme.js'
 
@@ -15,21 +16,10 @@ function downloadGameExport(gameId: number) {
 interface MoveRow { ply: number; move: string; fenAfter: string; byAi: boolean; scoreCp: number | null }
 interface MessageRow { id: number; personaId: string; role: string; text: string; addressee: string | null; ts: string }
 
-const PERSONA_NAMES: Record<string, string> = {
-  player: '老黑',
-  laopaoer: '炮儿爷',
-  coach: '林教练',
-  netizen: '吃瓜阿强',
-  human: '你',
-}
-
-function personaName(personaId: string): string {
-  return PERSONA_NAMES[personaId] ?? personaId
-}
-
 export function ReviewPage(props: { gameId: number }) {
   const [moves, setMoves] = useState<MoveRow[]>([])
   const [startFen, setStartFen] = useState('')
+  const [humanSide, setHumanSide] = useState<'red' | 'black'>('red')
   const [msgs, setMsgs] = useState<MessageRow[]>([])
   const [idx, setIdx] = useState(0) // 0=开局,k=第k手后
   const [loading, setLoading] = useState(true)
@@ -46,6 +36,7 @@ export function ReviewPage(props: { gameId: number }) {
       .then(d => {
         setMoves(d.moves)
         setStartFen(d.game.startFen)
+        setHumanSide(d.game.humanSide === 'black' ? 'black' : 'red')
         setMsgs(d.messages ?? [])
       })
       .catch((e: Error) => {
@@ -93,7 +84,7 @@ export function ReviewPage(props: { gameId: number }) {
         {!loading && !fetchError && startFen && (
           <>
             <div style={cardStyle}>
-              <Board fen={fen} onMove={() => {}} />
+              <Board fen={fen} onMove={() => {}} orientation={humanSide} />
               <div style={{ marginTop: space.md, display: 'flex', alignItems: 'center', gap: space.md }}>
                 <button
                   onClick={() => setIdx(i => Math.max(0, i - 1))}

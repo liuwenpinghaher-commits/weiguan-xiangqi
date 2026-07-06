@@ -17,6 +17,12 @@ interface MoveListProps {
 export function MoveList({ moves, currentPly, onNavigate }: MoveListProps) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // 光标在输入框/文本域/可编辑元素里时不劫持左右方向键(否则在弹幕输入框移动光标会让棋盘倒回历史)
+      const t = e.target as HTMLElement | null
+      if (t) {
+        const tag = t.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || t.isContentEditable) return
+      }
       if (e.key === 'ArrowLeft') onNavigate(Math.max(0, currentPly - 1))
       if (e.key === 'ArrowRight') onNavigate(Math.min(moves.length, currentPly + 1))
     }

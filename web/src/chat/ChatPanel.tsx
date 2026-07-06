@@ -2,21 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { setMuted, isMuted, isTtsSupported, hasZhVoice, cancelSpeech } from '../voice/browser-tts.js'
 import { speakServer, stopVoice } from '../voice/server-tts.js'
 import { useSpeechInput } from '../voice/use-speech-input.js'
+import { PERSONA_NAMES, PERSONA_COLORS, personaName } from './personas.js'
 import { color, font } from '../ui/theme.js'
+
+// 兼容既有导入方(如 api/contracts.test.ts):从共享的 personas 模块再导出。
+export { PERSONA_NAMES, PERSONA_COLORS } from './personas.js'
 
 export interface ChatLine {
   personaId: string
   text: string
   addressee: string
   ts: string
-}
-
-export const PERSONA_NAMES: Record<string, string> = {
-  player: '老黑',
-  laopaoer: '炮儿爷',
-  coach: '林教练',
-  netizen: '吃瓜阿强',
-  human: '你',
 }
 
 /** addressee 字段转可读中文名：'human'→'你'，'all'/空→不显示，其余查映射表 */
@@ -26,19 +22,8 @@ function addresseeName(addressee: string): string | null {
   return PERSONA_NAMES[addressee] ?? addressee
 }
 
-export const PERSONA_COLORS: Record<string, string> = {
-  player: '#e74c3c',
-  laopaoer: '#e67e22',
-  coach: '#27ae60',
-  netizen: '#2980b9',
-}
-
 function avatarColor(personaId: string): string {
   return PERSONA_COLORS[personaId] ?? '#8e44ad'
-}
-
-function personaName(personaId: string): string {
-  return PERSONA_NAMES[personaId] ?? personaId
 }
 
 interface Props {
@@ -86,7 +71,7 @@ export function ChatPanel({ lines, onSay, enabled = true }: Props) {
       }
       let fired = false
       const reveal = () => { if (!fired) { fired = true; markReady(idx) } }
-      speakServer(l.personaId, l.text, reveal) // 语音起播瞬间 reveal → 同步揭示气泡
+      speakServer(l.personaId, l.text, reveal, l.addressee) // 语音起播瞬间 reveal → 同步揭示气泡;addressee 让教练必答回答在走子/提问让路时不被砍
       // 兜底:6s 内语音仍未起播(未解锁/积压/合成失败漏网)也揭示,绝不卡死后续气泡
       window.setTimeout(reveal, 6000)
     }
@@ -100,6 +85,10 @@ export function ChatPanel({ lines, onSay, enabled = true }: Props) {
   // STT 错误提示（not-allowed / no-speech / network 等）
   const sttErrorMsg: string | null = stt.error === 'not-allowed'
     ? '麦克风权限被拒，请在浏览器设置中允许麦克风'
+    : stt.error === 'no-device'
+    ? '未检测到麦克风设备，请插入麦克风后重试'
+    : stt.error === 'device-busy'
+    ? '麦克风被其他程序占用，请关闭占用后重试'
     : stt.error === 'no-speech'
     ? '没听清，请再说一次'
     : stt.error === 'asr-unconfigured'

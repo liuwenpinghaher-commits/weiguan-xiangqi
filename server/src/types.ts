@@ -112,8 +112,8 @@ export interface ChatLine {
 /** 触发聊天的刺激 */
 export type StimulusKind =
   | 'move' | 'blunder' | 'brilliant' | 'long_think'
-  | 'lose_streak' | 'idle' | 'coach_query' | 'topic_open'
-  | 'turning_point' | 'phase_shift'
+  | 'lose_streak' | 'idle' | 'coach_query'
+  | 'turning_point' | 'phase_shift' | 'game_end'
 
 /** 当前局面的引擎洞察(coach_query 用);评分统一为红方视角 */
 export interface EngineInsight {
@@ -144,4 +144,6 @@ export interface Stimulus {
   byPlayerPersona?: boolean
   /** coach_query 时:当前局面的引擎洞察(降级时为 null) */
   engineInsight?: EngineInsight | null
+  /** game_end 时:对局结果(红胜/黑胜/和) */
+  outcome?: 'red' | 'black' | 'draw'
 }

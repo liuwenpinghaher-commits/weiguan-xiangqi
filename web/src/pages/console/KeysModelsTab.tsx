@@ -32,7 +32,7 @@ export function KeysModelsTab({ llm, onChanged }: { llm: LlmCfg; onChanged: () =
   return (
     <div>
       <div style={cardStyle}>
-        <h3 style={h3}>LLM(百炼)</h3>
+        <h3 style={h3}>对话模型(LLM)</h3>
         <label style={lbl}>API Key
           <div style={{ display: 'flex', gap: space.sm, alignItems: 'center' }}>
             <input style={inp} type="text" placeholder={`当前 ${displayMaskedKey(llm.apiKey)},留空则不改`} value={apiKey} onChange={e => setApiKey(e.target.value)} />
