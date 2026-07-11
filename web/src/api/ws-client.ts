@@ -3,7 +3,7 @@ import { WS_BASE } from './config.js'
 export type ServerMsg =
   | { type: 'started'; gameId: number }
   | { type: 'update'; gameId?: number; aiMove: string | null; fen: string; over: boolean; result?: 'red' | 'black' | 'draw'; aiReason?: string; moveZh?: string; aiMoveZh?: string; clockState?: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null } | null }
-  | { type: 'state'; gameId: number; fen: string; clockState: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null } | null; over: boolean; result?: 'red' | 'black' | 'draw' }
+  | { type: 'state'; gameId: number; fen: string; clockState: { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null } | null; over: boolean; result?: 'red' | 'black' | 'draw'; paused?: boolean; spectators?: boolean; awaitingAi?: boolean; undoRemaining?: number }
   | { type: 'error'; message: string }
   | { type: 'chat'; gameId: number; personaId: string; text: string; addressee: string; ts: string }
   | { type: 'draw_response'; gameId: number; accepted: boolean }

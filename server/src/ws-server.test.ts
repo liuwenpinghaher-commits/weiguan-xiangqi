@@ -14,6 +14,9 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import WebSocket from 'ws'
 import type { FastifyInstance } from 'fastify'
 import { buildServer } from './ws-server.js'
@@ -149,6 +152,19 @@ describe('ws-server 集成测试', () => {
     expect(res.json<any>().chat.maxPerMin).toBe(12)
   })
 
+  it('GET /engine/status 暴露引擎配置/降级状态', async () => {
+    app = await buildServer({ dbPath: ':memory:', engine: null, llm: new FakeLLM(() => 'x') })
+    const noEngine = await app.inject({ method: 'GET', url: '/engine/status' })
+    expect(noEngine.statusCode).toBe(200)
+    expect(noEngine.json<any>()).toMatchObject({ configured: false, degraded: true })
+
+    await app.close()
+    app = await makeApp()
+    const ok = await app.inject({ method: 'GET', url: '/engine/status' })
+    expect(ok.statusCode).toBe(200)
+    expect(ok.json<any>()).toMatchObject({ configured: true, degraded: false })
+  })
+
   it('POST /games/import 导入棋谱，GET /games/:id/export 能取回', async () => {
     app = await makeApp()
 
@@ -189,6 +205,16 @@ describe('ws-server 集成测试', () => {
     expect(games.length).toBeGreaterThanOrEqual(1)
   })
 
+  it('GET /export 明确声明导出范围,避免被误当完整备份', async () => {
+    app = await makeApp()
+    const res = await app.inject({ method: 'GET', url: '/export' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json<{ scope?: string; includes?: string[]; excludes?: string[] }>()
+    expect(body.scope).toBe('games-only')
+    expect(body.includes).toEqual(['games', 'moves'])
+    expect(body.excludes).toEqual(expect.arrayContaining(['move_annotations', 'growth_metrics', 'drill_attempts', 'messages', 'memory', 'app_settings', 'persona_config']))
+  })
+
   it('POST /games/import 传非法 moves → 400', async () => {
     app = await makeApp()
     const res = await app.inject({
@@ -198,6 +224,92 @@ describe('ws-server 集成测试', () => {
       payload: JSON.stringify({ moves: 'not-an-array' }),
     })
     expect(res.statusCode).toBe(400)
+  })
+
+  it('POST /games/import 写库阶段失败会回滚 game 行', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'weiguan-import-'))
+    const dbPath = join(dir, 'test.sqlite')
+    app = await buildServer({ dbPath, engine: fakeEngine, llm: new FakeLLM(() => 'x') })
+    const { default: Database } = await import('better-sqlite3')
+    const db = new Database(dbPath)
+    try {
+      db.exec(`
+        CREATE TRIGGER fail_move_insert
+        BEFORE INSERT ON moves
+        BEGIN
+          SELECT RAISE(ABORT, 'forced move insert failure');
+        END;
+      `)
+      const res = await app.inject({
+        method: 'POST',
+        url: '/games/import',
+        headers: { 'content-type': 'application/json' },
+        payload: JSON.stringify({ moves: ['h2e2'] }),
+      })
+      expect(res.statusCode).toBe(500)
+      const row = db.prepare('SELECT COUNT(*) AS n FROM games').get() as { n: number }
+      expect(row.n).toBe(0)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('GET /games/:id/diagnosis 未诊断时返回 pending 状态', async () => {
+    app = await makeApp()
+    const importRes = await app.inject({
+      method: 'POST',
+      url: '/games/import',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ moves: ['h2e2'] }),
+    })
+    const { gameId } = importRes.json<{ gameId: number }>()
+
+    const diagnosis = await app.inject({ method: 'GET', url: `/games/${gameId}/diagnosis` })
+    expect(diagnosis.statusCode).toBe(200)
+    expect(diagnosis.json<any>().diagnosisStatus).toMatchObject({ status: 'pending' })
+  })
+
+  it('POST /games/:id/diagnose 失败后暴露 failed 状态,不伪装成 404 或空数据', async () => {
+    const failingEngine = {
+      async analyze(): Promise<EngineLine[]> {
+        throw new Error('engine boom')
+      },
+    }
+    app = await buildServer({ dbPath: ':memory:', engine: failingEngine, llm: new FakeLLM(() => 'x') })
+    const importRes = await app.inject({
+      method: 'POST',
+      url: '/games/import',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ moves: ['h2e2'] }),
+    })
+    const { gameId } = importRes.json<{ gameId: number }>()
+
+    const diagnose = await app.inject({ method: 'POST', url: `/games/${gameId}/diagnose` })
+    expect(diagnose.statusCode).toBe(500)
+    expect(diagnose.json<any>().diagnosisStatus).toMatchObject({ status: 'failed' })
+
+    const diagnosis = await app.inject({ method: 'GET', url: `/games/${gameId}/diagnosis` })
+    expect(diagnosis.statusCode).toBe(200)
+    expect(diagnosis.json<any>().diagnosisStatus).toMatchObject({ status: 'failed' })
+    expect(diagnosis.json<any>().diagnosisStatus.error).toContain('engine boom')
+  })
+
+  it('POST /games/:id/diagnose 成功后 GET diagnosis 返回 ok 状态', async () => {
+    app = await makeApp()
+    const importRes = await app.inject({
+      method: 'POST',
+      url: '/games/import',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ moves: ['h2e2'] }),
+    })
+    const { gameId } = importRes.json<{ gameId: number }>()
+
+    const diagnose = await app.inject({ method: 'POST', url: `/games/${gameId}/diagnose` })
+    expect(diagnose.statusCode).toBe(200)
+
+    const diagnosis = await app.inject({ method: 'GET', url: `/games/${gameId}/diagnosis` })
+    expect(diagnosis.json<any>().diagnosisStatus).toMatchObject({ status: 'ok' })
+    expect(diagnosis.json<any>().annotations.length).toBeGreaterThan(0)
   })
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -397,6 +509,45 @@ describe('ws-server 集成测试', () => {
     expect(chats).toHaveLength(0)
   }, 10_000)
 
+  it('WS /play:暂停后 resync 返回 paused=true', async () => {
+    app = await makeApp()
+    await app.listen({ port: 0, host: '127.0.0.1' })
+    const addr = app.server.address()
+    if (!addr || typeof addr === 'string') throw new Error('unexpected address type')
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/play`)
+    wsClient = ws
+    await wsOpen(ws)
+    ws.send(JSON.stringify({ type: 'new', mode: 'coach', humanSide: 'red', startFen: START_FEN }))
+    const started = await waitForMessage(ws, 'started')
+    const gameId = started.gameId as number
+
+    ws.send(JSON.stringify({ type: 'pause', gameId }))
+    ws.send(JSON.stringify({ type: 'resync', gameId }))
+    const state = await waitForMessage(ws, 'state')
+    expect(state.paused).toBe(true)
+    expect(state.spectators).toBe(true)
+    expect(state.awaitingAi).toBe(false)
+    expect(state.undoRemaining).toBe(3)
+  }, 10_000)
+
+  it('WS /play:暂停态走子返回明确 error,不静默丢帧', async () => {
+    app = await makeApp()
+    await app.listen({ port: 0, host: '127.0.0.1' })
+    const addr = app.server.address()
+    if (!addr || typeof addr === 'string') throw new Error('unexpected address type')
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/play`)
+    wsClient = ws
+    await wsOpen(ws)
+    ws.send(JSON.stringify({ type: 'new', mode: 'coach', humanSide: 'red', startFen: START_FEN }))
+    const started = await waitForMessage(ws, 'started')
+    const gameId = started.gameId as number
+
+    ws.send(JSON.stringify({ type: 'pause', gameId }))
+    ws.send(JSON.stringify({ type: 'move', gameId, move: 'h2e2' }))
+    const err = await waitForMessage(ws, 'error', 1000)
+    expect(String(err.message)).toContain('对局已暂停')
+  }, 10_000)
+
   it('WS /play:resume 后 say 恢复回显', async () => {
     app = await makeApp()
     await app.listen({ port: 0, host: '127.0.0.1' })
@@ -498,4 +649,63 @@ describe('ws-server 集成测试', () => {
     })
     expect(got.length).toBeGreaterThanOrEqual(1)
   }, 12_000)
+
+  it('POST /tts 拒绝非本地前端 Origin,避免跨站白烧 TTS', async () => {
+    app = await makeApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/tts',
+      headers: { origin: 'https://evil.example', 'content-type': 'application/json' },
+      payload: JSON.stringify({ personaId: 'coach', text: '这句不应触发合成' }),
+    })
+    expect(res.statusCode).toBe(403)
+  })
+
+  it('GET /tts 不再接受 query 文本,避免把弹幕内容放进 URL', async () => {
+    app = await makeApp()
+    const res = await app.inject({
+      method: 'GET',
+      url: '/tts?personaId=coach&text=' + encodeURIComponent('这句不应出现在 URL 合成链路'),
+      headers: { origin: 'http://localhost:3420' },
+    })
+    expect(res.statusCode).toBe(405)
+  })
+
+  it('POST /tts 使用运行时 persona ttsVoice 覆盖默认音色', async () => {
+    const calls: Array<{ text: string; voice: string }> = []
+    app = await buildServer({
+      dbPath: ':memory:',
+      engine: fakeEngine,
+      llm: new FakeLLM(() => 'x'),
+      ttsSynthesizer: async (text: string, voice: string) => {
+        calls.push({ text, voice })
+        return 'https://tts.example/audio.wav'
+      },
+    } as any)
+    const saveVoice = await app.inject({
+      method: 'PUT',
+      url: '/admin/personas/coach',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ ttsVoice: 'CustomCoachVoice' }),
+    })
+    expect(saveVoice.statusCode).toBe(200)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/tts',
+      headers: { origin: 'https://evil.example', 'content-type': 'application/json' },
+      payload: JSON.stringify({ personaId: 'coach', text: '音色测试' }),
+    })
+    expect(res.statusCode).toBe(403)
+
+    const allowed = await app.inject({
+      method: 'POST',
+      url: '/tts',
+      headers: { origin: 'http://localhost:3420', 'content-type': 'application/json' },
+      payload: JSON.stringify({ personaId: 'coach', text: '音色测试' }),
+    })
+    expect(allowed.statusCode).toBe(200)
+    expect(allowed.json<any>().url).toBe('https://tts.example/audio.wav')
+    expect(calls).toEqual([{ text: '音色测试', voice: 'CustomCoachVoice' }])
+  })
 })

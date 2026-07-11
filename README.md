@@ -104,7 +104,7 @@
 
 - 后端：`server/src/index.ts`（可用环境变量 `PORT` 覆盖，默认 3410）
 - 前端：`web/vite.config.ts`（`strictPort`，固定 3420）
-- 前端访问后端的地址集中在一处：`web/src/api/config.ts`（`API_HOST=localhost:3410`）
+- 前端访问后端的地址集中在一处：`web/src/api/config.ts`。默认固定访问 `http://localhost:3410`；如需局域网/自定义部署，显式设置 `VITE_API_BASE`。
 
 ---
 
@@ -138,20 +138,31 @@ npm run dev:web
 # → http://localhost:3420
 ```
 
+**局域网/手机访问**
+
+默认只开放本机访问，避免误把本地控制台、TTS、导入等能力暴露给局域网。确实需要手机或同网设备访问时，三处必须同时显式配置：
+
+```bash
+# server/.env
+HOST=0.0.0.0
+FRONTEND_ORIGINS=http://你的局域网IP:3420
+
+# web 构建/启动环境
+VITE_API_BASE=http://你的局域网IP:3410
+```
+
+未设置 `DB_PATH` 时，SQLite 默认写入 `~/.weiguan-xiangqi/weiguan.sqlite`；相对 `DB_PATH` 会按启动 cwd 解析成绝对路径。
+
 ### 生产模式
 
 ```bash
-# 构建后端
-npm -w server run build
+# 构建前后端
+npm run build
 
 # 启动生产后端
 export PIKAFISH_PATH=./engine/pikafish
 npm -w server run start
 # → 监听 http://localhost:3410
-
-# 前端生产构建
-npm -w web run build
-# → dist/ 可托管到任意静态服务
 ```
 
 > **优雅关闭：** 收到 `SIGTERM`/`SIGINT` 时，服务关闭 Pikafish 子进程并刷写 SQLite WAL，再退出。
@@ -182,8 +193,9 @@ npm -w web run build
 | 端点 | 说明 |
 |------|------|
 | `GET /games/:id` | 复盘数据（对局 + 走法 + 聊天消息） |
-| `POST /games/:id/diagnose` | 触发局后诊断（需引擎，异步） |
-| `GET /games/:id/diagnosis` | 逐手诊断结果（cp\_loss + 阶段 + 标签） |
+| `GET /engine/status` | 引擎配置/降级状态 |
+| `POST /games/:id/diagnose` | 触发局后诊断（需引擎） |
+| `GET /games/:id/diagnosis` | 逐手诊断结果（cp\_loss + 阶段 + 标签）与 `diagnosisStatus` |
 | `GET /games/:id/drills` | 训练题组 + 进度 stats |
 | `POST /games/:id/drills/attempt` | 提交训练作答（后端判定 correct + 回写 stats） |
 | `GET /growth` | 成长曲线数据点（逐局指标时间序列） |
@@ -191,8 +203,9 @@ npm -w web run build
 | `GET /compare` | 最近两段历史对比摘要 |
 | `GET /training/stats` | 全局训练进度 |
 | `GET /games/:id/export` | 单局导出（JSON，触发浏览器下载） |
-| `GET /export` | 全库导出（JSON） |
-| `POST /games/import` | 棋谱导入（本系统 JSON 格式） |
+| `GET /export` | 棋谱导出（`scope: games-only`，只含 games/moves） |
+| `POST /games/import` | 棋谱导入（本系统 JSON 格式，事务写入，本机访问） |
+| `POST /tts` | 服务端 TTS 合成（JSON body；`GET /tts` 不承载文本） |
 
 ---
 
@@ -243,7 +256,7 @@ npm -w web run build
 
 ### M3b：语音
 
-- **TTS**：观棋者每条发言用 `SpeechSynthesis` 朗读，音高/语速区分角色
+- **TTS**：优先走服务端 `POST /tts` 云合成，角色可配置 `ttsVoice`；失败时回退浏览器 Web Speech
 - **STT**：点麦克风，中文说话识别为文字走 `say` 路径
 - **语音开关**：持久化；新局自动清队列
 - 优雅降级：浏览器不支持时按钮禁用 + 提示
@@ -252,28 +265,41 @@ npm -w web run build
 
 ## 测试
 
+**一键全量验证：**
+
+```bash
+npm test
+# 依次运行 server test、web test、server tsc、web typecheck
+```
+
 **后端（vitest）：**
 
 ```bash
 npm -w server run test
-# 179 tests passed (31 test files)
-# 含：单元测试（rules/analysis/chat/session/memory/training/report）
-#     + ws-server 端到端集成测试（真实 Position + Fake 引擎/LLM，HTTP + WS 完整流程）
+# 含：单元测试（rules/analysis/chat/session/memory/training/report/engine）
+#     + ws-server 端到端集成测试（真实 Position + Fake 引擎/LLM/ASR/TTS，HTTP + WS 完整流程）
 ```
 
 **前端（vitest）：**
 
 ```bash
 npm -w web run test
-# 18 tests passed (2 test files)
-# 含：棋盘坐标往返测试、WS 契约一致性测试
+# 含：棋盘坐标、WS 契约、状态机 helper、成长/训练/TTS helper 测试
 ```
 
-**前端类型检查 + 生产构建：**
+**类型检查 + 生产构建：**
 
 ```bash
+npx tsc --noEmit -p server/tsconfig.json
 npm -w web run typecheck
-npm -w web run build
+npm run build
+```
+
+**源码安全打包（tracked files only）：**
+
+```bash
+npm run package:source -- --dry-run
+npm run package:source
 ```
 
 **验证 LLM 连通（需 .env）：**
@@ -307,9 +333,9 @@ node --env-file=server/.env --import tsx server/scripts/smoke-llm.ts
 - **估算 Elo**：`2600 - 6 × ACPL` 粗映射，仅供看趋势，非真实棋力评级。
 - **弱点画像**：SQL 实时聚合，不物化（单机数据量小）。
 - **训练回写**：`drill_attempts` 记录正确率统计；暂不自动反哺弱点画像画像权重。
-- **导出/导入**：本系统 JSON 格式往返（export → import 完整还原）；不解析 PGN / ICCS 等外部棋谱格式。
-- **黑方棋盘视角**：顶部为黑方，`react-xiangqiboard` 组件不翻转棋盘——执黑时棋盘视觉方向不切换，功能可用但非标准黑方视角。
-- **记忆检索**：中文按字、英文按词的重合度匹配，非嵌入语义检索。
+- **导出/导入**：本系统 JSON 格式往返；`/export` 是棋谱级导出，不是完整备份，不包含标注、训练、消息、记忆和配置。
+- **黑方棋盘视角**：支持按执方翻转，也可手动翻转棋盘。
+- **记忆检索**：记忆始终持久化到 SQLite；嵌入可用时走语义检索，不可用时退化为时间新近度 + 重要度。
 - **角色互动**：同回合聊天上下文已注入 prompt；但仅注入最近发言文本，不含完整的"角色关系旧账"建模。
 - **`hangs_piece`（丢子）标签**：用对手一手后子力净减少近似，非严格对杀计算。
 - **历史对比**：规则版文字摘要；LLM 措辞接口（`ReportProvider`）留给后续扩展。
@@ -354,5 +380,5 @@ DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 
 ## M3b：语音
 
-服务端 TTS 走百炼云 qwen3-tts-flash(GET /tts,DASHSCOPE_TTS_* 环境变量),不可用时回退浏览器 Web Speech;
+服务端 TTS 走百炼云 qwen3-tts-flash(POST /tts JSON body,DASHSCOPE_TTS_* 环境变量;GET 不承载文本),不可用时回退浏览器 Web Speech;
 STT 走百炼 qwen3-asr-flash(POST /asr),浏览器 Web Speech 兜底。

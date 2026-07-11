@@ -56,9 +56,11 @@ export class AnalysisRepo {
   weaknessProfile(humanSide: Side): WeaknessRow[] {
     const rows = this.db.prepare(
       `SELECT phase, theme, COUNT(*) AS count, CAST(ROUND(AVG(cp_loss)) AS INTEGER) AS avgLoss
-       FROM move_annotations WHERE side=? AND theme!='ok'
+       FROM move_annotations ma
+       JOIN games g ON g.id = ma.game_id
+       WHERE ma.side=? AND g.human_side=? AND ma.theme!='ok'
        GROUP BY phase, theme ORDER BY count DESC, avgLoss DESC`
-    ).all(humanSide) as any[]
+    ).all(humanSide, humanSide) as any[]
     return rows.map((r) => ({ phase: r.phase, theme: r.theme, count: r.count, avgLoss: r.avgLoss }))
   }
 }

@@ -79,6 +79,31 @@ test('AI 回着失败时原子回滚:人着不入库、状态不变,重试可成
   expect(moves[1].byAi).toBe(true)
 })
 
+test('AI 思考中 getFen 返回已受理的人着后局面,供教练回答当前问题', async () => {
+  const repo = new GamesRepo(openDb(':memory:'))
+  let release!: () => void
+  const thinkingEngine = {
+    analyze: vi.fn(() => new Promise<EngineLine[]>((resolve) => {
+      release = () => resolve([{ multipv: 1, move: 'b0c2', scoreCp: 20, mate: null, pv: ['b0c2'] }])
+    })),
+  }
+  const session = new GameSession({
+    repo, engine: thinkingEngine as any,
+    makePosition: fakePosition as any,
+    clock: () => 't', cfg: makeCfg(),
+  })
+  const gameId = session.newGame({ mode: 'coach', humanSide: 'red', startFen: 'START w - - 0 1' })
+
+  const pending = session.playHumanMove(gameId, 'h2e2')
+  await new Promise((r) => setTimeout(r, 0))
+
+  expect(thinkingEngine.analyze).toHaveBeenCalled()
+  expect(session.getFen(gameId)).toBe('START b - - 0 1')
+
+  release()
+  await pending
+})
+
 test('轮次守卫:不是 human 一方时拒绝,不入库不改状态', async () => {
   const repo = new GamesRepo(openDb(':memory:'))
   const session = new GameSession({ repo, engine: fakeEngine as any, makePosition: fakePosition as any, clock: () => 't', cfg: makeCfg() })

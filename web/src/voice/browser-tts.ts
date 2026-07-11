@@ -48,11 +48,11 @@ export function isMuted(): boolean { return muted }
 let pendingCount = 0
 
 /** 念一句;静音或不支持时静默跳过。 */
-export function speak(personaId: string, text: string): void {
+export function speak(personaId: string, text: string, opts?: { mustKeep?: boolean }): void {
   if (muted || !isTtsSupported() || !text) return
 
   // 队列过深 — 丢弃积压，只念最新（防止语音严重滞后）
-  if (pendingCount > 2) {
+  if (pendingCount > 2 && !opts?.mustKeep) {
     speechSynthesis.cancel()
     pendingCount = 0
   }

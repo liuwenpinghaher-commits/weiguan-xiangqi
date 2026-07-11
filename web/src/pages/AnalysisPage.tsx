@@ -6,6 +6,7 @@ import { color, fontSize, space, btn } from '../ui/theme.js'
 
 interface Annotation { ply: number; side: string; cpLoss: number; bestMove: string; phase: string; theme: string }
 interface MoveRow { ply: number; move: string; byAi: boolean }
+interface DiagnosisStatus { status: 'pending' | 'running' | 'ok' | 'failed'; error?: string }
 
 export function AnalysisPage({ gameId }: { gameId: number }) {
   const [moves, setMoves] = useState<MoveRow[]>([])
@@ -20,7 +21,16 @@ export function AnalysisPage({ gameId }: { gameId: number }) {
     try {
       const d = await getDiagnosis(gameId)
       setMoves(d.moves); setAnn(d.annotations); setHumanSide(d.game.humanSide)
-      setStatus(d.annotations.length ? '' : '本局尚未诊断，点上方按钮开始')
+      const diagnosisStatus = d.diagnosisStatus as DiagnosisStatus | undefined
+      if (diagnosisStatus?.status === 'failed') {
+        setStatus('诊断失败：' + (diagnosisStatus.error ?? '请手动重试'))
+      } else if (diagnosisStatus?.status === 'running') {
+        setStatus('诊断中（可稍后刷新）')
+      } else if (diagnosisStatus?.status === 'ok') {
+        setStatus('')
+      } else {
+        setStatus('本局尚未诊断，点上方按钮开始')
+      }
     } catch (e) {
       setFetchError('加载失败，请确认后端在运行（' + (e as Error).message + '）')
     }

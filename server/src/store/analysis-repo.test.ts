@@ -6,7 +6,7 @@ import { AnalysisRepo } from './analysis-repo.js'
 function setup() {
   const db = openDb(':memory:')
   const gameId = new GamesRepo(db).createGame({ mode: 'coach', humanSide: 'red', startFen: 'FEN', startedAt: 't' })
-  return { repo: new AnalysisRepo(db), gameId }
+  return { repo: new AnalysisRepo(db), games: new GamesRepo(db), gameId }
 }
 
 test('保存与按 ply 有序读取标注', () => {
@@ -35,11 +35,17 @@ test('保存/读取成长指标 + 列表', () => {
   expect(repo.listGrowthMetrics()).toHaveLength(1)
 })
 
-test('弱点画像:按 phase×theme 计数,排除 ok,只统计指定方', () => {
-  const { repo, gameId } = setup()
+test('弱点画像:按 phase×theme 计数,排除 ok,只统计指定执方的人类着法', () => {
+  const { repo, games, gameId } = setup()
+  const blackHumanGame = games.createGame({ mode: 'coach', humanSide: 'black', startFen: 'FEN', startedAt: 't2' })
   repo.saveAnnotation({ gameId, ply: 1, side: 'red', cpLoss: 0, bestMove: 'a', phase: 'opening', theme: 'ok' })
   repo.saveAnnotation({ gameId, ply: 3, side: 'red', cpLoss: 200, bestMove: 'a', phase: 'midgame', theme: 'mistake' })
   repo.saveAnnotation({ gameId, ply: 5, side: 'red', cpLoss: 250, bestMove: 'a', phase: 'midgame', theme: 'mistake' })
   repo.saveAnnotation({ gameId, ply: 2, side: 'black', cpLoss: 400, bestMove: 'a', phase: 'midgame', theme: 'blunder' })
+  // 这条是执黑局里的 AI 红方失误,不应混入“我执红”的弱点画像。
+  repo.saveAnnotation({ gameId: blackHumanGame, ply: 1, side: 'red', cpLoss: 999, bestMove: 'a', phase: 'opening', theme: 'blunder' })
+  // 这条才是执黑用户自己的弱点。
+  repo.saveAnnotation({ gameId: blackHumanGame, ply: 2, side: 'black', cpLoss: 300, bestMove: 'a', phase: 'endgame', theme: 'mistake' })
   expect(repo.weaknessProfile('red')).toEqual([{ phase: 'midgame', theme: 'mistake', count: 2, avgLoss: 225 }])
+  expect(repo.weaknessProfile('black')).toEqual([{ phase: 'endgame', theme: 'mistake', count: 1, avgLoss: 300 }])
 })

@@ -4,6 +4,7 @@ import { ScoreLine } from '../charts/ScoreLine.js'
 import { WeaknessRadar } from '../charts/WeaknessRadar.js'
 import { PageShell, cardStyle, headingStyle, darkThStyle, darkTrStyle, darkTdStyle, ErrorBanner } from '../ui/PageShell.js'
 import { color, radius, fontSize, btn, pill, space } from '../ui/theme.js'
+import { compareText, weaknessText } from './growth-state.js'
 
 interface Metric { gameId: number; estElo: number; acpl: number; accuracy: number; openingAcpl: number; midgameAcpl: number; endgameAcpl: number; mistakes: number; blunders: number; result: string | null }
 interface Weak { phase: string; theme: string; count: number; avgLoss: number }
@@ -33,10 +34,14 @@ export function GrowthPage({ side: initialSide = 'red' as 'red' | 'black' }) {
   const [weak, setWeak] = useState<Weak[]>([])
   const [cmp, setCmp] = useState<Compare | null>(null)
   const [fetchError, setFetchError] = useState<string | null>(null)
+  const [weakError, setWeakError] = useState<string | null>(null)
+  const [cmpError, setCmpError] = useState<string | null>(null)
   const [cmpLoading, setCmpLoading] = useState(true)
 
   useEffect(() => {
     setFetchError(null)
+    setWeakError(null)
+    setCmpError(null)
     setCmpLoading(true)
 
     getGrowth()
@@ -49,11 +54,12 @@ export function GrowthPage({ side: initialSide = 'red' as 'red' | 'black' }) {
         // 弱点数据失败不覆盖主错误,但不再完全吞掉
         console.warn('[GrowthPage] 加载弱点画像失败:', e)
         setWeak([])
+        setWeakError(e.message)
       })
 
     getCompare()
       .then((d) => { setCmp(d); setCmpLoading(false) })
-      .catch(() => { setCmp(null); setCmpLoading(false) })
+      .catch((e: Error) => { setCmp(null); setCmpError(e.message); setCmpLoading(false) })
   }, [side])
 
   /** 专项陪练：拿到失误局面 FEN 写入 sessionStorage，跳回对局页 */
@@ -77,6 +83,8 @@ export function GrowthPage({ side: initialSide = 'red' as 'red' | 'black' }) {
 
   // 优先展示 LLM 成长报告，降级到规则 summary
   const reportText = cmp?.report ?? cmp?.summary ?? null
+  const weakFallbackText = weaknessText(radar.length, weakError)
+  const cmpText = compareText({ loading: cmpLoading, reportText, error: cmpError })
 
   return (
     <PageShell>
@@ -116,18 +124,14 @@ export function GrowthPage({ side: initialSide = 'red' as 'red' | 'black' }) {
           <h2 style={{ ...headingStyle, fontSize: fontSize.md, marginTop: 0, marginBottom: 12 }}>弱点画像</h2>
           {radar.length
             ? <WeaknessRadar data={radar} />
-            : <p style={{ color: color.textFaint, margin: 0 }}>暂无失误样本（下几局并诊断后出现）。</p>
+            : <p style={{ color: weakError ? color.danger : color.textFaint, margin: 0 }}>{weakFallbackText}</p>
           }
         </div>
 
         <div style={cardStyle}>
           <h2 style={{ ...headingStyle, fontSize: fontSize.md, marginTop: 0, marginBottom: 8 }}>成长点评</h2>
-          <p style={{ color: color.textMuted, margin: 0, lineHeight: 1.7 }}>
-            {cmpLoading
-              ? '加载中…'
-              : reportText
-              ? reportText
-              : '暂无历史对比数据'}
+          <p style={{ color: cmpError ? color.danger : color.textMuted, margin: 0, lineHeight: 1.7 }}>
+            {cmpText}
           </p>
         </div>
 

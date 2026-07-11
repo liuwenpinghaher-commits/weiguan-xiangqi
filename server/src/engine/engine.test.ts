@@ -57,6 +57,20 @@ test('transport 异常关闭时在途 analyze 被 reject(含 engine)', async () 
   await expectation
 })
 
+test('transport 空闲时关闭后,后续 analyze 立即 reject 而不是等超时', async () => {
+  vi.useFakeTimers()
+  try {
+    const ft = new FakeTransport()
+    const eng = new UciEngine(ft, { timeoutMs: 1000 })
+    ft.triggerClose(new Error('idle exit'))
+    const p = eng.analyze('fen-after-close', { multipv: 1, movetime: 100 })
+    await expect(p).rejects.toThrow(/engine process closed.*idle exit/i)
+    expect(ft.written).not.toContain('position fen fen-after-close')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 test('队列过载时立即 reject(防诊断洪峰挤爆拖垮对弈)', async () => {
   const ft = new FakeTransport()
   const eng = new UciEngine(ft)

@@ -4,6 +4,7 @@ import { HTTP_BASE } from '../api/config.js'
 import { Board } from '../board/Board.js'
 import { PageShell, cardStyle, headingStyle, ErrorBanner } from '../ui/PageShell.js'
 import { color, space, radius, fontSize, btn } from '../ui/theme.js'
+import { trainingAnswerFeedback, trainingBoardDisabled } from './training-state.js'
 
 interface Drill { ply: number; fen: string; bestMove: string; playedMove: string; cpLoss: number; theme: string }
 interface Stats { total: number; correct: number }
@@ -48,17 +49,11 @@ export function TrainingPage({ gameId }: { gameId: number }) {
     setAnswering(true)
     try {
       const result = await postDrillAttempt(gameId, drills[i].ply, move)
-      if (result.correct) {
-        setFeedback(`✓ 正解！就是这手 ${move}。`)
-      } else {
-        setFeedback(`✗ 你走了 ${move}；引擎最佳是 ${drills[i].bestMove}（原局你当时走的是 ${drills[i].playedMove}）`)
-      }
+      setFeedback(trainingAnswerFeedback(drills[i], move, true))
       setStats(result.stats)
     } catch {
       // 后端不可达时退回前端比对
-      setFeedback(move === drills[i].bestMove
-        ? `✓ 正解！就是这手 ${move}。`
-        : `✗ 你走了 ${move}；引擎最佳是 ${drills[i].bestMove}（原局你当时走的是 ${drills[i].playedMove}）`)
+      setFeedback(trainingAnswerFeedback(drills[i], move, false))
     } finally {
       setAnswering(false)
     }
@@ -115,7 +110,7 @@ export function TrainingPage({ gameId }: { gameId: number }) {
                 轮到你，走出最佳着：
               </p>
 
-              <Board fen={d.fen} onMove={answer} orientation={humanSide} />
+              <Board fen={d.fen} onMove={answer} orientation={humanSide} disabled={trainingBoardDisabled(answering, feedback)} />
 
               <p style={{
                 minHeight: 24,

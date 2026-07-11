@@ -1,7 +1,7 @@
 import { test, expect } from 'vitest'
 import { FakeMemoryStore } from './fake-memory-store.js'
 import { FakeLLM } from '../llm/fake.js'
-import { reflect } from './reflection.js'
+import { buildReflectionInput, reflect } from './reflection.js'
 import type { Persona, PersonaId } from '../types.js'
 
 // ─── 旧测试(保留并升级) ──────────────────────────────────────────────────────
@@ -180,4 +180,45 @@ test('只有一次 LLM 调用(单次 chat 请求)', async () => {
   })
 
   expect(llm.calls).toHaveLength(1)
+})
+
+test('buildReflectionInput 纳入后半盘、结果、关键诊断、聊天和训练表现', () => {
+  const playerMoves = Array.from({ length: 14 }, (_, i) => `第${i + 1}手人类走法`)
+  const summary = buildReflectionInput({
+    playerMoves,
+    humanSide: 'red',
+    result: 'black',
+    annotations: [
+      { ply: 14, side: 'red', phase: 'endgame', theme: 'blunder', cpLoss: 320, bestMove: 'a0a1' },
+      { ply: 6, side: 'black', phase: 'midgame', theme: 'mistake', cpLoss: 180, bestMove: 'b0b1' },
+    ],
+    messages: [
+      { role: 'human', personaId: 'human', text: '我第14手是不是急了?', addressee: 'all' },
+      { role: 'persona', personaId: 'coach', text: '这里要先守住底线。', addressee: 'human' },
+    ],
+    trainingStats: { total: 3, correct: 1 },
+  })
+
+  expect(summary).toContain('第14手人类走法')
+  expect(summary).toContain('结果: 黑胜')
+  expect(summary).toContain('第14手')
+  expect(summary).toContain('blunder')
+  expect(summary).toContain('我第14手是不是急了?')
+  expect(summary).toContain('coach -> human')
+  expect(summary).toContain('训练表现: 1/3')
+})
+
+test('reflect prompt 会携带额外局后上下文', async () => {
+  const store = new FakeMemoryStore(() => 0)
+  const llm = new FakeLLM(['- 后半盘容易急\n洞见: 需要残局稳定性'])
+
+  await reflect({
+    store, llm, personaId: 'coach', gameId: 10,
+    now: () => 0,
+    playerSummary: '第1手人类走法',
+    contextSummary: '结果: 黑胜\n关键诊断: 第18手 blunder',
+  } as any)
+
+  const userPrompt = llm.calls[0].messages.find(m => m.role === 'user')?.content ?? ''
+  expect(userPrompt).toContain('关键诊断: 第18手 blunder')
 })

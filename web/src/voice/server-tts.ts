@@ -1,4 +1,4 @@
-import { ttsUrl, HTTP_BASE } from '../api/config.js'
+import { HTTP_BASE } from '../api/config.js'
 import { isMuted, speak as browserSpeak } from './browser-tts.js'
 
 /**
@@ -26,9 +26,13 @@ type QueueItem = {
   started?: boolean
 }
 
-/** 教练对玩家的必答回答:走子/提问让路时不能被砍掉(服务端 coach_query 一律不丢,前端须对齐)。 */
+/** 对玩家的定向回答是必答;普通教练弹幕仍应给最新走子/提问让路。 */
+export function isMustKeepForVoice(_personaId: string, addressee?: string): boolean {
+  return addressee === 'human'
+}
+
 function isMustKeep(item: QueueItem): boolean {
-  return item.personaId === 'coach' || item.addressee === 'human'
+  return isMustKeepForVoice(item.personaId, item.addressee)
 }
 
 /** 触发 item.onStart 一次(幂等);用于文字-语音同步:气泡在声音起播的瞬间显示。 */
@@ -121,7 +125,7 @@ async function drain(): Promise<void> {
       // 合成失败(无 key / 网络 / 服务错误) → 回退浏览器 TTS。
       // 仍要 fireStart:让对应气泡照常揭示(否则同步模式下会卡住后续所有气泡)。
       fireStart(item)
-      browserSpeak(item.personaId, item.text)
+      browserSpeak(item.personaId, item.text, { mustKeep: isMustKeep(item) })
       continue
     }
     if (gen !== generation) break // await 期间 stopVoice 触发 → 不要再 play 这条残留
@@ -148,9 +152,9 @@ async function drain(): Promise<void> {
       // 合成成功但 wav 损坏/播放被拒 → 回退浏览器 TTS,该句不再静默无声。
       // 但若期间 stopVoice 触发(gen 变化),则本次 play 被拒是"被中止"而非"坏 wav"——
       // 不能兜底,否则会用浏览器机械音把已停的那句复活(暂停/重开局/关观众席时串台)。
-      if (failed && gen === generation) browserSpeak(item.personaId, item.text)
+      if (failed && gen === generation) browserSpeak(item.personaId, item.text, { mustKeep: isMustKeep(item) })
     } catch {
-      if (gen === generation) browserSpeak(item.personaId, item.text)
+      if (gen === generation) browserSpeak(item.personaId, item.text, { mustKeep: isMustKeep(item) })
     }
   }
 
@@ -201,7 +205,11 @@ export function speakServer(personaId: string, text: string, onStart?: () => voi
   if (isMuted() || !text) { onStart?.(); return }
 
   // 立即发起合成 fetch(得到 Promise<url>),不等结果
-  const urlPromise: Promise<string> = fetch(ttsUrl(personaId, text))
+  const urlPromise: Promise<string> = fetch(`${HTTP_BASE}/tts`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ personaId, text }),
+  })
     .then((r) => {
       if (!r.ok) return Promise.reject(new Error(`TTS HTTP ${r.status}`))
       return r.json() as Promise<{ url: string }>

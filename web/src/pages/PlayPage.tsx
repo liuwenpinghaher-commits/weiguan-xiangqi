@@ -8,6 +8,7 @@ import { cancelSpeech } from '../voice/browser-tts.js'
 import { stopVoice, dropQueued } from '../voice/server-tts.js'
 import { useIsNarrow } from '../hooks/use-viewport.js'
 import { color, space, radius, fontSize, font, shadow, pill } from '../ui/theme.js'
+import { engineStatusHint, nextStatusFromState, postGameAnalysisHint, primaryActionKind, shouldAcceptChat, shouldAwaitAiOnStarted, type EngineStatus } from './play-state.js'
 
 const START_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
@@ -45,6 +46,7 @@ export function PlayPage() {
   const [legalSquares, setLegalSquares] = useState<string[]>([])
   const [flipped, setFlipped] = useState(false)
   const [viewingHistory, setViewingHistory] = useState(false) // 是否正在回看历史(回看时锁盘)
+  const [engineHint, setEngineHint] = useState<string | null>(null)
 
   const wsRef = useRef<ReturnType<typeof connect> | null>(null)
   const gameIdRef = useRef<number | null>(null)
@@ -81,8 +83,9 @@ export function PlayPage() {
     if (msg.type === 'started') {
       setGameId(msg.gameId)
       setStatus('playing')
-      // 黑方时等待 AI 先手 update 消息，此时先锁盘提示
-      setStatusMsg('对局开始，请走棋')
+      const awaitingFirst = shouldAwaitAiOnStarted(sideRef.current)
+      setAwaitingAi(awaitingFirst)
+      setStatusMsg(awaitingFirst ? '对局开始，AI 先手中…' : '对局开始，请走棋')
       setStatusError(false)
     } else if (msg.type === 'update') {
       // 只认本局的 update:旧局超时清扫广播的 update 帧现在也带 gameId,
@@ -154,11 +157,13 @@ export function PlayPage() {
       // 断线重连后 resync 拉回的权威状态:重挂棋盘、恢复时钟、解锁棋盘(修"AI 回帧在途断线致永久锁死")。
       if (gameIdRef.current !== null && msg.gameId !== gameIdRef.current) return
       pendingMoveRef.current = false
-      setAwaitingAi(false) // 无条件解锁:即便断线前在等 AI,重连后以服务端局面为准
+      setAwaitingAi(Boolean(msg.awaitingAi))
       setViewingHistory(false)
       setFen(msg.fen)
       setFenKey(k => k + 1)
       setStatusError(false)
+      if (typeof msg.spectators === 'boolean') setSpectatorsOn(msg.spectators)
+      if (typeof msg.undoRemaining === 'number') setUndoRemaining(msg.undoRemaining)
       if (msg.clockState) { setClockState(msg.clockState); setClockEpoch(e => e + 1) }
       if (msg.over) {
         const result = msg.result ?? null
@@ -166,13 +171,17 @@ export function PlayPage() {
         setStatus('over')
         const txt = resultText(result)
         setStatusMsg(txt ? `对局结束 — ${txt}` : '对局结束！')
+      } else if (msg.paused) {
+        setStatus('paused')
+        setStatusMsg('已暂停 — 点「继续」恢复')
       } else {
-        setStatus('playing')
-        setStatusMsg('已重新连接，请继续走棋')
+        const nextStatus = nextStatusFromState(msg)
+        setStatus(nextStatus)
+        setStatusMsg(msg.awaitingAi ? '已重新连接，AI 思考中…' : '已重新连接，请继续走棋')
       }
     } else if (msg.type === 'chat') {
       // 只收本局弹幕:换局瞬间旧局残留帧/多局并发时不串台
-      if (gameIdRef.current !== null && msg.gameId !== gameIdRef.current) return
+      if (!shouldAcceptChat(gameIdRef.current, msg.gameId)) return
       setLines(prev => [...prev, {
         personaId: msg.personaId,
         text: msg.text,
@@ -213,14 +222,18 @@ export function PlayPage() {
         setStatusMsg('连接断开，正在重连…')
         setStatusError(false)
       } else if (s === 'open') {
-        // 重连成功后恢复 playing（保留 gameId，下一手发到同一 gameId 即可续局）
-        setStatus((prev: GameStatus) => prev === 'connecting' ? 'playing' : prev)
-        setStatusMsg((prev: string) => prev === '连接断开，正在重连…' ? '已重新连接，请继续走棋' : prev)
-        setStatusError(false)
         // 状态自愈:向服务端拉取权威 state,重挂棋盘/恢复时钟/解锁棋盘(修 update/state 在途丢失致死锁,P1-10)。
         // 仅在已有对局时发;首连(gameId 尚为 null)由 new→started 走正常流程。
         const gid = gameIdRef.current
-        if (gid !== null) wsRef.current?.send({ type: 'resync', gameId: gid })
+        if (gid !== null) {
+          setStatusMsg('已重新连接，正在同步对局…')
+          setStatusError(false)
+          wsRef.current?.send({ type: 'resync', gameId: gid })
+        } else {
+          setStatus((prev: GameStatus) => prev === 'connecting' ? 'playing' : prev)
+          setStatusMsg((prev: string) => prev === '连接断开，正在重连…' ? '已重新连接，请继续走棋' : prev)
+          setStatusError(false)
+        }
       } else if (s === 'closed') {
         setStatus('error')
         setStatusMsg('连接断开，请重新开始')
@@ -239,6 +252,11 @@ export function PlayPage() {
   }
 
   useEffect(() => {
+    fetch(`${HTTP_BASE}/engine/status`)
+      .then(r => r.ok ? r.json() : null)
+      .then((s: EngineStatus | null) => setEngineHint(engineStatusHint(s)))
+      .catch(() => setEngineHint('引擎状态不可确认，请确认后端在运行'))
+
     // 检查是否有专项陪练局面（由 GrowthPage 写入 sessionStorage）
     const sparringFen = sessionStorage.getItem('weiguan_sparring_fen')
     const sparringSide = sessionStorage.getItem('weiguan_sparring_side') as HumanSide | null
@@ -408,14 +426,16 @@ export function PlayPage() {
   }, [clockEpoch, status])
 
   const resultTxt = resultText(gameResult)
-  const canStart = status === 'idle' || status === 'over' || status === 'error'
+  const actionKind = primaryActionKind(status)
 
   // 主操作按钮(开始/暂停/继续)——直播间左栏的醒目主入口
-  const primaryAction = canStart ? (
+  const primaryAction = actionKind === 'start' ? (
     <button style={styles.primaryBtn} onClick={handleStart} aria-label="开始对局">▶ 开始对局</button>
-  ) : status === 'playing' ? (
+  ) : actionKind === 'restart' ? (
+    <button style={styles.primaryBtn} onClick={() => handleRestart()} aria-label="开始对局">▶ 开始对局</button>
+  ) : actionKind === 'pause' ? (
     <button style={styles.pauseBtn} onClick={handlePause} aria-label="暂停对局">⏸ 暂停</button>
-  ) : status === 'paused' ? (
+  ) : actionKind === 'resume' ? (
     <button style={styles.primaryBtn} onClick={handleResume} aria-label="继续对局">▶ 继续</button>
   ) : (
     <button style={{ ...styles.primaryBtn, opacity: 0.6 }} disabled aria-label="连接中">连接中…</button>
@@ -435,6 +455,7 @@ export function PlayPage() {
           {awaitingAi && !statusError && <span style={styles.thinkingBadge}>AI 思考中…</span>}
           {lastAiMove && !awaitingAi && <span style={styles.aiMove}>AI 上一手 {lastAiMoveZh ?? lastAiMove}</span>}
         </div>
+        {engineHint && <span style={styles.engineWarn}>{engineHint}</span>}
       </div>
 
       {renderClock()}
@@ -510,7 +531,7 @@ export function PlayPage() {
             <a href={`#/analysis/${gameId}`} style={{ ...styles.linkBtn, ...styles.linkAnalysis }}>分析本局</a>
             <a href={`#/training/${gameId}`} style={{ ...styles.linkBtn, ...styles.linkTraining }}>针对训练</a>
           </div>
-          <p style={styles.diagnosedHint}>对局已自动诊断，可查看分析或进行针对训练</p>
+          <p style={styles.diagnosedHint}>{postGameAnalysisHint()}</p>
         </>
       )}
       {status === 'over' && gameId === null && <span style={styles.overTag}>对局已结束</span>}
@@ -666,6 +687,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '2px 10px', borderRadius: radius.pill, border: `1px solid ${color.goldBorder}`,
   },
   aiMove: { fontSize: fontSize.sm, color: color.gold, fontFamily: font.mono },
+  engineWarn: { fontSize: fontSize.xs, color: color.danger, lineHeight: 1.45 },
   // 主操作按钮
   primaryBtn: {
     padding: '12px 20px', fontSize: fontSize.md, fontWeight: 700,

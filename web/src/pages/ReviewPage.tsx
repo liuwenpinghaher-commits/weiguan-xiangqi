@@ -84,7 +84,7 @@ export function ReviewPage(props: { gameId: number }) {
         {!loading && !fetchError && startFen && (
           <>
             <div style={cardStyle}>
-              <Board fen={fen} onMove={() => {}} orientation={humanSide} />
+              <Board fen={fen} onMove={() => {}} orientation={humanSide} disabled />
               <div style={{ marginTop: space.md, display: 'flex', alignItems: 'center', gap: space.md }}>
                 <button
                   onClick={() => setIdx(i => Math.max(0, i - 1))}

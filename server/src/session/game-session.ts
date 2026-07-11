@@ -110,6 +110,8 @@ export class GameSession {
   private clockStates = new Map<number, { redRemaining: number; blackRemaining: number; activeSide: 'red' | 'black' | null; startedAt: number | null }>()
   /** 每局已用悔棋次数(服务端权威;前端 undoRemaining 仅展示) */
   private undoCounts = new Map<number, number>()
+  /** 人着已受理、AI 回着尚未落定时的临时 FEN,供局面问答读取当前人着后局面。 */
+  private pendingHumanFens = new Map<number, string>()
 
   constructor(private deps: GameSessionDeps) {}
 
@@ -339,12 +341,14 @@ export class GameSession {
     //    AI 一侧按真实计算耗时走钟(诚实计时,不再恒为初始值)
     const aiThinkingSide = afterHuman.sideToMove()
     if (clock) this.startClockFor(clock, aiThinkingSide)
+    this.pendingHumanFens.set(gameId, afterHuman.fen())
     const ep = this.deps.cfg.getEngineParams()
     let lines
     try {
       lines = await this.deps.engine.analyze(afterHuman.fen(), { multipv: ep.multipv, movetime: ep.movetime })
     } finally {
       if (clock) this.settleActive(clock, true)
+      this.pendingHumanFens.delete(gameId)
     }
     // 完局二次守卫:analyze 是唯一 await 点,期间 sweeper 可能因 AI 侧超时 finish 并删净内存态。
     // 若已终局则中止,不把这手写进已结束的对局(也避免 applyRepeatState 读到已删的 repeatHistories)。
@@ -625,7 +629,7 @@ export class GameSession {
       || this.repeatHistories.has(gameId) || this.noCapturePlies.has(gameId)
       || this.prevRedCp.has(gameId) || this.lastHumanBlunder.has(gameId)
       || this.lastPhase.has(gameId)
-      || this.clockStates.has(gameId) || this.undoCounts.has(gameId)
+      || this.clockStates.has(gameId) || this.undoCounts.has(gameId) || this.pendingHumanFens.has(gameId)
   }
 
   getClockState(gameId: number) {
@@ -660,6 +664,8 @@ export class GameSession {
 
   /** 公开只读取 fen，避免调用方穿透私有 positions（不存在时返回空串）。 */
   getFen(gameId: number): string {
+    const pending = this.pendingHumanFens.get(gameId)
+    if (pending) return pending
     // 内存中已有活跃局面直接返回。
     const live = this.positions.get(gameId)
     if (live) return live.fen()
@@ -721,6 +727,13 @@ export class GameSession {
   /** 每局悔棋上限(服务端权威;前端展示 remaining) */
   static readonly MAX_UNDOS = 3
 
+  /** 只读悔棋余额,供 resync/state 帧使用。未知或已终局对局返回 0。 */
+  getUndoRemaining(gameId: number): number {
+    if (this.isFinished(gameId)) return 0
+    const used = this.undoCounts.get(gameId) ?? 0
+    return Math.max(0, GameSession.MAX_UNDOS - used)
+  }
+
   undoLastMoves(gameId: number): { success: boolean; fen: string; undoRemaining: number } {
     // 完局守卫:已终局的对局不可悔棋(否则重建僵尸局 + 悔到 AI 回合却给人起钟致死锁)
     if (this.isFinished(gameId)) return { success: false, fen: '', undoRemaining: 0 }
@@ -776,6 +789,7 @@ export class GameSession {
     this.lastPhase.delete(gameId)
     this.clockStates.delete(gameId)
     this.undoCounts.delete(gameId)
+    this.pendingHumanFens.delete(gameId)
   }
 
   /** 有走钟在途的活跃局(供 ws-server 超时清扫器遍历)。 */

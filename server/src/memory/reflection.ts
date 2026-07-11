@@ -3,6 +3,24 @@ import type { LLMProvider } from '../llm/provider.js'
 import type { PersonaId, Persona } from '../types.js'
 import { getPersona as staticGetPersona } from '../personas/personas.js'
 
+type ReflectionSide = 'red' | 'black'
+type ReflectionResult = ReflectionSide | 'draw' | null
+type ReflectionAnnotation = {
+  ply: number
+  side: ReflectionSide
+  phase: string
+  theme: string
+  cpLoss: number
+  bestMove: string
+}
+type ReflectionMessage = {
+  role: string
+  personaId: string
+  text: string
+  addressee?: string | null
+}
+type ReflectionTrainingStats = { total: number; correct: number }
+
 /**
  * 解析 LLM 反思输出,提取 fact 和 insight。
  *
@@ -55,21 +73,71 @@ function parseReflection(raw: string): Array<{ kind: 'fact' | 'insight'; content
   return result
 }
 
+function resultText(result: ReflectionResult): string {
+  if (result === 'draw') return '和棋'
+  if (result === 'red') return '红胜'
+  if (result === 'black') return '黑胜'
+  return '未结束'
+}
+
+export function buildReflectionInput(args: {
+  playerMoves: string[]
+  humanSide: ReflectionSide
+  result: ReflectionResult
+  annotations?: ReflectionAnnotation[]
+  messages?: ReflectionMessage[]
+  trainingStats?: ReflectionTrainingStats
+}): string {
+  const sections: string[] = []
+  if (args.playerMoves.length > 0) {
+    sections.push(`人类走法全局概述:\n${args.playerMoves.map((m, i) => `${i + 1}. ${m}`).join('\n')}`)
+  }
+  sections.push(`人类执方: ${args.humanSide === 'red' ? '红方' : '黑方'}`)
+  sections.push(`结果: ${resultText(args.result)}`)
+
+  const humanProblems = (args.annotations ?? [])
+    .filter(a => a.side === args.humanSide && a.theme !== 'ok')
+    .sort((a, b) => b.cpLoss - a.cpLoss)
+    .slice(0, 6)
+  if (humanProblems.length > 0) {
+    sections.push('关键诊断:\n' + humanProblems.map(a =>
+      `第${a.ply}手 ${a.phase}/${a.theme}, 丢${a.cpLoss}分, 建议 ${a.bestMove}`,
+    ).join('\n'))
+  }
+
+  const relevantMessages = (args.messages ?? [])
+    .filter(m => m.role === 'human' || m.addressee === 'human')
+    .slice(-8)
+  if (relevantMessages.length > 0) {
+    sections.push('本局问答:\n' + relevantMessages.map(m =>
+      `${m.personaId}${m.addressee ? ` -> ${m.addressee}` : ''}: ${m.text}`,
+    ).join('\n'))
+  }
+
+  if (args.trainingStats && args.trainingStats.total > 0) {
+    sections.push(`训练表现: ${args.trainingStats.correct}/${args.trainingStats.total}`)
+  }
+
+  return sections.join('\n\n')
+}
+
 export async function reflect(args: {
   store: MemoryStore; llm: LLMProvider; personaId: PersonaId; gameId: number; now: () => number
   playerSummary: string
+  contextSummary?: string
   /** 取运行时 persona(含控制台覆盖);省略时回退静态 personas。 */
   getPersona?: (id: PersonaId) => Persona
 }): Promise<void> {
-  const { store, llm, personaId, now, playerSummary } = args
-  if (!playerSummary) return
+  const { store, llm, personaId, now, playerSummary, contextSummary } = args
+  if (!playerSummary && !contextSummary) return
   const persona = (args.getPersona ?? staticGetPersona)(personaId)
+  const summary = [playerSummary, contextSummary].filter(Boolean).join('\n\n')
 
   const raw = (await llm.chat([
     { role: 'system', content: `你是${persona.name}。` },
     {
       role: 'user',
-      content: `这位棋手本局的走法:\n${playerSummary}\n`
+      content: `这位棋手本局的走法与局后上下文:\n${summary}\n`
         + `请先列出 2-3 条关于这位棋手的具体事实(每行以 "- " 开头,如"- 爱走当头炮"、"- 残局易急躁"),`
         + `最后一行以"洞见: "开头,给一句更高层次的总括性洞见。全部用中文回答。`,
     },

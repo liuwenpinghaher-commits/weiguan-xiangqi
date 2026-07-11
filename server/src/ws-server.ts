@@ -5,6 +5,7 @@ import fastifyCors from '@fastify/cors'
 import { openDb } from './store/db.js'
 import { GamesRepo } from './store/games-repo.js'
 import { UciEngine, spawnTransport } from './engine/engine.js'
+import { ManagedEngine, type EngineStatus } from './engine/managed-engine.js'
 import { GameSession } from './session/game-session.js'
 import { createGameLock } from './session/game-lock.js'
 import { Position } from './rules/position.js'
@@ -29,7 +30,7 @@ import { synthesizeUrl, voiceForPersona } from './voice/dashscope-tts.js'
 import { DashscopeAsr, dashscopeAsrCreds } from './voice/dashscope-asr.js'
 import { SqliteMemoryStore } from './memory/sqlite-memory-store.js'
 import { DashscopeEmbedding } from './llm/dashscope-embedding.js'
-import { reflect } from './memory/reflection.js'
+import { buildReflectionInput, reflect } from './memory/reflection.js'
 import { describeMoveZh } from './rules/describe-move.js'
 import { MessagesRepo } from './store/messages-repo.js'
 import { serializeGame, validateImport } from './store/game-export.js'
@@ -43,6 +44,18 @@ export interface EngineLike {
   close?(): void
 }
 
+type DiagnosisStatus =
+  | { status: 'pending' }
+  | { status: 'running'; updatedAt: string }
+  | { status: 'ok'; updatedAt: string }
+  | { status: 'failed'; updatedAt: string; error: string }
+
+type TtsSynthesizer = (
+  text: string,
+  voice: string,
+  cfg: Parameters<typeof synthesizeUrl>[2],
+) => Promise<string>
+
 export async function buildServer(opts: {
   dbPath: string
   enginePath?: string
@@ -52,6 +65,8 @@ export async function buildServer(opts: {
   llm?: LLMProvider
   /** 若传入则直接使用,跳过 DASHSCOPE key 检查与 DashscopeAsr 构造(测试注入 FakeAsr) */
   asr?: import('./voice/asr.js').AsrProvider
+  /** 若传入则替换云 TTS 合成器(测试注入,避免真实网络/凭据)。 */
+  ttsSynthesizer?: TtsSynthesizer
 }) {
   const db = openDb(opts.dbPath)
   const repo = new GamesRepo(db)
@@ -62,16 +77,29 @@ export async function buildServer(opts: {
 
   // 引擎:优先使用注入值;未注入则按 enginePath 构造
   let engine: EngineLike | null
+  let engineStatus: () => EngineStatus | { configured: false; degraded: true; reason: string }
   if ('engine' in opts) {
     // 显式传入(含 null):直接使用
     engine = opts.engine ?? null
+    engineStatus = () => {
+      if (!engine) return { configured: false, degraded: true, reason: '引擎未配置' }
+      const maybeStatus = (engine as EngineLike & { status?: () => EngineStatus }).status
+      return typeof maybeStatus === 'function'
+        ? maybeStatus.call(engine)
+        : { configured: true, degraded: false, reason: null }
+    }
   } else {
     // 未注入:env PIKAFISH_PATH 优先,回退控制台配置的 engine.pikafishPath
     // (原来 DB 值是 100% 死配置——写了但 spawn 永不读;现在重启后生效,控制台提示才成立)
     const enginePath = opts.enginePath ?? cfg.getEngineParams().pikafishPath ?? undefined
-    engine = enginePath && existsSync(enginePath)
-      ? new UciEngine(spawnTransport(enginePath))
-      : null
+    if (enginePath && existsSync(enginePath)) {
+      const managed = new ManagedEngine(() => new UciEngine(spawnTransport(enginePath)))
+      engine = managed
+      engineStatus = () => managed.status()
+    } else {
+      engine = null
+      engineStatus = () => ({ configured: false, degraded: true, reason: '引擎未配置或路径不存在' })
+    }
     if (!engine) {
       console.warn('象棋引擎未配置或路径不存在:对弈/诊断功能不可用,聊天与复盘仍可用')
     }
@@ -192,13 +220,13 @@ export async function buildServer(opts: {
   }
 
   async function doReflectGame(gameId: number): Promise<void> {
-    // 拼玩家本局真实走法概述
+    // 拼玩家本局真实走法与局后上下文概述
     let playerSummary = ''
     try {
       const game = repo.getGame(gameId)
       const moves = repo.getMoves(gameId)
       if (game) {
-        const humanMoves = moves.filter(m => !m.byAi).slice(0, 12)
+        const humanMoves = moves.filter(m => !m.byAi)
         const parts: string[] = []
         for (const m of humanMoves) {
           const prevFen = m.ply <= 1
@@ -210,7 +238,14 @@ export async function buildServer(opts: {
             // 单步描述失败跳过
           }
         }
-        playerSummary = parts.join(';')
+        playerSummary = buildReflectionInput({
+          playerMoves: parts,
+          humanSide: game.humanSide,
+          result: game.result,
+          annotations: analysis.getAnnotations(gameId),
+          messages: messages.getMessages(gameId),
+          trainingStats: training.drillStats(gameId),
+        })
       }
     } catch {
       // 走法拼接失败,playerSummary 保持空字符串,reflect 会提前返回
@@ -264,15 +299,19 @@ export async function buildServer(opts: {
   // (flag-fall 不能只靠"下一手走子时检查"——超时方可能永远不走那手棋)
   const clockSweeper = setInterval(() => {
     for (const gid of session.activeClockGameIds()) {
-      if (pausedGames.has(gid)) continue
-      const timedOut = session.checkTimeout(gid)
-      if (!timedOut) continue
-      // 帧必须带 gameId:前端按 gameId 过滤 update,否则旧局 flag-fall 广播会顶替正在下的新局 UI。
-      const frame = JSON.stringify({ type: 'update', gameId: gid, aiMove: null, ...timedOut, clockState: null })
-      for (const s of sockets) {
-        try { s.send(frame) } catch { /* 单连接发送失败忽略 */ }
-      }
-      finalizeGame(gid, timedOut.result)
+      void withGameLock(gid, async () => {
+        if (pausedGames.has(gid)) return
+        const timedOut = session.checkTimeout(gid)
+        if (!timedOut) return
+        // 帧必须带 gameId:前端按 gameId 过滤 update,否则旧局 flag-fall 广播会顶替正在下的新局 UI。
+        const frame = JSON.stringify({ type: 'update', gameId: gid, aiMove: null, ...timedOut, clockState: null })
+        for (const s of sockets) {
+          try { s.send(frame) } catch { /* 单连接发送失败忽略 */ }
+        }
+        finalizeGame(gid, timedOut.result)
+      }).catch((err) => {
+        console.warn('[clock] 超时清扫失败:', (err as Error).message)
+      })
     }
   }, 2000)
   clockSweeper.unref?.()
@@ -288,6 +327,25 @@ export async function buildServer(opts: {
 
   // 局末自动诊断幂等 set(避免同一局重复触发引擎分析)
   const diagnosedGames = new Set<number>()
+  const diagnosisStates = new Map<number, DiagnosisStatus>()
+
+  function setDiagnosisState(gameId: number, status: Exclude<DiagnosisStatus['status'], 'pending'>, error?: string): DiagnosisStatus {
+    const updatedAt = new Date().toISOString()
+    const next: DiagnosisStatus = status === 'failed'
+      ? { status, updatedAt, error: error ?? '诊断失败' }
+      : { status, updatedAt }
+    diagnosisStates.set(gameId, next)
+    return next
+  }
+
+  function diagnosisStatus(gameId: number): DiagnosisStatus {
+    const existing = diagnosisStates.get(gameId)
+    if (existing) return existing
+    if (analysis.getAnnotations(gameId).length > 0) {
+      return { status: 'ok', updatedAt: new Date().toISOString() }
+    }
+    return { status: 'pending' }
+  }
 
   // 暂停中的对局:整局总开关。暂停期间停冷场定时器、跳过 move/say/idle 刺激,不生成不广播。
   const pausedGames = new Set<number>()
@@ -300,6 +358,9 @@ export async function buildServer(opts: {
   // 关闭观众席的对局:用户可开/关旁观者(弹幕+语音)。关闭期间不生成任何 chat 刺激,
   // 不浪费 LLM/TTS,也不广播弹幕(与 pause 同构,但 pause 连棋也停、此处只停观众席)。
   const spectatorsOffGames = new Set<number>()
+
+  // 正在等待 AI 分析/落子的对局,供 resync 返回权威等待态。
+  const aiThinkingGames = new Set<number>()
 
   // 对局结束时集中清理按 gameId 累积的容器,防渐进内存泄漏 + gameId 复用误判。
   // pausedGames 与 chat 上下文可立即清(终局后不会再有该局刺激);
@@ -317,6 +378,14 @@ export async function buildServer(opts: {
   function isLiveGame(gameId: number): boolean {
     const g = repo.getGame(gameId)
     return !!g && !g.result
+  }
+  function stateSnapshot(gameId: number) {
+    return {
+      paused: pausedGames.has(gameId),
+      spectators: !spectatorsOffGames.has(gameId),
+      awaitingAi: aiThinkingGames.has(gameId),
+      undoRemaining: session.getUndoRemaining(gameId),
+    }
   }
   function forgetGuards(gameId: number): void {
     reflectedGames.delete(gameId)
@@ -338,7 +407,10 @@ export async function buildServer(opts: {
     let diagP: Promise<unknown> = Promise.resolve()
     if (engine && !diagnosedGames.has(gameId)) {
       diagnosedGames.add(gameId)
-      diagP = diagnoseGame(diagDeps, gameId).catch(() => { /* 诊断失败静默 */ })
+      setDiagnosisState(gameId, 'running')
+      diagP = diagnoseGame(diagDeps, gameId)
+        .then(() => { setDiagnosisState(gameId, 'ok') })
+        .catch((err) => { setDiagnosisState(gameId, 'failed', (err as Error).message) })
     }
     void Promise.allSettled([reflectP, diagP]).then(() => forgetGuards(gameId))
   }
@@ -361,7 +433,15 @@ export async function buildServer(opts: {
   // 跨域:仅允许本地前端(:3420)读取响应。原先 origin:true 反射任意来源——意味着你浏览器里
   // 打开的任何网页都能跨域 fetch 本服务,读到 /admin/.../reveal 的明文 key 或 PUT 篡改配置。
   // 收紧到固定前端来源即可堵住(非浏览器客户端如 curl 不受 CORS 约束,正常工作)。
-  await app.register(fastifyCors, { origin: ['http://localhost:3420', 'http://127.0.0.1:3420'] })
+  function configuredFrontendOrigins(): string[] {
+    const envOrigins = (process.env.FRONTEND_ORIGINS ?? '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+    return ['http://localhost:3420', 'http://127.0.0.1:3420', ...envOrigins]
+  }
+  const allowedHttpOrigins = new Set(configuredFrontendOrigins())
+  await app.register(fastifyCors, { origin: [...allowedHttpOrigins] })
 
   // 静态文件服务:暴露生成的 TTS WAV 文件给前端播放
   const staticDir = join(import.meta.dirname, '..', 'static')
@@ -382,9 +462,10 @@ export async function buildServer(opts: {
   // WS 的 Origin 校验(防 CSWSH):浏览器 WebSocket 不受 CORS 约束——不校验的话,用户浏览器里
   // 打开的任意网页都能连 ws://本机/play 建局、灌 say(烧引擎+LLM+落库)、窃听全部广播。
   // 无 Origin 头(curl/测试/非浏览器客户端)放行;浏览器发起的连接必须来自白名单前端。
-  const allowedWsOrigins = new Set(['http://localhost:3420', 'http://127.0.0.1:3420'])
+  const allowedWsOrigins = new Set(configuredFrontendOrigins())
   await app.register(fastifyWebsocket, {
     options: {
+      maxPayload: 64 * 1024,
       verifyClient: (info: { origin?: string }, next: (ok: boolean, code?: number, msg?: string) => void) => {
         const origin = info.origin
         if (!origin || allowedWsOrigins.has(origin)) return next(true)
@@ -398,6 +479,8 @@ export async function buildServer(opts: {
 
   // 控制台 admin 路由(配置/角色/记忆/对局管理)
   registerAdminRoutes(app, { cfg, mem, games: repo, messages })
+
+  app.get('/engine/status', async () => engineStatus())
 
   // WebSocket 路由 /play
   // @fastify/websocket v10 handler 签名: (socket: WebSocket, req: FastifyRequest)
@@ -464,12 +547,16 @@ export async function buildServer(opts: {
           if (engine && session.getFen(gameId) && msg.humanSide !== undefined) {
             const sideToMove = session.getFen(gameId).split(' ')[1] === 'b' ? 'black' : 'red'
             if (sideToMove !== humanSide) {
+              aiThinkingGames.add(gameId)
               try {
                 const aiResult = await withGameLock(gameId, () => session.aiFirstMove(gameId))
                 const clockState = session.getClockState(gameId)
                 socket.send(JSON.stringify({ type: 'update', gameId, ...aiResult, clockState }))
+                if (aiResult.over) finalizeGame(gameId, aiResult.result)
               } catch (e) {
                 socket.send(JSON.stringify({ type: 'error', message: `AI先手失败: ${(e as Error).message}` }))
+              } finally {
+                aiThinkingGames.delete(gameId)
               }
             }
           }
@@ -478,16 +565,24 @@ export async function buildServer(opts: {
           if (typeof gid !== 'number') { socket.send(JSON.stringify({ type: 'error', message: '非法 gameId' })); return }
           if (typeof msg.move !== 'string') { socket.send(JSON.stringify({ type: 'error', message: '非法 move' })); return }
           const moveStr = msg.move
-          if (pausedGames.has(gid)) return
+          if (pausedGames.has(gid)) {
+            socket.send(JSON.stringify({ type: 'error', message: '对局已暂停,请先继续再走棋' }))
+            return
+          }
           if (!engine) {
             socket.send(JSON.stringify({ type: 'error', message: '未配置象棋引擎,无法对弈(聊天/复盘仍可用)' }))
             return
           }
-          const result = await withGameLock(gid, () => session.playHumanMove(gid, moveStr))
-          const clockState = session.getClockState(gid)
-          socket.send(JSON.stringify({ type: 'update', gameId: gid, ...result, clockState }))
-          // 局末:统一收尾(清本局态+反思+诊断+播报);认负/求和/超时走同一 finalizeGame
-          if (result.over) finalizeGame(gid, result.result)
+          aiThinkingGames.add(gid)
+          try {
+            const result = await withGameLock(gid, () => session.playHumanMove(gid, moveStr))
+            const clockState = session.getClockState(gid)
+            socket.send(JSON.stringify({ type: 'update', gameId: gid, ...result, clockState }))
+            // 局末:统一收尾(清本局态+反思+诊断+播报);认负/求和/超时走同一 finalizeGame
+            if (result.over) finalizeGame(gid, result.result)
+          } finally {
+            aiThinkingGames.delete(gid)
+          }
         } else if (msg.type === 'say') {
           // 玩家发言 → coach_query 刺激(结合当前局面引擎洞察,教练结合棋局作答),高张力必有人接
           const gid = msg.gameId
@@ -579,6 +674,7 @@ export async function buildServer(opts: {
             type: 'state', gameId: gid, fen: session.getFen(gid),
             clockState: session.getClockState(gid),
             over: !!g.result, result: g.result ?? undefined,
+            ...stateSnapshot(gid),
           }))
         } else {
           socket.send(JSON.stringify({ type: 'error', message: `unknown message type: ${msg.type}` }))
@@ -613,15 +709,24 @@ export async function buildServer(opts: {
 
   // 触发局后诊断(真跑引擎,可能数十秒)
   app.post('/games/:id/diagnose', async (req, reply) => {
-    if (!engine) return reply.code(503).send({ error: '引擎未配置,诊断功能不可用' })
     const id = Number((req.params as { id: string }).id)
     if (!Number.isInteger(id)) return reply.code(400).send({ error: 'invalid id' })
+    const game = repo.getGame(id)
+    if (!game) return reply.code(404).send({ error: 'not found' })
+    if (!engine) {
+      const error = '引擎未配置,诊断功能不可用'
+      const status = setDiagnosisState(id, 'failed', error)
+      return reply.code(503).send({ error, diagnosisStatus: status })
+    }
+    setDiagnosisState(id, 'running')
     try {
       const result = await diagnoseGame(diagDeps, id)
       diagnosedGames.add(id)  // 手动诊断后标记,避免局末再重复
-      return result
+      const status = setDiagnosisState(id, 'ok')
+      return { ...result, diagnosisStatus: status }
     } catch (e) {
-      return reply.code(404).send({ error: (e as Error).message })
+      const status = setDiagnosisState(id, 'failed', (e as Error).message)
+      return reply.code(500).send({ error: '诊断失败', diagnosisStatus: status })
     }
   })
 
@@ -631,7 +736,7 @@ export async function buildServer(opts: {
     if (!Number.isInteger(id)) return reply.code(400).send({ error: 'invalid id' })
     const game = repo.getGame(id)
     if (!game) return reply.code(404).send({ error: 'not found' })
-    return { game, moves: repo.getMoves(id), annotations: analysis.getAnnotations(id) }
+    return { game, moves: repo.getMoves(id), annotations: analysis.getAnnotations(id), diagnosisStatus: diagnosisStatus(id) }
   })
 
   // 成长曲线(逐局指标时间序列)
@@ -751,7 +856,12 @@ export async function buildServer(opts: {
     })
     reply.header('Content-Disposition', 'attachment; filename="xiangqi-export.json"')
     reply.header('Content-Type', 'application/json')
-    return { games }
+    return {
+      scope: 'games-only',
+      includes: ['games', 'moves'],
+      excludes: ['move_annotations', 'growth_metrics', 'drill_attempts', 'messages', 'memory', 'app_settings', 'persona_config'],
+      games,
+    }
   })
 
   // 合法走法查询：GET /legal-moves?fen=...&square=...
@@ -811,45 +921,72 @@ export async function buildServer(opts: {
     const { startFen, moves, mode, result, humanSide, createdAt, endedAt, scoreCps, byAis } = validated
     const now = new Date().toISOString()
 
-    // 保真导入:humanSide/原始时间戳/逐手评分/AI 标记全部还原(旧格式缺省 red/导入时刻/null/false)
-    const gameId = repo.createGame({ mode: mode as GameMode, humanSide, startFen, startedAt: createdAt ?? now })
+    const importTx = db.transaction(() => {
+      // 保真导入:humanSide/原始时间戳/逐手评分/AI 标记全部还原(旧格式缺省 red/导入时刻/null/false)
+      const gameId = repo.createGame({ mode: mode as GameMode, humanSide, startFen, startedAt: createdAt ?? now })
 
-    // 逐手重放写入 moves 表；side 从 startFen 起算交替
-    let pos = Position.fromFen(startFen)
-    for (let i = 0; i < moves.length; i++) {
-      const move = moves[i]
-      const side = pos.sideToMove()
-      const nextPos = pos.applyMove(move)
-      repo.addMove({
-        gameId,
-        side,
-        move,
-        fenAfter: nextPos.fen(),
-        scoreCp: scoreCps[i],
-        byAi: byAis[i],
-      })
-      pos = nextPos
-    }
+      // 逐手重放写入 moves 表；side 从 startFen 起算交替
+      let pos = Position.fromFen(startFen)
+      for (let i = 0; i < moves.length; i++) {
+        const move = moves[i]
+        const side = pos.sideToMove()
+        const nextPos = pos.applyMove(move)
+        repo.addMove({
+          gameId,
+          side,
+          move,
+          fenAfter: nextPos.fen(),
+          scoreCp: scoreCps[i],
+          byAi: byAis[i],
+        })
+        pos = nextPos
+      }
 
-    // 如果有结果，补写 finishGame(还原原始 endedAt,缺省才用 now——修 R-5 战绩污染)
-    if (result !== null) {
-      repo.finishGame(gameId, result, endedAt ?? now)
+      // 如果有结果，补写 finishGame(还原原始 endedAt,缺省才用 now——修 R-5 战绩污染)
+      if (result !== null) {
+        repo.finishGame(gameId, result, endedAt ?? now)
+      }
+      return gameId
+    })
+    let gameId: number
+    try {
+      gameId = importTx()
+    } catch (e) {
+      req.log.error({ importError: (e as Error).message }, '棋谱导入写库失败')
+      return reply.code(500).send({ error: '导入失败,未写入任何对局' })
     }
 
     return { gameId }
   })
 
-  // ── 云 TTS 合成(qwen3-tts-flash) ────────────────────────────────────────────
-  // GET /tts?personaId=xxx&text=xxx
-  // 成功 → JSON { url }(OSS 公网音频 URL);失败 → 503(前端回退浏览器 TTS)
-  app.get('/tts', async (req, reply) => {
+  function isLoopbackIp(ip: string): boolean {
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1'
+  }
+
+  function allowCostEndpoint(req: { ip: string; headers: Record<string, unknown> }): boolean {
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : ''
+    if (origin) return allowedHttpOrigins.has(origin)
+    return isLoopbackIp(req.ip)
+  }
+
+  function ttsVoiceFor(personaId: string): string {
+    const configured = cfg.personaConfigs().find(p => p.id === personaId)?.ttsVoice?.trim()
+    return configured || voiceForPersona(personaId)
+  }
+
+  async function handleTts(req: any, reply: any) {
+    if (!allowCostEndpoint(req)) {
+      return reply.code(403).send({ error: 'TTS 接口仅允许本机前端访问' })
+    }
     const query = req.query as { personaId?: string; text?: string }
-    const personaId = String(query.personaId ?? '')
-    const rawText = String(query.text ?? '').trim()
+    const body = (req.body ?? {}) as { personaId?: string; text?: string }
+    const personaId = String(body.personaId ?? query.personaId ?? '')
+    const rawText = String(body.text ?? query.text ?? '').trim()
     if (!rawText) return reply.code(400).send({ error: 'text 参数不能为空' })
     const text = rawText.slice(0, 500)
     try {
-      const url = await synthesizeUrl(text, voiceForPersona(personaId), {
+      const synthesizeTts = opts.ttsSynthesizer ?? synthesizeUrl
+      const url = await synthesizeTts(text, ttsVoiceFor(personaId), {
         endpoint: process.env.DASHSCOPE_TTS_ENDPOINT ?? '',
         apiKey: process.env.DASHSCOPE_API_KEY ?? '',
         model: process.env.DASHSCOPE_TTS_MODEL ?? 'qwen3-tts-flash',
@@ -859,7 +996,13 @@ export async function buildServer(opts: {
       req.log.error(e, 'TTS 合成失败')
       return reply.code(503).send({ error: 'TTS 服务暂时不可用' })
     }
-  })
+  }
+
+  // ── 云 TTS 合成(qwen3-tts-flash) ────────────────────────────────────────────
+  // POST /tts { personaId, text }
+  // 成功 → JSON { url }(OSS 公网音频 URL);失败 → 503(前端回退浏览器 TTS)
+  app.get('/tts', async (_req, reply) => reply.code(405).send({ error: '请使用 POST /tts' }))
+  app.post('/tts', { bodyLimit: 2048 }, handleTts)
 
   // 语音识别:POST /asr?mime=audio/wav,body 为原始音频字节(application/octet-stream)
   // 注入 opts.asr → 跳过 key 检查;否则需 DASHSCOPE 凭据,缺失则 503

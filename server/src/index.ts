@@ -1,15 +1,20 @@
 import { buildServer } from './ws-server.js'
+import { ensureDbParentDir, resolveDbPath } from './runtime-paths.js'
 
 const enginePath = process.env.PIKAFISH_PATH
 if (!enginePath) {
   console.warn('未配置 PIKAFISH_PATH:对弈/诊断功能不可用,聊天与复盘仍可用')
 }
 
-const app = await buildServer({ dbPath: process.env.DB_PATH ?? './weiguan.sqlite', enginePath })
+const dbPath = resolveDbPath(process.env.DB_PATH)
+ensureDbParentDir(dbPath)
+
+const app = await buildServer({ dbPath, enginePath })
 // 固定端口约定:后端 3410(可用 PORT 覆盖)。前端 3420(见 web/vite.config.ts)。
 const port = Number(process.env.PORT ?? 3410)
-await app.listen({ port, host: '127.0.0.1' })
-console.log(`server on ws://localhost:${port}/play`)
+const host = process.env.HOST ?? '127.0.0.1'
+await app.listen({ port, host })
+console.log(`server on ws://${host === '0.0.0.0' ? 'localhost' : host}:${port}/play`)
 
 // 优雅关闭:SIGINT(Ctrl-C)与 SIGTERM(systemd/Docker)均触发 app.close()
 // app.close() 会依次执行 onClose hooks(engine.close + db.close),等 WAL checkpoint 完成后退出

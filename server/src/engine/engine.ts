@@ -38,6 +38,7 @@ export class UciEngine {
   private queue: PendingJob[] = []
   private active: PendingJob | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
+  private closedError: Error | null = null
 
   constructor(private transport: Transport, private engineOpts: UciEngineOpts = {}) {
     this.transport.onData((line) => this.handle(line))
@@ -59,6 +60,7 @@ export class UciEngine {
 
   private onTransportClose(err?: Error) {
     const e = new Error(`engine process closed${err ? `: ${err.message}` : ''}`)
+    this.closedError = e
     const pending = [...(this.active ? [this.active] : []), ...this.queue]
     this.active = null
     this.queue = []
@@ -102,6 +104,7 @@ export class UciEngine {
   }
 
   analyze(fen: string, opts: AnalyzeOpts): Promise<EngineLine[]> {
+    if (this.closedError) return Promise.reject(this.closedError)
     if (this.queue.length >= QUEUE_MAX) {
       return Promise.reject(new Error(`引擎队列过载(queue overload，已达上限 ${QUEUE_MAX})`))
     }

@@ -1,10 +1,21 @@
 {
   "name": "weiguan-xiangqi",
   "private": true,
-  "workspaces": ["server", "web"],
+  "workspaces": [
+    "server",
+    "web"
+  ],
   "scripts": {
-    "test": "npm -w server run test",
+    "test": "npm run test:all",
+    "test:server": "npm -w server run test",
+    "test:all": "npm -w server run test && npm -w web run test && npx tsc --noEmit -p server/tsconfig.json && npm -w web run typecheck",
+    "build": "npm run build:all",
+    "build:all": "npm -w server run build && npm -w web run build",
+    "package:source": "node scripts/package-source.mjs",
     "dev:server": "npm -w server run dev",
     "dev:web": "npm -w web run dev"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true
   }
 }
