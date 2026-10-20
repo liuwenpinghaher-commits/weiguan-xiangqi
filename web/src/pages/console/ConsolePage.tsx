@@ -72,5 +72,5 @@ const tabBtn: React.CSSProperties = {
   fontSize: fontSize.base, fontFamily: font.sans, fontWeight: 500, transition: 'all .15s',
 }
 const tabActive: React.CSSProperties = {
-  color: color.onGold, background: color.gold, borderColor: color.gold, fontWeight: 700,
+  color: color.onGold, background: color.gold, border: `1px solid ${color.gold}`, fontWeight: 700,
 }

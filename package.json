@@ -9,6 +9,7 @@
     "test": "npm run test:all",
     "test:server": "npm -w server run test",
     "test:all": "npm -w server run test && npm -w web run test && npx tsc --noEmit -p server/tsconfig.json && npm -w web run typecheck",
+    "test:e2e": "playwright test",
     "build": "npm run build:all",
     "build:all": "npm -w server run build && npm -w web run build",
     "package:source": "node scripts/package-source.mjs",
@@ -17,5 +18,8 @@
   },
   "allowScripts": {
     "better-sqlite3@11.10.0": true
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
   }
 }

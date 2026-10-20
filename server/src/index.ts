@@ -3,7 +3,7 @@ import { ensureDbParentDir, resolveDbPath } from './runtime-paths.js'
 
 const enginePath = process.env.PIKAFISH_PATH
 if (!enginePath) {
-  console.warn('未配置 PIKAFISH_PATH:对弈/诊断功能不可用,聊天与复盘仍可用')
+  console.info('未配置 PIKAFISH_PATH:将自动使用内置确定性象棋引擎(BuiltinEngine)支持完整对弈与诊断')
 }
 
 const dbPath = resolveDbPath(process.env.DB_PATH)

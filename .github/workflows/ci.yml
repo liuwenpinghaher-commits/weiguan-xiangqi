@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Sensitive Information Scan
+        run: |
+          if grep -rnE "10[.]144[.]144[.]|82[.]157[.]130[.]140|qing[.]blue|/[h]ome/chris|/[h]ome/ubuntu|/[U]sers/miaoma|s[c]ribe3-demo|github_pat_[A-Za-z0-9]|ghp_[A-Za-z0-9]|sk-[A-Za-z0-9]{16,}" --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist .; then
+            echo "Sensitive information detected!"
+            exit 1
+          fi
+          echo "ZERO_SENSITIVE_HITS"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit & integration tests and typechecks
+        run: npm test
+
+      - name: Build production bundles
+        run: npm run build

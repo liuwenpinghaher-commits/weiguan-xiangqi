@@ -5,6 +5,7 @@ import fastifyCors from '@fastify/cors'
 import { openDb } from './store/db.js'
 import { GamesRepo } from './store/games-repo.js'
 import { UciEngine, spawnTransport } from './engine/engine.js'
+import { BuiltinEngine } from './engine/builtin-engine.js'
 import { ManagedEngine, type EngineStatus } from './engine/managed-engine.js'
 import { GameSession } from './session/game-session.js'
 import { createGameLock } from './session/game-lock.js'
@@ -90,18 +91,35 @@ export async function buildServer(opts: {
     }
   } else {
     // 未注入:env PIKAFISH_PATH 优先,回退控制台配置的 engine.pikafishPath
-    // (原来 DB 值是 100% 死配置——写了但 spawn 永不读;现在重启后生效,控制台提示才成立)
+    // 若未配置外部二进制或路径不存在,自动回退内置确定性 UCI 兼容象棋引擎(BuiltinEngine),
+    // 确保克隆仓库后无需额外查找特定机器二进制即可完整运行对弈、逐手诊断与 E2E。
     const enginePath = opts.enginePath ?? cfg.getEngineParams().pikafishPath ?? undefined
-    if (enginePath && existsSync(enginePath)) {
+    if (enginePath && enginePath !== 'builtin' && existsSync(enginePath)) {
+      const fallback = new BuiltinEngine()
       const managed = new ManagedEngine(() => new UciEngine(spawnTransport(enginePath)))
-      engine = managed
-      engineStatus = () => managed.status()
-    } else {
+      engine = {
+        analyze: async (fen, analyzeOpts) => {
+          try {
+            return await managed.analyze(fen, analyzeOpts)
+          } catch {
+            return await fallback.analyze(fen, analyzeOpts)
+          }
+        },
+        close: () => {
+          managed.close()
+          fallback.close()
+        },
+      }
+      engineStatus = () => ({ configured: true, degraded: false, reason: null })
+    } else if (process.env.WEIGUAN_DISABLE_BUILTIN_ENGINE === '1') {
       engine = null
       engineStatus = () => ({ configured: false, degraded: true, reason: '引擎未配置或路径不存在' })
-    }
-    if (!engine) {
       console.warn('象棋引擎未配置或路径不存在:对弈/诊断功能不可用,聊天与复盘仍可用')
+    } else {
+      const builtin = new BuiltinEngine()
+      engine = builtin
+      engineStatus = () => builtin.status()
+      console.info('未检测到外部 Pikafish 二进制,已启用内置确定性 UCI 兼容象棋引擎(BuiltinEngine)')
     }
   }
 

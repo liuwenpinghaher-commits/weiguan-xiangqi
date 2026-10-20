@@ -220,6 +220,10 @@ export function speakServer(personaId: string, text: string, onStart?: () => voi
     })
 
   const newItem: QueueItem = { personaId, text, addressee, urlPromise, onStart }
+  // 捕获未解锁前合成拒绝(如无云端 TTS key 返回 503),立即揭示文字气泡并避免浏览器 unhandledrejection
+  urlPromise.catch(() => {
+    fireStart(newItem)
+  })
 
   // 积压限制:超过 3 条时丢弃最旧,只保留最新 2 条 + 新增 1 条。
   // 例外:教练必答/对玩家的回答(isMustKeep)一律保留,不因积压被丢——否则玩家提问的语音回答

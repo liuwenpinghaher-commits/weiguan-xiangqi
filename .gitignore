@@ -5,8 +5,14 @@ dist
 *.sqlite-shm
 *.sqlite-wal
 .env
+.env.*
+!.env.example
+!server/.env.example
 /engine/
 .codegraph
+.DS_Store
+playwright-report/
+test-results/
 
 # 服务端静态产物目录(fastifyStatic 运行时生成,不入库)
 /server/static/

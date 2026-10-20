@@ -325,6 +325,12 @@ export function PlayPage() {
     setStatusMsg(`您走了 ${move}，AI 思考中…`)
   }
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      ;(window as unknown as { __weiguanPlayMove?: (m: string) => void }).__weiguanPlayMove = handleMove
+    }
+  })
+
   function handleRestart(activeMode?: GameMode, activeSide?: HumanSide) {
     stopVoice()   // 停掉上一局在播/排队的本地 TTS 语音,避免串台到新局
     cancelSpeech()

@@ -58,7 +58,7 @@ web/src/
 
 - [ ] **Step 1: 装 openai SDK(仅作 OpenAI 兼容客户端)**
 
-Run: `cd "/Users/miaoma/Downloads/围观象棋" && npm -w server i openai@^4.67.0`
+Run: `cd "<repo-root>" && npm -w server i openai@^4.67.0`
 Expected: 安装成功。
 
 - [ ] **Step 2: 写 `.env.example`(占位,可提交)**
@@ -75,7 +75,7 @@ PIKAFISH_PATH=./engine/pikafish
 
 - [ ] **Step 3: 写本地 `.env`(含真实 key,不提交)**
 
-把用户提供的真实值写入 `server/.env`(以及根 `.env` 若 dev 脚本从根读取)。确认 `.gitignore` 含 `.env`(M1 已加)。运行 `cd "/Users/miaoma/Downloads/围观象棋" && git check-ignore server/.env` 预期输出该路径(已被忽略)。**绝不把真实 key 写进任何会提交的文件或本计划。**
+把用户提供的真实值写入 `server/.env`(以及根 `.env` 若 dev 脚本从根读取)。确认 `.gitignore` 含 `.env`(M1 已加)。运行 `cd "<repo-root>" && git check-ignore server/.env` 预期输出该路径(已被忽略)。**绝不把真实 key 写进任何会提交的文件或本计划。**
 
 - [ ] **Step 4: 让 dev/test 能读 .env**
 

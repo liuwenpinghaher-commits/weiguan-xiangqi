@@ -68,7 +68,7 @@
 
 Run:
 ```bash
-cd "/Users/miaoma/Downloads/围观象棋"
+cd "<repo-root>"
 git init
 ```
 
@@ -162,7 +162,7 @@ Create minimal `web/package.json` (filled in Task 11):
 
 - [ ] **Step 3: 安装依赖**
 
-Run: `cd "/Users/miaoma/Downloads/围观象棋" && npm install`
+Run: `cd "<repo-root>" && npm install`
 Expected: 安装成功,生成 `package-lock.json` 与 `node_modules`。
 
 - [ ] **Step 4: 冒烟测试 vitest 可跑**
@@ -1256,7 +1256,7 @@ Create `web/index.html`:
 <!doctype html><html lang="zh"><head><meta charset="utf-8"><title>围观象棋</title></head>
 <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>
 ```
-Run: `cd "/Users/miaoma/Downloads/围观象棋" && npm install`
+Run: `cd "<repo-root>" && npm install`
 
 - [ ] **Step 2: Spike 棋盘组件**
 

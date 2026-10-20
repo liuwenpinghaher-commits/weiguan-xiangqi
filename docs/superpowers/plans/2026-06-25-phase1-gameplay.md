@@ -48,7 +48,7 @@ In `server/src/config/validate.ts`, add to the `engine` schema:
 - [ ] **Step 3: Run tests and commit**
 
 ```bash
-cd /Users/miaoma/Downloads/围观象棋 && npx vitest run server/src/config/validate.test.ts
+cd <repo-root> && npx vitest run server/src/config/validate.test.ts
 git add server/src/config/defaults.ts server/src/config/validate.ts
 git commit -m "feat: add clock config to EngineCfg"
 ```
@@ -160,7 +160,7 @@ In the existing `finish()` method, add:
 - [ ] **Step 7: Run existing tests to verify no regression**
 
 ```bash
-cd /Users/miaoma/Downloads/围观象棋 && npx vitest run server/src/session/game-session.test.ts
+cd <repo-root> && npx vitest run server/src/session/game-session.test.ts
 ```
 
 - [ ] **Step 8: Commit**
@@ -969,7 +969,7 @@ git commit -m "feat: integrate clock, actions, MoveList, legalMoves, preMove int
 - [ ] **Step 1: Run all tests**
 
 ```bash
-cd /Users/miaoma/Downloads/围观象棋 && npm -w server test && npm -w web run typecheck
+cd <repo-root> && npm -w server test && npm -w web run typecheck
 ```
 
 - [ ] **Step 2: Fix any test failures or type errors**
